@@ -1,0 +1,46 @@
+{
+  "name": "@local/dsh-github-resident-v2",
+  "version": "1.4.0",
+  "private": true,
+  "type": "module",
+  "description": "Resident GitHub identity plus multi-repository commit, push and pull-request tools for this harness profile. Resolves (and when absent, lands) its own gh CLI so no manual gh install is required.",
+  "exports": {
+    ".": "./plugin.js",
+    "./client": "./client.js",
+    "./package.json": "./package.json",
+    "./locale/*.json": "./locale/*.json"
+  },
+  "files": [
+    "plugin.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md"
+  ],
+  "scripts": {
+    "verify": "bash verify-bundle.sh && node verify-logout.mjs && node verify-gh-bootstrap.mjs && node verify-update-gc.mjs && node verify-real-artifact.mjs",
+    "verify:bundle": "bash verify-bundle.sh",
+    "verify:logout": "node verify-logout.mjs",
+    "verify:gh": "node verify-gh-bootstrap.mjs",
+    "verify:artifact": "node verify-real-artifact.mjs",
+    "verify:update": "node verify-update-gc.mjs"
+  },
+  "meta": {
+    "title": "GitHub Resident",
+    "description": "Resident GitHub credentials with multi-repository commit, push and PR tools, self-contained gh provisioning, and full credential teardown."
+  },
+  "icon": "./icon.svg",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-settings-general"
+      ]
+    }
+  }
+}

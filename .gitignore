@@ -1,0 +1,6 @@
+node_modules/
+*.log
+.DS_Store
+# 本地凭据与状态绝不进仓
+.git-credentials
+github-resident.json

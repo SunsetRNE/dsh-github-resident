@@ -1,0 +1,4 @@
+{
+  "title": "GitHub Resident",
+  "description": "Keeps one GitHub identity resident in this environment and adds tools for committing, pushing and opening pull requests across many repositories."
+}

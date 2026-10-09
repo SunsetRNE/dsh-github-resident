@@ -1,0 +1,4 @@
+- insert:
+    - id: github-resident-v2
+      name: '@local/dsh-github-resident-v2'
+      config: {}
