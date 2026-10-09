@@ -16,7 +16,9 @@
     "cordis.patch.yml",
     "locale/*.json",
     "icon.svg",
-    "README.md"
+    "README.md",
+    "LICENSE",
+    "README.en.md"
   ],
   "scripts": {
     "verify": "bash verify-bundle.sh && node verify-logout.mjs && node verify-gh-bootstrap.mjs && node verify-update-gc.mjs && node verify-real-artifact.mjs",
@@ -42,5 +44,6 @@
         "@deepseek-ai/dsh-client-ui-settings-general"
       ]
     }
-  }
+  },
+  "license": "MIT"
 }

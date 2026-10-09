@@ -135,4 +135,4 @@ LESSONS.md                踩坑记录（23 条，含现象 / 真因 / 判据）
 
 ## 许可
 
-私有使用；如需复用请先提 issue 说明用途。
+[MIT](LICENSE) © 2026 SunsetRNE

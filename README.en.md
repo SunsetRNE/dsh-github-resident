@@ -135,4 +135,4 @@ LESSONS.md                field notes (23 entries: symptom / root cause / accept
 
 ## License
 
-Private use; open an issue describing your purpose before reusing.
+[MIT](LICENSE) © 2026 SunsetRNE
