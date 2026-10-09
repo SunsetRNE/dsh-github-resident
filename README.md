@@ -75,6 +75,27 @@ HTTP（只监听 `127.0.0.1`）：`GET /state`、`GET /state?cached=1`、`GET /s
 
 ## 安装
 
+### 方式 A：从 Release 拿包（推荐）
+
+```bash
+# 1) 取运行时包与源码包
+gh release download v1.4.0 --repo SunsetRNE/dsh-github-resident -D /tmp/ghr
+ls /tmp/ghr     # local-dsh-github-resident-v2-1.4.0.tgz + dsh-github-resident-1.4.0-src.tar.gz + SHA256SUMS
+
+# 2) 校验（源码包这一行必须与 SHA256SUMS 一致）
+cd /tmp/ghr && sha256sum -c SHA256SUMS
+
+# 3) 解开源码包，用 plugin_manager 以解出来的目录绝对路径执行 install_bundle
+tar xzf dsh-github-resident-1.4.0-src.tar.gz
+#   → install_bundle /tmp/ghr/dsh-github-resident-1.4.0
+
+# 4) 装完自检
+cd /tmp/ghr/dsh-github-resident-1.4.0 && npm run verify   # 期望全部 failed=0
+
+两个包的分工：`*.tgz` 是 npm 打包产物（只含运行所需的 10 个文件）；`*-src.tar.gz` 是完整源码（含 5 个门禁脚本与 LESSONS.md）。
+
+### 方式 B：从源码目录装
+
 ```bash
 # 1) 检查
 node --check index.js && node -e "JSON.parse(require('fs').readFileSync('package.json','utf8'))"

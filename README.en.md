@@ -75,6 +75,27 @@ HTTP (loopback only, `127.0.0.1`): `GET /state`, `GET /state?cached=1`, `GET /st
 
 ## Install
 
+### Option A: from the release (recommended)
+
+```bash
+# 1) fetch the runtime package and the full source archive
+gh release download v1.4.0 --repo SunsetRNE/dsh-github-resident -D /tmp/ghr
+ls /tmp/ghr     # local-dsh-github-resident-v2-1.4.0.tgz + dsh-github-resident-1.4.0-src.tar.gz + SHA256SUMS
+
+# 2) verify checksums (the src line must match SHA256SUMS)
+cd /tmp/ghr && sha256sum -c SHA256SUMS
+
+# 3) unpack the source archive, then install_bundle with its absolute path
+tar xzf dsh-github-resident-1.4.0-src.tar.gz
+#   → install_bundle /tmp/ghr/dsh-github-resident-1.4.0
+
+# 4) gate the install
+cd /tmp/ghr/dsh-github-resident-1.4.0 && npm run verify   # expect all failed=0
+
+What the two archives are for: `*.tgz` is the npm pack output (the 10 runtime files); `*-src.tar.gz` is the full source (5 gates + LESSONS.md included).
+
+### Option B: install from a source checkout
+
 ```bash
 # 1) sanity
 node --check index.js && node -e "JSON.parse(require('fs').readFileSync('package.json','utf8'))"
