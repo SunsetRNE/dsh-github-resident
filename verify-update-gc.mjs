@@ -19,7 +19,7 @@ const HOME = await fs.mkdtemp(path.join(os.tmpdir(), 'ghug-home-'));
 const FAKE_PATH = await fs.mkdtemp(path.join(os.tmpdir(), 'ghug-path-'));
 const DATA_DIR = path.join(HOME, '.dsh', 'gh-cli');
 const FAKE_GH = path.join(FAKE_PATH, 'gh');
-const PLUGIN_URL = new URL('./index.js', import.meta.url).href;
+const PLUGIN_URL = new URL('./plugin.js', import.meta.url).href;
 
 await fs.writeFile(FAKE_GH, '#!/bin/sh\nexit 127\n', { mode: 0o755 }); // 遮住真 gh
 
@@ -240,8 +240,13 @@ srv.listen(0, '127.0.0.1', () => console.log('__PORT__' + srv.address().port));
 
 // 记账 gh：每次被调用就往日志里追一行（--version 要正常返回，否则探针会判不可用）
 const countingDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ghug-count-'));
+// N5 之后 PATH 里的 gh 才会被真的执行，所以这个桩必须像一个「未登录」的 gh：
+// 否则 buildSnapshot 会把桩的 exit 0 当成已认证，快照结论就是假的。
 await fs.writeFile(path.join(countingDir, 'gh'),
-  `#!/bin/sh\necho "$@" >> ${probeLog}\nif [ "$1" = "--version" ]; then echo "gh version 0.1.0 (COUNTING)"; fi\nexit 0\n`,
+  `#!/bin/sh\necho "$@" >> ${probeLog}\n`
+  + `if [ "$1" = "--version" ]; then echo "gh version 0.1.0 (COUNTING)"; exit 0; fi\n`
+  + `if [ "$1" = "auth" ]; then echo "not logged in to any GitHub hosts"; exit 1; fi\n`
+  + `exit 0\n`,
   { mode: 0o755 });
 
 const serve = await new Promise((res) => {
@@ -252,6 +257,7 @@ const serve = await new Promise((res) => {
       ...process.env, CHILD_HOME: stateChildHome, CHILD_FAKE: countingDir, REAL_PATH, PLUGIN_URL,
       DSH_GH_RELEASE_API: `http://127.0.0.1:${PORT}/repos/cli/cli/releases/latest`,
       DSH_GH_DOWNLOAD_BASE: DL, DSH_GH_NO_BOOTSTRAP: '1', DSH_GH_NO_UPDATE: '1', DSH_GH_NO_STATE_CHECK: '1',
+      DSH_GH_SNAPSHOT_TTL_MS: '400',   // 把快照 TTL 压到 400ms，好在秒级内验「过期即后台补查」
     },
   }, (e) => res({ code: e ? 1 : 0, out, err, pid: child.pid }));
   child.stdout.on('data', (b) => { out += b.toString(); if (out.includes('__PORT__')) res({ code: 0, out, err, pid: child.pid }); });
@@ -292,6 +298,21 @@ if (portLine) {
   check('3 refresh 之后 cached 读回到零检查', nowCalls.length === tAfter, { before: tAfter, after: nowCalls.length });
   const cachedAfter = await fetch(`http://127.0.0.1:${P2}/state?cached=1`).then((r) => r.json());
   check('3 cached 读能读到刚建立的快照', cachedAfter.cached === true && cachedAfter.authenticated === false, { cached: cachedAfter.cached, authed: cachedAfter.authenticated });
+
+  // 3b) 快照过期：cached 读**不阻塞**，但必须在后台补一次（N2：原来 TTL 形同虚设）
+  check('3b 回执带检查阶段 probe.state', ['ready', 'running', 'idle', 'failed', 'disabled'].includes((cachedAfter.probe || {}).state), cachedAfter.probe);
+  const staleAt = cachedAfter.snapshotAt;
+  const staleCalls = (await calls()).length;
+  await new Promise((r) => setTimeout(r, 700));           // 越过 400ms TTL
+  const staleT0 = Date.now();
+  const staleRead = await fetch(`http://127.0.0.1:${P2}/state?cached=1`).then((r) => r.json());
+  const staleMs = Date.now() - staleT0;
+  check('3b 过期快照的 cached 读不阻塞（<200ms）', staleMs < 200, staleMs);
+  await new Promise((r) => setTimeout(r, 1500));           // 等后台那次跑完
+  const afterStaleCalls = (await calls()).length;
+  const refreshed = await fetch(`http://127.0.0.1:${P2}/state?cached=1`).then((r) => r.json());
+  check('3b 过期后触发后台补查（gh 调用数增加）', afterStaleCalls > staleCalls, { before: staleCalls, after: afterStaleCalls });
+  check('3b 补查后快照时间戳前移', Boolean(refreshed.snapshotAt) && refreshed.snapshotAt > staleAt, { before: staleAt, after: refreshed.snapshotAt });
   check('3 refresh 耗时记账（供排查）', forcedMs >= 0, forcedMs);
 
   try { if (serve.pid) process.kill(serve.pid); } catch { /* 自行退出 */ }

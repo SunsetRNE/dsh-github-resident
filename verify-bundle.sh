@@ -92,5 +92,23 @@ for ep in /protocol /state; do
 done
 
 echo
+
+echo "== 6. 宿主半边唯一 + locale 口径 =="
+if [ -f "$BUNDLE_DIR/index.js" ]; then
+  if cmp -s "$BUNDLE_DIR/index.js" "$BUNDLE_DIR/plugin.js"; then
+    bad "存在逐字节重复的 index.js（R1：两份副本会漂移）" "rm '$BUNDLE_DIR/index.js'；只保留 exports 指向的 plugin.js"
+  fi
+fi
+ok "宿主半边唯一（只有 plugin.js）"
+node - "$BUNDLE_DIR/locale/en.json" <<'NODE'
+const fs = require('fs');
+const j = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+process.exit(j && j.meta && j.meta.title && j.meta.description ? 0 : 1);
+NODE
+case $? in
+  0) ok "locale/en.json 用 meta.title/description（宿主口径）" ;;
+  *) bad "locale 结构与宿主不符（L14：宿主读 meta.title/description）" "把 locale/*.json 改成 {\"meta\":{\"title\":…,\"description\":…}}" ;;
+esac
+
 echo "RESULT pass=$pass fail=$fail"
 [ "$fail" -eq 0 ] || exit 1

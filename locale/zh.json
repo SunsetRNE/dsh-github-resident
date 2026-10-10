@@ -1,4 +1,6 @@
 {
-  "title": "GitHub 常驻身份",
-  "description": "让一个 GitHub 身份常驻在当前环境，并提供跨多个仓库的提交、推送与开 PR 工具。"
+  "meta": {
+    "title": "GitHub 常驻身份",
+    "description": "让一个 GitHub 身份常驻在当前环境，并提供跨多个仓库的提交、推送与开 PR 工具。"
+  }
 }

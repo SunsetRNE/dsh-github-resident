@@ -12,7 +12,10 @@ window.__ModuleLoader__.load({
     const React = require('react');
     const h = React.createElement;
 
-    const API = 'http://127.0.0.1:31790';
+    // L12：默认回环端口 31790；宿主若用 DSH_GH_API_PORT 改了端口，可以把实际值注入
+    // window.__DSH_GITHUB_RESIDENT_API__（插件半边是同名端口，只有浏览器能看到注入值）。
+    const API = (typeof window !== 'undefined' && window.__DSH_GITHUB_RESIDENT_API__)
+      || 'http://127.0.0.1:31790';
     const DEVICE_URL = 'https://github.com/login/device';
     const STEPS = [
       ['1', '生成码', '点下面的「生成一次性码」——插件在后台起 gh 的设备码流程并拉起浏览器'],
@@ -20,7 +23,7 @@ window.__ModuleLoader__.load({
       ['3', '核验', '授权后本页状态会变成「已授权」并显示账号名；再回会话跑一次 gh_cli_setup_git'],
     ];
     const COMMANDS = [
-      ['gh_cli_install', 'probe gh，缺则按官方 .deb 安装'],
+      ['gh_cli_install', '复用系统 gh；缺则自带落地（抽官方 tar.gz 单文件，退回 .deb）'],
       ['gh_cli_auth_web', '取一次性码 + 拉起浏览器（等价于本页按钮）'],
       ['gh_cli_status', '核验账号、凭据助手、hosts.yml'],
       ['gh_cli_setup_git', '让 git push 走 gh 的 credential helper'],
@@ -28,59 +31,260 @@ window.__ModuleLoader__.load({
       ['gh_pr', '走 REST API 开 PR'],
     ];
 
-    const CSS = [
-      '.ghr-root{max-width:680px;color:var(--dsw-alias-label-primary)}',
-      '.ghr-root *{box-sizing:border-box}',
-      '.ghr-h1{font-size:15px;font-weight:600;margin:0 0 6px}',
-      '.ghr-lead{font-size:12.5px;line-height:1.7;color:var(--dsw-alias-label-secondary);margin:0 0 18px}',
-      '.ghr-sec{margin:0 0 18px}',
-      '.ghr-sec>h3{font-size:11.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--dsw-alias-label-secondary);margin:0 0 8px}',
-      '.ghr-card{background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l1);border-radius:10px;padding:14px 16px}',
-      '.ghr-row{display:flex;align-items:baseline;gap:14px;padding:7px 0;font-size:12.5px}',
-      '.ghr-row+.ghr-row{border-top:1px solid var(--dsw-alias-border-l1)}',
-      '.ghr-k{color:var(--dsw-alias-label-secondary);flex:0 0 118px}',
-      '.ghr-v{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-all;font-size:12px}',
-      '.ghr-btn{font:inherit;font-size:12.5px;line-height:1;padding:8px 14px;border-radius:7px;cursor:pointer;color:var(--dsw-alias-brand-primary);background:transparent;border:1px solid var(--dsw-alias-brand-primary);transition:background .12s}',
-      '.ghr-btn:hover{background:var(--dsw-alias-bg-layer-2)}',
-      '.ghr-btn:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}',
-      '.ghr-btn.ghr-ghost{color:var(--dsw-alias-label-secondary);border-color:var(--dsw-alias-border-l2)}',
-      '.ghr-btn[disabled]{opacity:.45;cursor:default}',
-      '.ghr-badge{display:inline-flex;align-items:center;gap:7px;font-size:12px;padding:3px 10px;border-radius:999px;border:1px solid currentColor}',
-      '.ghr-dot{width:6px;height:6px;border-radius:999px;background:currentColor;display:inline-block}',
-      '.ghr-steps{display:flex;flex-direction:column;gap:10px}',
-      '.ghr-step{display:flex;gap:11px;align-items:flex-start;font-size:12.5px;line-height:1.55}',
-      '.ghr-num{flex:0 0 20px;height:20px;border-radius:999px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;font-style:normal;color:var(--dsw-alias-brand-primary);border:1px solid var(--dsw-alias-brand-primary)}',
-      '.ghr-step b{font-weight:600}',
-      '.ghr-step span{color:var(--dsw-alias-label-secondary)}',
-      '.ghr-codebox{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:12px;padding:12px 14px;border-radius:8px;background:var(--dsw-alias-bg-layer-2);border:1px dashed var(--dsw-alias-border-l2)}',
-      '.ghr-code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:22px;font-weight:600;letter-spacing:.16em;color:var(--dsw-alias-label-primary)}',
-      '.ghr-when{font-size:11.5px;color:var(--dsw-alias-label-secondary);margin-top:4px}',
-      '.ghr-cmd{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0;font-size:12px}',
-      '.ghr-cmd+.ghr-cmd{border-top:1px solid var(--dsw-alias-border-l1)}',
-      '.ghr-cmd code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--dsw-alias-label-primary)}',
-      '.ghr-cmd em{font-style:normal;color:var(--dsw-alias-label-secondary);margin-left:9px}',
-      '.ghr-actions{display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin-top:13px}',
-    ].join('');
+    // 仓库登记文件库：面板读写的是插件协议里的落盘契约（一仓一文件）。
+    // 授权按钮是「人自己点的」那条路径 —— 点下去才带 consent=1 打 POST /registry/build。
+    const REG_COMMANDS = [
+      ['gh_repo_registry {action:"plan"}', '只读计划'],
+      ['gh_repo_registry {action:"build", consent:true}', '同意后建库'],
+      ['gh_repo_registry {action:"rescan"}', '刷新快照'],
+      ['gh_repo_registry {action:"verify"}', '与磁盘对账'],
+      ['gh_repo_registry_list', '只读文件库'],
+    ];
+
+        // R5：两页共用一份样式表表（原来两套只差前缀），共享规则写模板，独有规则各自追加。
+    const CSS_SHARED = [
+      '.{p}-root{max-width:680px;color:var(--dsw-alias-label-primary)}',
+      '.{p}-root *{box-sizing:border-box}',
+      '.{p}-h1{font-size:15px;font-weight:600;margin:0 0 6px}',
+      '.{p}-lead{font-size:12.5px;line-height:1.7;color:var(--dsw-alias-label-secondary);margin:0 0 18px}',
+      '.{p}-sec{margin:0 0 18px}',
+      '.{p}-sec>h3{font-size:11.5px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--dsw-alias-label-secondary);margin:0 0 8px}',
+      '.{p}-card{background:var(--dsw-alias-bg-layer-1);border:1px solid var(--dsw-alias-border-l1);border-radius:10px;padding:14px 16px}',
+      '.{p}-row{display:flex;align-items:baseline;gap:14px;padding:7px 0;font-size:12.5px}',
+      '.{p}-row+.{p}-row{border-top:1px solid var(--dsw-alias-border-l1)}',
+      '.{p}-k{color:var(--dsw-alias-label-secondary);flex:0 0 118px}',
+      '.{p}-v{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;word-break:break-all;font-size:12px}',
+      '.{p}-btn{font:inherit;font-size:12.5px;line-height:1;padding:8px 14px;border-radius:7px;cursor:pointer;color:var(--dsw-alias-brand-primary);background:transparent;border:1px solid var(--dsw-alias-brand-primary);transition:background .12s}',
+      '.{p}-btn:hover{background:var(--dsw-alias-bg-layer-2)}',
+      '.{p}-btn:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}',
+      '.{p}-btn.{p}-ghost{color:var(--dsw-alias-label-secondary);border-color:var(--dsw-alias-border-l2)}',
+      '.{p}-btn[disabled]{opacity:.45;cursor:default}',
+      '.{p}-badge{display:inline-flex;align-items:center;gap:7px;font-size:12px;padding:3px 10px;border-radius:999px;border:1px solid currentColor}',
+      '.{p}-dot{width:6px;height:6px;border-radius:999px;background:currentColor;display:inline-block}',
+      '.{p}-cmd{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:8px 0;font-size:12px}',
+      '.{p}-cmd+.{p}-cmd{border-top:1px solid var(--dsw-alias-border-l1)}',
+      '.{p}-cmd code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:var(--dsw-alias-label-primary)}',
+      '.{p}-cmd em{font-style:normal;color:var(--dsw-alias-label-secondary);margin-left:9px}',
+      '.{p}-actions{display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin-top:13px}',
+    ];
+    const cssFor = (p, extra) => CSS_SHARED.concat(extra).join('').replaceAll('{p}-', p + '-');
+    const CSS = cssFor('ghr', [
+      '.{p}-steps{display:flex;flex-direction:column;gap:10px}',
+      '.{p}-step{display:flex;gap:11px;align-items:flex-start;font-size:12.5px;line-height:1.55}',
+      '.{p}-num{flex:0 0 20px;height:20px;border-radius:999px;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:600;font-style:normal;color:var(--dsw-alias-brand-primary);border:1px solid var(--dsw-alias-brand-primary)}',
+      '.{p}-step b{font-weight:600}',
+      '.{p}-step span{color:var(--dsw-alias-label-secondary)}',
+      '.{p}-codebox{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:12px;padding:12px 14px;border-radius:8px;background:var(--dsw-alias-bg-layer-2);border:1px dashed var(--dsw-alias-border-l2)}',
+      '.{p}-code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:22px;font-weight:600;letter-spacing:.16em;color:var(--dsw-alias-label-primary)}',
+      '.{p}-when{font-size:11.5px;color:var(--dsw-alias-label-secondary);margin-top:4px}',
+    ]);
+    const REG_CSS = cssFor('ghreg', [
+      '.{p}-ask{margin-top:12px;padding:12px 14px;border-radius:8px;background:var(--dsw-alias-bg-layer-2);border:1px dashed var(--dsw-alias-border-l2);font-size:12.5px;line-height:1.65}',
+      '.{p}-ask b{font-weight:600}',
+      '.{p}-answer{margin-top:10px;font-size:12px;color:var(--dsw-alias-label-secondary)}',
+      '.{p}-repo{padding:9px 0;font-size:12.5px}',
+      '.{p}-repo+.{p}-repo{border-top:1px solid var(--dsw-alias-border-l1)}',
+      '.{p}-repo-hd{display:flex;align-items:center;gap:9px;flex-wrap:wrap}',
+      '.{p}-repo-hd b{font-weight:600}',
+      '.{p}-repo-path{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;color:var(--dsw-alias-label-secondary);word-break:break-all;margin-top:3px}',
+      '.{p}-repo-meta{display:flex;gap:12px;flex-wrap:wrap;font-size:11.5px;color:var(--dsw-alias-label-secondary);margin-top:4px}',
+    ]);
+
+    // R5：三个展示组件也只有前缀不同，用一个工厂生成两套名字。
+    function uiParts(prefix) {
+      const Badge = ({ text, tone }) => h('span', { className: prefix + '-badge', style: { color: tone } }, h('i', { className: prefix + '-dot' }), text);
+      const Btn = ({ children, onClick, ghost, disabled }) => h('button', {
+        type: 'button', onClick, disabled: Boolean(disabled),
+        className: ghost ? prefix + '-btn ' + prefix + '-ghost' : prefix + '-btn',
+      }, children);
+      const Section = ({ title, children }) => h('section', { className: prefix + '-sec' }, h('h3', null, title), h('div', { className: prefix + '-card' }, children));
+      return { Badge, Btn, Section };
+    }
+    const { Badge, Btn, Section } = uiParts('ghr');
+    const { Badge: RegBadge, Btn: RegBtn, Section: RegSection } = uiParts('ghreg');
+
+    /** 一个条目 → 一行人类可读的绑定描述（无远端时明说）。 */
+    function remoteText(e) {
+      if (!e || !e.hasRemote) return '无远端';
+      const r = e.remote || {};
+      const slug = [r.host, r.owner, r.repo].filter(Boolean).join('/');
+      return '绑定 ' + (slug || r.url || '远端');
+    }
+
+    function RegistryPanel() {
+      const [reg, setReg] = React.useState({ phase: 'idle' });
+      const [lib, setLib] = React.useState(null);
+      const [acct, setAcct] = React.useState(null);
+      const acctRef = React.useRef(acct);
+      acctRef.current = acct;
+      const [last, setLast] = React.useState(null);
+      const [busy, setBusy] = React.useState('');
+      const [onlyMissing, setOnlyMissing] = React.useState(false);
+      const [armPurge, setArmPurge] = React.useState(false);
+
+      // 三个只读入口：登记库状态（许可 + 计数）、清单（条目）、以及**账号状态**。
+      // 账号那一份和「GitHub」页读的是同一个 /state 快照 —— 两页共用一份事实，谁都不另存一份登录态。
+      // 404 说明宿主还停在旧版本那一刻。
+      const load = React.useCallback(() => Promise.all([
+        fetch(API + '/registry').then((r) => (r.status === 404 ? { unsupported: true } : r.json())),
+        fetch(API + '/registry/list').then((r) => (r.status === 404 ? { unsupported: true } : r.json())),
+        fetch(API + '/state?cached=1').then((r) => (r.ok ? r.json() : null)).catch(() => null),
+      ]).then((pair) => {
+        setAcct(pair[2] || null);
+        if (pair[0].unsupported) { setReg({ phase: 'unsupported' }); setLib({ unsupported: true }); return; }
+        setReg({ phase: 'ok', data: pair[0] });
+        setLib(pair[1]);
+      }).catch((e) => setReg({ phase: 'down', message: String((e && e.message) || e) })), []);
+
+      // N1：原来只在挂载时读一次缓存 —— 后台检查落地后页面不会自愈，一直显示「检查中」。
+      React.useEffect(() => {
+        load();
+        let tries = 0;
+        const timer = window.setInterval(() => {
+          const a = acctRef.current;
+          const ready = Boolean(a) && a.authenticated !== null && (!a.probe || a.probe.state !== 'running');
+          if (ready || tries >= 20) { window.clearInterval(timer); return; }
+          tries += 1;
+          load();
+        }, 1500);
+        return () => window.clearInterval(timer);
+      }, [load]);
+
+      const post = (url, tag) => {
+        setBusy(tag);
+        return fetch(url, { method: 'POST' })
+          .then((r) => (r.status === 404 ? { ok: false, error: '宿主未重启：这条路由还没上线（HTTP 404）' } : r.json()))
+          .then((j) => { setLast(j); setBusy(''); return load(); })
+          .catch((e) => { setLast({ ok: false, error: String((e && e.message) || e) }); setBusy(''); });
+      };
+
+      const flash = (text) => { setLast({ ok: true, flash: text }); };
+
+      const d = reg.data || null;
+      const consent = (d && d.consent) || null;
+      const granted = Boolean(consent && consent.recorded);
+      const hasLib = Boolean(d && d.libraryExists);
+      const rows = (lib && lib.entries) || [];
+      const shown = onlyMissing ? rows.filter((e) => !e.hasRemote) : rows;
+
+      const tone = reg.phase !== 'ok' ? 'var(--dsw-alias-state-error-primary)'
+        : granted && hasLib ? 'var(--dsw-alias-state-success-primary)'
+          : granted ? 'var(--dsw-alias-state-idle-primary)'
+            : 'var(--dsw-alias-state-warn-primary)';
+      // 用词纪律：这一页只说「登记库」，绝不说「未授权 / 已授权」——
+      // 那两个字在「GitHub」页里指账号凭据，混用会让人以为账号掉了。
+      const label = reg.phase === 'idle' ? '读取中…'
+        : reg.phase === 'down' ? '插件接口未就绪'
+          : reg.phase === 'unsupported' ? '宿主未重启（/registry 404）'
+            : hasLib ? ('登记库已建立 · ' + rows.length + ' 个仓库')
+              : granted ? '已有建库许可 · 库还没建'
+                : '登记库未建立 · 等你同意';
+
+      const lastText = !last ? null
+        : last.flash ? last.flash
+          : last.consentRequired ? '闸门拦下：未落盘（问题见上）'
+            : last.error ? ('失败：' + last.error)
+              : last.action === 'verify' ? ('对账：' + (last.inSync ? '一致' : '有漂移'))
+                : typeof last.registered === 'number' ? ('已登记 ' + last.registered + '（远端 ' + last.remoteBound + ' / 无远端 ' + last.withoutRemote + '）')
+                  : last.action === 'revoke' ? '许可已撤销（库保留可读）'
+                    : last.action === 'purge' ? '库已清空'
+                      : last.action === 'plan' ? ('计划：待登记 ' + (last.unregistered ? last.unregistered.length : 0) + ' / 库内 ' + (last.registered || 0))
+                        : '已执行 ' + (last.action || '');
+
+      return h('div', { className: 'ghreg-root' },
+        h('style', null, REG_CSS),
+        h('h2', { className: 'ghreg-h1' }, '仓库登记文件库'),
+        h('p', { className: 'ghreg-lead' },
+          '一仓一文件：registry/repos/*.json ＋ index.json。'
+          + '目录即契约：别的插件/脚本只读它，就知道有哪些仓库、哪些绑了远端。'
+          + '建库要经你同意；本页许可只管建库落盘，和账号登录是两件事。'),
+
+        h(RegSection, { title: '状态' },
+          h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, paddingBottom: 6 } },
+            h(RegBadge, { text: label, tone }),
+            d && d.dir ? h('span', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary)' } }, d.dir) : null),
+          h('div', { className: 'ghreg-row' }, h('span', { className: 'ghreg-k' }, 'GitHub 账号'),
+            h('span', { className: 'ghreg-v' },
+              acct === null ? '读取中…'
+                : acct.authenticated === true ? ('已登录 · ' + (acct.account || '?'))
+                  : acct.authenticated === null ? '检查中…'
+                    : '未登录 · 去「GitHub」页取码')),
+          h('div', { className: 'ghreg-row' }, h('span', { className: 'ghreg-k' }, '登记库许可'),
+            h('span', { className: 'ghreg-v' },
+              granted
+                ? (consent.grants || []).map((g) => g.root + '（深度 ' + (Number.isInteger(g.depth) ? g.depth : '未知→需重新确认') + '）· ' + (g.via || '?')).join('  |  ')
+                : '未许可 · 建库时会先问')),
+          h('div', { className: 'ghreg-row' }, h('span', { className: 'ghreg-k' }, '条目'),
+            h('span', { className: 'ghreg-v' },
+              hasLib ? (rows.length + ' 个 · 远端 ' + (lib.remoteBound || 0) + ' / 无远端 ' + (lib.withoutRemote || 0)) : '未建')),
+          h('div', { className: 'ghreg-row' }, h('span', { className: 'ghreg-k' }, '快照'),
+            h('span', { className: 'ghreg-v' },
+              lib && lib.libraryExists && lib.entries && lib.entries.length
+                ? String((lib.entries.slice().sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')))[0] || {}).updatedAt || '—').replace('T', ' ').slice(0, 19)
+                : '—')),
+          reg.phase === 'unsupported'
+            ? h('p', { className: 'ghreg-answer' }, '宿主未重启：/registry 返回 404，重启后刷新本页。')
+            : null,
+
+          !granted && d && d.ask
+            ? h('div', { className: 'ghreg-ask' },
+              h('div', null, h('b', null, '问题：'), ' ', d.ask.question),
+              h('div', { className: 'ghreg-answer' }, '同意 → 点「建立登记库」；不同意 → 不落盘。'))
+            : null,
+
+          h('div', { className: 'ghreg-actions' },
+            h(RegBtn, { onClick: () => post(API + '/registry/build?consent=1', 'build'), disabled: busy === 'build' },
+              busy === 'build' ? '建立中…' : (granted ? '重建登记库' : '建立登记库')),
+            h(RegBtn, { ghost: true, onClick: () => post(API + '/registry/plan', 'plan'), disabled: busy === 'plan' }, '看计划'),
+            h(RegBtn, { ghost: true, onClick: () => post(API + '/registry/build?rescan=1&consent=1', 'rescan'), disabled: busy === 'rescan' || !granted }, '刷新'),
+            h(RegBtn, { ghost: true, onClick: () => post(API + '/registry/verify', 'verify'), disabled: busy === 'verify' || !hasLib }, '对账'),
+            h(RegBtn, { ghost: true, onClick: () => { setArmPurge(false); post(API + '/registry/revoke', 'revoke'); }, disabled: busy === 'revoke' || !granted }, '撤销许可'),
+            armPurge
+              ? h(RegBtn, { onClick: () => { setArmPurge(false); post(API + '/registry/purge?confirm=1', 'purge'); }, disabled: busy === 'purge' }, '确认清空')
+              : h(RegBtn, { ghost: true, onClick: () => setArmPurge(true), disabled: !hasLib }, '清空…')),
+          lastText ? h('p', { className: 'ghreg-answer' }, lastText) : null,
+          last && last.ask && last.consentRequired
+            ? h('p', { className: 'ghreg-answer' }, '闸门原话：' + last.ask.question)
+            : null),
+
+        h(RegSection, { title: '仓库（' + shown.length + (onlyMissing ? ' / ' + rows.length : '') + '）' },
+          rows.length
+            ? h('div', { className: 'ghreg-actions', style: { marginTop: 0, marginBottom: 6 } },
+              h(RegBtn, { ghost: !onlyMissing, onClick: () => setOnlyMissing(false) }, '全部'),
+              h(RegBtn, { ghost: onlyMissing, onClick: () => setOnlyMissing(true) }, '只看无远端'))
+            : null,
+          shown.length
+            ? shown.map((e) => h('div', { className: 'ghreg-repo', key: e.slug },
+              h('div', { className: 'ghreg-repo-hd' },
+                h('b', null, e.name),
+                h(RegBadge, {
+                  text: remoteText(e),
+                  tone: e.hasRemote ? 'var(--dsw-alias-state-success-primary)' : 'var(--dsw-alias-state-warn-primary)',
+                }),
+                e.dirty ? h('span', { style: { fontSize: 11.5, color: 'var(--dsw-alias-state-warn-primary)' } }, e.dirty + ' 处未提交') : null),
+              h('div', { className: 'ghreg-repo-path' }, e.path),
+              h('div', { className: 'ghreg-repo-meta' },
+                h('span', null, (e.branch || '—') + ' · ' + (e.head || '—')),
+                e.upstream ? h('span', null, e.upstream + ' ↑' + (e.ahead || 0) + '↓' + (e.behind || 0)) : h('span', null, '无 upstream'),
+                h('span', null, String(e.updatedAt || '—').replace('T', ' ').slice(5, 16)))))
+            : h('p', { className: 'ghreg-answer', style: { marginTop: 0 } },
+              !hasLib ? '库里还没条目：点「建立登记库」。' : '没有匹配的仓库。')),
+
+        h(RegSection, { title: '会话里用' },
+          REG_COMMANDS.map((row) => h('div', { className: 'ghreg-cmd', key: row[0] },
+            h('div', null, h('code', null, row[0]), h('em', null, row[1])),
+            h(RegBtn, { ghost: true, onClick: () => flash('丢进会话：' + row[0]) }, '用法')))),
+      );
+    }
+
+    
 
     const wait = (ms) => new Promise((r) => window.setTimeout(r, ms));
 
-    function Badge({ text, tone }) {
-      return h('span', { className: 'ghr-badge', style: { color: tone } }, h('i', { className: 'ghr-dot' }), text);
-    }
-
-    function Btn({ children, onClick, ghost, disabled }) {
-      return h('button', {
-        type: 'button', onClick, disabled: Boolean(disabled),
-        className: ghost ? 'ghr-btn ghr-ghost' : 'ghr-btn',
-      }, children);
-    }
-
-    function Section({ title, children }) {
-      return h('section', { className: 'ghr-sec' }, h('h3', null, title), h('div', { className: 'ghr-card' }, children));
-    }
-
     function Panel() {
       const [svc, setSvc] = React.useState({ phase: 'idle' });
+      const svcRef = React.useRef(svc);
+      svcRef.current = svc;
       const [flow, setFlow] = React.useState(null);
       const [busy, setBusy] = React.useState(false);
       const [copied, setCopied] = React.useState(null);
@@ -94,7 +298,26 @@ window.__ModuleLoader__.load({
           .catch((e) => setSvc({ phase: 'down', message: String((e && e.message) || e) }));
       }, []);
 
-      React.useEffect(() => { load(); }, [load]);
+      React.useEffect(() => {
+        load();
+        let tries = 0;
+        const timer = window.setInterval(() => {
+          const d0 = svcRef.current.data;
+          const ready = Boolean(d0) && !d0.probing
+            && (!d0.probe || d0.probe.state === 'ready' || d0.probe.state === 'failed' || d0.probe.state === 'disabled');
+          if (ready || tries >= 20) { window.clearInterval(timer); return; }
+          tries += 1;
+          load();
+        }, 1500);
+        const onVisible = () => { if (document.visibilityState === 'visible') load(); };
+        document.addEventListener('visibilitychange', onVisible);
+        window.addEventListener('focus', onVisible);
+        return () => {
+          window.clearInterval(timer);
+          document.removeEventListener('visibilitychange', onVisible);
+          window.removeEventListener('focus', onVisible);
+        };
+      }, [load]);
 
       const startAuth = () => {
         setBusy(true);
@@ -117,9 +340,13 @@ window.__ModuleLoader__.load({
         : probing ? 'var(--dsw-alias-label-secondary)'
           : authed ? 'var(--dsw-alias-state-success-primary)'
             : 'var(--dsw-alias-state-warn-primary)';
+      const probe = (d && d.probe) || null;
       const label = svc.phase === 'idle' ? '读取中…'
         : svc.phase === 'down' ? '插件接口未就绪'
-          : probing ? '后台检查中…（未触发）'
+          : probing
+            ? (probe && probe.state === 'disabled' ? '后台检查未启动（DSH_GH_NO_STATE_CHECK=1）'
+              : probe && probe.state === 'failed' ? '后台检查失败（点「立即刷新」看错）'
+                : '后台检查中…（页面会自动刷新）')
             : authed ? ('已授权 · ' + (d.account || '?')) : '未授权';
 
       return h('div', { className: 'ghr-root' },
@@ -176,8 +403,8 @@ window.__ModuleLoader__.load({
                   : ('已是最新 ' + (d.updates.current || '?') + (d.updates.error ? '（版本探测失败：' + d.updates.error.slice(0, 40) + '）' : '')))),
           h('p', { className: 'ghr-when', style: { marginTop: 8 } },
             d && d.cached === false
-              ? '还没有快照：账号检查在后台跑，跑完这里会显示；也可以点「立即刷新」当场查一次。'
-              : '面板只读缓存快照，打开它不会触发任何检查；需要重查时点下面的「立即刷新」。')),
+              ? '还没有快照：账号检查在后台跑，跑完这里会自动刷新（也可以点「立即刷新」当场查一次）。'
+              : '面板只读缓存快照，打开它不会触发阻塞式检查；快照过期后由插件在后台补查，页面会自动跟上。')),
 
         h(Section, { title: '在会话里驱动' },
           COMMANDS.map((row) => h('div', { className: 'ghr-cmd', key: row[0] },
@@ -195,6 +422,14 @@ window.__ModuleLoader__.load({
           order: 60,
           label: 'GitHub',
         }, Panel));
+        // 仓库登记库单独一页：它的「建库许可」与账号凭据是两件互不相干的事。
+        // 用词纪律：这一页只说登记库许可，不说「未授权/已授权」，免得看起来像账号掉了。
+        ctx.slots.inject('settings.section', () => ctx.slots.register({
+          name: 'settings.section',
+          id: 'github-repo-registry',
+          order: 61,
+          label: '仓库登记库',
+        }, RegistryPanel));
       },
     };
   },

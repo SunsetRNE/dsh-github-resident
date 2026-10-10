@@ -1,9 +1,9 @@
 {
   "name": "@local/dsh-github-resident-v2",
-  "version": "1.4.0",
+  "version": "1.6.4",
   "private": true,
   "type": "module",
-  "description": "Resident GitHub identity plus multi-repository commit, push and pull-request tools for this harness profile. Resolves (and when absent, lands) its own gh CLI so no manual gh install is required.",
+  "description": "Resident GitHub identity plus multi-repository commit, push and pull-request tools for this harness profile, with a consent-gated one-file-per-repo Git repository registry. Resolves (and when absent, lands) its own gh CLI so no manual gh install is required.",
   "exports": {
     ".": "./plugin.js",
     "./client": "./client.js",
@@ -21,16 +21,18 @@
     "README.en.md"
   ],
   "scripts": {
-    "verify": "bash verify-bundle.sh && node verify-logout.mjs && node verify-gh-bootstrap.mjs && node verify-update-gc.mjs && node verify-real-artifact.mjs",
+    "verify": "bash verify-bundle.sh && node verify-logout.mjs && node verify-registry.mjs && node verify-ui.mjs && node verify-gh-bootstrap.mjs && node verify-update-gc.mjs && node verify-real-artifact.mjs",
     "verify:bundle": "bash verify-bundle.sh",
     "verify:logout": "node verify-logout.mjs",
+    "verify:registry": "node verify-registry.mjs",
+    "verify:ui": "node verify-ui.mjs",
     "verify:gh": "node verify-gh-bootstrap.mjs",
     "verify:artifact": "node verify-real-artifact.mjs",
     "verify:update": "node verify-update-gc.mjs"
   },
   "meta": {
     "title": "GitHub Resident",
-    "description": "Resident GitHub credentials with multi-repository commit, push and PR tools, self-contained gh provisioning, and full credential teardown."
+    "description": "Resident GitHub credentials with multi-repository commit, push and PR tools, a consent-gated Git repository registry file library, self-contained gh provisioning, and full credential teardown."
   },
   "icon": "./icon.svg",
   "dsh": {

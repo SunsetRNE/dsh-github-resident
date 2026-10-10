@@ -91,7 +91,7 @@ process.env.DSH_GH_RELEASE_API = `http://127.0.0.1:${PORT}/repos/cli/cli/release
 process.env.DSH_GH_DOWNLOAD_BASE = `http://127.0.0.1:${PORT}/dl`;
 
 // ---- 装进假 ctx ----
-const mod = await import(new URL('./index.js', import.meta.url).href);
+const mod = await import(new URL('./plugin.js', import.meta.url).href);
 const tools = new Map();
 mod.apply({
   tools: { register: (t) => tools.set(t.name, t) },
@@ -195,7 +195,7 @@ async function runChild(mode, extraEnv) {
   const r = await new Promise((res) => execFile(process.execPath, ['--input-type=module', '-e', CHILD], {
     env: {
       ...process.env, CHILD_HOME: childHome, CHILD_FAKE: childFake, CHILD_MODE: mode,
-      REAL_PATH, PLUGIN_URL: new URL('./index.js', import.meta.url).href, ...(extraEnv || {}),
+      REAL_PATH, PLUGIN_URL: new URL('./plugin.js', import.meta.url).href, ...(extraEnv || {}),
       DSH_GH_RELEASE_API: process.env.DSH_GH_RELEASE_API, DSH_GH_DOWNLOAD_BASE: process.env.DSH_GH_DOWNLOAD_BASE,
     },
     maxBuffer: 8 * 1024 * 1024,

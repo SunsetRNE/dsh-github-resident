@@ -8,6 +8,7 @@
  *  - 工具全部用 node 内建模块实现（无第三方依赖），bundle 装进 profile 后每个会话常驻。
  */
 import { execFile, spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { promises as fs } from 'node:fs';
 import * as fsSync from 'node:fs';
 import * as os from 'node:os';
@@ -29,7 +30,14 @@ function run(cmd, args, opts = {}) {
   return new Promise((resolve) => {
     execFile(cmd, args, { maxBuffer: 8 * 1024 * 1024, ...opts }, (err, stdout, stderr) => {
       const code = err ? (typeof err.code === 'number' ? err.code : 1) : 0;
-      resolve({ code, stdout: stdout || '', stderr: stderr || '' });
+      // 保留 errno/signal：ENOENT（命令不存在）与「命令返回 1」必须能分开（审计 L8）。
+      resolve({
+        code,
+        stdout: stdout || '',
+        stderr: stderr || '',
+        ...(err && typeof err.code === 'string' ? { errno: err.code } : {}),
+        ...(err && err.signal ? { signal: err.signal } : {}),
+      });
     });
   });
 }
@@ -101,12 +109,12 @@ async function findRepos(root, depth) {
     } catch {
       return;
     }
-    const dirs = entries.filter((e) => e.isDirectory()).map((e) => e.name);
-    if (dirs.includes('.git')) found.push(dir);
+    // worktree / submodule 的 `.git` 是**文件**：只看 isDirectory 会把整棵树漏掉（审计 L1）。
+    if (entries.some((e) => e.name === '.git')) found.push(dir);
     if (level >= depth) return;
-    for (const child of dirs) {
-      if (child === '.git' || child === 'node_modules') continue;
-      await walk(path.join(dir, child), level + 1);
+    for (const child of entries) {
+      if (!child.isDirectory() || child.name === '.git' || child.name === 'node_modules') continue;
+      await walk(path.join(dir, child.name), level + 1);
     }
   }
   await walk(root, 0);
@@ -118,14 +126,7 @@ async function repoStatus(repo) {
   const porcelain = (await git(repo, ['status', '--porcelain'])).stdout.trim();
   const files = porcelain ? porcelain.split('\n').filter(Boolean) : [];
   const remote = (await git(repo, ['remote', 'get-url', 'origin'])).stdout.trim() || '';
-  let ahead = null;
-  let behind = null;
-  const lr = await git(repo, ['rev-list', '--left-right', '--count', '@{upstream}...HEAD']);
-  if (lr.code === 0) {
-    const [b, a] = lr.stdout.trim().split(/\s+/).map((n) => Number(n));
-    behind = b;
-    ahead = a;
-  }
+  const { ahead, behind } = await aheadBehind(repo);
   return { repo, branch, remote, dirty: files.length, ahead, behind, sample: files.slice(0, 15) };
 }
 
@@ -145,13 +146,660 @@ async function commitRepo(repo, message, push) {
   return result;
 }
 
+// ---------- Git 仓库登记文件库（repo registry） ----------
+// 对外契约（同时写进 PROTOCOL.registry，是插件协议的一部分）：
+//  - 一仓一文件：REGISTRY_REPO_DIR/<slug>.json，slug = <basename>-<sha1(绝对路径)[:12]>；
+//    目录本身即事实来源 —— 消费方只读目录就能拿到「当前环境有哪些 Git 仓库、有没有绑远端」，
+//    不必调本插件任何工具。
+//  - 授权才落盘：没有 consent.json 且本次调用没带 consent:true 时，一个字节都不写，
+//    工具只回一个 ask 载荷，让模型把问题原样转给用户。
+//  - 绝不写进仓库内部：所有写入都在 REGISTRY_DIR 之内，登记不改变任何工作树的 dirty 计数。
+//  - URL 落盘前脱敏：https://user:pass@host/... 只保留 https://host/...，token 永不出现在库里。
+
+const REGISTRY_SCHEMA = 'dsh-github-resident/repo-entry';
+const REGISTRY_INDEX_SCHEMA = 'dsh-github-resident/registry-index';
+const REGISTRY_CONSENT_SCHEMA = 'dsh-github-resident/registry-consent';
+const REGISTRY_SCHEMA_VERSION = 2;
+
+const REGISTRY_BASE = process.env.DSH_GH_REGISTRY_DIR || path.join(STATE_DIR, 'github-resident');
+const REGISTRY_DIR = path.join(REGISTRY_BASE, 'registry');
+const REGISTRY_REPO_DIR = path.join(REGISTRY_DIR, 'repos');
+const REGISTRY_INDEX_FILE = path.join(REGISTRY_DIR, 'index.json');
+const REGISTRY_CONSENT_FILE = path.join(REGISTRY_DIR, 'consent.json');
+
+const REGISTRY_ACTIONS = ['status', 'plan', 'build', 'rescan', 'verify', 'forget', 'revoke', 'purge'];
+
+/** 稳定 slug：路径唯一化，同时保持人类可读前缀。 */
+function registrySlug(absPath) {
+  const base = (path.basename(absPath) || 'repo').replace(/[^A-Za-z0-9._-]+/g, '_').replace(/^[._]+/, '').slice(0, 40) || 'repo';
+  return base + '-' + createHash('sha1').update(absPath).digest('hex').slice(0, 12);
+}
+
+/** 远端 URL 脱敏：剥掉 userinfo，绝不把凭据写进登记库。 */
+function redactRemoteUrl(raw) {
+  const url = String(raw || '').trim();
+  if (!url) return '';
+  try {
+    const u = new URL(url);
+    if (u.username || u.password) { u.username = ''; u.password = ''; }
+    return u.toString();
+  } catch {
+    const m = url.match(/^([A-Za-z][A-Za-z0-9+.-]*:\/\/)([^/@]+)@(.*)$/);
+    return m ? m[1] + m[3] : url;
+  }
+}
+
+/** 把一个远端 URL 拆成 { scheme, host, owner, name }；支持 URL 与 git@host:owner/repo 两种写法。 */
+function parseRemoteUrl(raw) {
+  const out = { scheme: null, host: null, owner: null, name: null };
+  const url = String(raw || '').trim();
+  if (!url) return out;
+  let host = '';
+  let p = '';
+  const m1 = url.match(/^([A-Za-z][A-Za-z0-9+.-]*):\/\/(?:[^/@]*@)?([^/]+)\/(.+)$/);
+  if (m1) {
+    out.scheme = m1[1].toLowerCase();
+    host = m1[2];
+    p = m1[3];
+  } else {
+    const m2 = url.match(/^(?:[^@]+@)?([^:]+):(.+)$/);
+    if (m2) { out.scheme = 'ssh'; host = m2[1]; p = m2[2]; }
+  }
+  if (host) out.host = host.replace(/:\d+$/, '');
+  const seg = p.replace(/\.git$/, '').replace(/^\/+/, '').split('/').filter(Boolean);
+  if (seg.length >= 2) { out.owner = seg.slice(0, -1).join('/'); out.name = seg[seg.length - 1]; }
+  else if (seg.length === 1) out.name = seg[0];
+  return out;
+}
+
+function remoteView(raw) {
+  const url = redactRemoteUrl(raw);
+  return { url, ...parseRemoteUrl(url) };
+}
+
+/** 按 host 更新 ~/.git-credentials 的一行：保留其它 host 的凭据，0600 落盘（审计 L6）。 */
+async function writeCredentialLine(file, host, userinfo) {
+  let lines = [];
+  try {
+    lines = (await fs.readFile(file, 'utf8')).split('\n').map((s) => s.trim()).filter(Boolean);
+  } catch { /* 文件不存在就从空开始 */ }
+  const kept = lines.filter((l) => {
+    try { return new URL(l).hostname !== host; } catch { return true; }
+  });
+  kept.push('https://' + userinfo + '@' + host);
+  await fs.writeFile(file, kept.join('\n') + '\n', { mode: 0o600 });
+  await chmodQuiet(file, 0o600);
+  return file;
+}
+
+async function chmodQuiet(p, mode) {
+  await fs.chmod(p, mode).catch(() => {});
+}
+
+/** 原子写：同目录 tmp + rename，0600；目录 0700。 */
+async function writeJsonAtomic(file, data, mode = 0o600) {
+  const dir = path.dirname(file);
+  await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+  await chmodQuiet(dir, 0o700);
+  const tmp = file + '.tmp-' + process.pid + '-' + Date.now();
+  await fs.writeFile(tmp, JSON.stringify(data, null, 2) + '\n', { mode });
+  await fs.rename(tmp, file);
+  await chmodQuiet(file, mode);
+  return file;
+}
+
+/** 相对 upstream 的 ahead/behind；没有 upstream 或 rev-list 失败时都是 null（单一实现，审计 R4）。 */
+async function aheadBehind(repo) {
+  const lr = await git(repo, ['rev-list', '--left-right', '--count', '@{upstream}...HEAD']);
+  if (lr.code !== 0) return { ahead: null, behind: null };
+  const [b, a] = lr.stdout.trim().split(/\s+/).map((n) => Number(n));
+  return { ahead: a, behind: b };
+}
+
+/** 单个仓库的 git 事实；不在仓库里就回 { isRepo:false }。 */
+async function registryGitFacts(repo) {
+  if (!(await isRepo(repo).catch(() => false))) return { isRepo: false, remotes: [] };
+  const branch = (await git(repo, ['rev-parse', '--abbrev-ref', 'HEAD'])).stdout.trim() || '(no-commit)';
+  const head = (await git(repo, ['rev-parse', '--short', 'HEAD'])).stdout.trim() || null;
+  const porcelain = (await git(repo, ['status', '--porcelain'])).stdout.trim();
+  const lines = porcelain ? porcelain.split('\n').filter(Boolean) : [];
+  const lastAt = (await git(repo, ['log', '-1', '--format=%cI'])).stdout.trim() || null;
+  const lastSubject = (await git(repo, ['log', '-1', '--format=%s'])).stdout.trim() || null;
+  const remoteOut = (await git(repo, ['remote', '-v'])).stdout.trim();
+  const remotes = [];
+  for (const line of remoteOut ? remoteOut.split('\n') : []) {
+    const m = line.match(/^(\S+)\s+(\S+)\s+\((fetch|push)\)$/);
+    if (!m) continue;
+    if (remotes.some((r) => r.name === m[1])) continue;
+    remotes.push({ name: m[1], url: m[2] });
+  }
+  const upstreamRaw = (await git(repo, ['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{upstream}'])).stdout.trim();
+  const { ahead, behind } = await aheadBehind(repo);
+  const branchOut = (await git(repo, ['for-each-ref', '--format=%(refname:short)', 'refs/heads'])).stdout.trim();
+  return {
+    isRepo: true,
+    branch,
+    head,
+    detached: branch === 'HEAD' || !head,
+    dirty: lines.length,
+    untracked: lines.filter((l) => l.startsWith('??')).length,
+    clean: lines.length === 0,
+    lastCommitAt: lastAt,
+    lastCommitSubject: lastSubject,
+    remotes,
+    hasRemote: remotes.length > 0,
+    remoteCount: remotes.length,
+    upstream: upstreamRaw || null,
+    ahead,
+    behind,
+    localBranches: branchOut ? branchOut.split('\n').filter(Boolean).length : 0,
+  };
+}
+
+/** 组装一个登记条目；与旧条目合并以保留 notes / tags / registeredAt。 */
+function registryEntryFrom(repo, facts, prev, extra = {}) {
+  const now = new Date().toISOString();
+  // 展开顺序有讲究：remoteView 里的 name 是「URL 里的仓库名」，别让它盖掉远端名（origin / upstream）。
+  const remotes = (facts.remotes || []).map((r) => {
+    const view = remoteView(r.url);
+    return { name: r.name, url: view.url, scheme: view.scheme, host: view.host, owner: view.owner, repoName: view.name };
+  });
+  const origin = remotes.find((r) => r.name === 'origin') || remotes[0] || null;
+  return {
+    schema: REGISTRY_SCHEMA,
+    schemaVersion: REGISTRY_SCHEMA_VERSION,
+    slug: registrySlug(repo),
+    name: path.basename(repo),
+    path: repo,
+    registeredAt: prev?.registeredAt || now,
+    updatedAt: now,
+    source: extra.source || prev?.source || 'scan',
+    notes: extra.notes !== undefined ? extra.notes : (prev?.notes ?? ''),
+    tags: extra.tags !== undefined ? extra.tags : (prev?.tags ?? []),
+    git: { ...facts, isRepo: true, remotes, origin, url: origin ? origin.url : null },
+  };
+}
+
+/** 条目里远端的仓库名：新条目读 repoName，旧条目（schemaVersion 1）从 URL 反解。 */
+function remoteRepoName(remote) {
+  if (!remote) return null;
+  return remote.repoName || parseRemoteUrl(remote.url).name || null;
+}
+
+/** 读整个文件库；文件即事实来源，schema 不符的进 malformed，不静默吞掉。 */
+async function readRegistry() {
+  const out = { exists: false, dir: REGISTRY_REPO_DIR, entries: [], malformed: [] };
+  let names = [];
+  try {
+    names = await fs.readdir(REGISTRY_REPO_DIR);
+  } catch {
+    return out;
+  }
+  out.exists = true;
+  for (const n of names.filter((x) => x.endsWith('.json')).sort()) {
+    const file = path.join(REGISTRY_REPO_DIR, n);
+    try {
+      const entry = JSON.parse(await fs.readFile(file, 'utf8'));
+      if (entry && entry.schema === REGISTRY_SCHEMA) out.entries.push({ ...entry, file });
+      else out.malformed.push({ file, why: 'schema 不匹配（不是本插件的登记条目）' });
+    } catch (e) {
+      out.malformed.push({ file, why: String(e).slice(0, 160) });
+    }
+  }
+  out.entries.sort((a, b) => String(a.path).localeCompare(String(b.path)));
+  return out;
+}
+
+async function readRegistryIndex() {
+  try {
+    return JSON.parse(await fs.readFile(REGISTRY_INDEX_FILE, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+async function readConsent() {
+  try {
+    const c = JSON.parse(await fs.readFile(REGISTRY_CONSENT_FILE, 'utf8'));
+    return c && c.schema === REGISTRY_CONSENT_SCHEMA ? c : { granted: false, malformedFile: REGISTRY_CONSENT_FILE };
+  } catch {
+    return { granted: false };
+  }
+}
+
+/** 授权可以有多条（多 root）；旧形态（单条 root/depth）也认。 */
+function consentGrants(consent) {
+  if (!consent || consent.granted !== true) return [];
+  if (Array.isArray(consent.grants) && consent.grants.length) return consent.grants;
+  if (consent.root) return [{ root: consent.root, depth: Number.isInteger(consent.depth) ? consent.depth : null, grantedAt: consent.grantedAt || null, via: consent.via || null }];
+  return [];
+}
+
+/**
+ * 授权是否覆盖本次请求：root 必须一致（或 '*'），depth 不得悄悄放大。
+ * depth 只保留「扫描深度」一个含义（审计 L3）：缺 depth 字段的旧 grant 不覆盖任何请求
+ * —— 宁可再问用户一次，也不把「字段缺失」当成「不限深度」。
+ */
+function consentCovers(consent, { root, depth }) {
+  for (const g of consentGrants(consent)) {
+    if (g.root !== '*' && g.root !== root) continue;
+    if (!Number.isInteger(g.depth)) continue;
+    if (depth <= g.depth) return true;
+  }
+  return false;
+}
+
+/** 记一条授权：同 root 覆盖，depth 取更大者。 */
+function mergeConsent(consent, { root, depth, via }) {
+  const grants = consentGrants(consent).filter((g) => g.root !== root);
+  grants.push({ root, depth, grantedAt: new Date().toISOString(), via, tool: 'gh_repo_registry' });
+  return {
+    schema: REGISTRY_CONSENT_SCHEMA,
+    schemaVersion: REGISTRY_SCHEMA_VERSION,
+    granted: true,
+    updatedAt: new Date().toISOString(),
+    grants: grants.sort((a, b) => String(a.root).localeCompare(String(b.root))),
+  };
+}
+
+function registryConsentQuestion({ root, depth, action }) {
+  return {
+    question: '是否同意建立 Git 仓库登记文件库？范围 ' + root + '（深度 ' + depth + '），'
+      + '位置 ' + REGISTRY_REPO_DIR + '，一个仓库一个文件；只记录仓库路径与 git 元数据'
+      + '（分支 / HEAD / 脏文件数 / 远端 URL（凭据脱敏）），不写仓库内部的任何文件，不写 token。',
+    options: ['同意建立', '先看计划（action:plan）', '不同意（不登记）'],
+    onAgree: 'gh_repo_registry {action:"' + (action === 'rescan' ? 'rescan' : 'build') + '", consent:true}',
+    onDecline: '不落盘任何文件；登记库不存在时，之后每次调用都会再问一次',
+  };
+}
+
+/** 未授权时的统一回执：不写任何东西，把该问的问题原样交给模型转述。 */
+function consentRequiredPayload({ root, depth, action, consent }) {
+  const view = registryConsentView(consent);
+  return {
+    ok: false,
+    consentRequired: true,
+    wrote: false,
+    action,
+    dir: REGISTRY_REPO_DIR,
+    consentFile: REGISTRY_CONSENT_FILE,
+    consent: view,
+    ask: registryConsentQuestion({ root, depth, action }),
+    instruction: '先按 ask.question 原样向用户提问并等待答复；用户同意后才带 consent:true 重调本工具。不要自行假定同意，也不要先落盘再问。',
+  };
+}
+
+async function registryPlan({ root, depth }) {
+  const exists = await fs.stat(root).then((s) => s.isDirectory()).catch(() => false);
+  if (!exists) return { ok: false, error: 'root 不是目录：' + root, root };
+  const found = await findRepos(root, depth);
+  const reg = await readRegistry();
+  const known = new Set(reg.entries.map((e) => e.path));
+  const unregistered = [];
+  for (const repo of found) if (!known.has(repo)) unregistered.push(repo);
+  return {
+    ok: true,
+    root,
+    depth,
+    found: found.length,
+    registered: reg.entries.length,
+    unregistered,
+    missingFromDisk: reg.entries.filter((e) => !found.includes(e.path)).map((e) => ({ slug: e.slug, path: e.path, why: '库里有、这次扫描没扫到（目录已删或超出 root/depth）' })),
+    unchanged: reg.entries.filter((e) => found.includes(e.path)).length,
+    malformed: reg.malformed,
+  };
+}
+
+function registryIndexObject(entries, meta) {
+  const sorted = entries.slice().sort((a, b) => String(a.path).localeCompare(String(b.path)));
+  return {
+    schema: REGISTRY_INDEX_SCHEMA,
+    schemaVersion: REGISTRY_SCHEMA_VERSION,
+    updatedAt: new Date().toISOString(),
+    action: meta.action,
+    root: meta.root ?? null,
+    depth: meta.depth ?? null,
+    dir: REGISTRY_REPO_DIR,
+    count: sorted.length,
+    remoteBound: sorted.filter((e) => e.git?.hasRemote).length,
+    withoutRemote: sorted.filter((e) => !e.git?.hasRemote).length,
+    entries: sorted.map((e) => ({
+      slug: e.slug,
+      name: e.name,
+      path: e.path,
+      branch: e.git?.branch ?? null,
+      head: e.git?.head ?? null,
+      dirty: e.git?.dirty ?? null,
+      hasRemote: Boolean(e.git?.hasRemote),
+      remoteUrl: e.git?.origin?.url ?? null,
+      host: e.git?.origin?.host ?? null,
+      owner: e.git?.origin?.owner ?? null,
+      upstream: e.git?.upstream ?? null,
+      updatedAt: e.updatedAt,
+    })),
+  };
+}
+
+/** build / rescan 共用：写一仓一文件 + 重建 index.json；可顺带剪掉失效条目。 */
+async function registryWrite({ root, depth, prevSource, action, prune = false, withFacts = true, note, tags, consentRecord }) {
+  const found = await findRepos(root, depth);
+  const reg = await readRegistry();
+  const prevByPath = new Map(reg.entries.map((e) => [e.path, e]));
+  const written = [];
+  for (const repo of found) {
+    const prev = prevByPath.get(repo) || null;
+    const facts = withFacts ? await registryGitFacts(repo) : (prev?.git || { isRepo: true });
+    const entry = registryEntryFrom(repo, facts, prev, { source: prevSource, notes: note, tags });
+    await writeJsonAtomic(path.join(REGISTRY_REPO_DIR, entry.slug + '.json'), entry);
+    written.push(entry);
+    prevByPath.delete(repo);
+  }
+  const pruned = [];
+  if (prune) {
+    for (const stale of prevByPath.values()) {
+      await fs.rm(path.join(REGISTRY_REPO_DIR, stale.slug + '.json'), { force: true });
+      pruned.push({ slug: stale.slug, path: stale.path });
+    }
+  }
+  const index = registryIndexObject(written, { action, root, depth });
+  await writeJsonAtomic(REGISTRY_INDEX_FILE, index);
+  if (consentRecord) await writeJsonAtomic(REGISTRY_CONSENT_FILE, consentRecord);
+  return { written, index, pruned };
+}
+
+async function registryVerify({ root, depth }) {
+  const reg = await readRegistry();
+  const unregistered = [];
+  const registeredMissing = [];
+  const notRepo = [];
+  const outOfScope = [];
+  if (root) {
+    const found = await findRepos(root, depth);
+    const known = new Set(reg.entries.map((e) => e.path));
+    for (const repo of found) if (!known.has(repo)) unregistered.push(repo);
+    const onDisk = new Set(found);
+    for (const e of reg.entries) {
+      if (onDisk.has(e.path)) continue;
+      const present = await fs.stat(e.path).then(() => true).catch(() => false);
+      if (!present) registeredMissing.push({ slug: e.slug, path: e.path, why: '路径已不存在' });
+      else if (await isRepo(e.path).catch(() => false)) outOfScope.push({ slug: e.slug, path: e.path, why: '路径仍是仓库，但不在本次 root/depth 范围内' });
+      else notRepo.push({ slug: e.slug, path: e.path, why: '路径还在，但已不是 git 仓库' });
+    }
+  }
+  return {
+    ok: true,
+    dir: REGISTRY_REPO_DIR,
+    libraryExists: reg.exists,
+    count: reg.entries.length,
+    remoteBound: reg.entries.filter((e) => e.git?.hasRemote).length,
+    withoutRemote: reg.entries.filter((e) => !e.git?.hasRemote).length,
+    drift: { unregistered, registeredMissing, outOfScope, notRepo },
+    inSync: unregistered.length === 0 && registeredMissing.length === 0 && notRepo.length === 0 && outOfScope.length === 0,
+    malformed: reg.malformed,
+  };
+}
+
+function registryLibraryPayload(reg, { prefix, onlyMissingRemote, hasRemote, host, tag } = {}) {
+  let entries = reg.entries;
+  if (prefix) entries = entries.filter((e) => String(e.path).startsWith(prefix));
+  if (onlyMissingRemote) entries = entries.filter((e) => !e.git?.hasRemote);
+  else if (hasRemote === true) entries = entries.filter((e) => e.git?.hasRemote);
+  if (host) entries = entries.filter((e) => e.git?.origin?.host === host);
+  if (tag) entries = entries.filter((e) => Array.isArray(e.tags) && e.tags.includes(tag));
+  const byHost = {};
+  for (const e of reg.entries) {
+    const h = e.git?.origin?.host || '(no-remote)';
+    byHost[h] = (byHost[h] || 0) + 1;
+  }
+  return {
+    dir: REGISTRY_REPO_DIR,
+    count: entries.length,
+    libraryCount: reg.entries.length,
+    remoteBound: entries.filter((e) => e.git?.hasRemote).length,
+    withoutRemote: entries.filter((e) => !e.git?.hasRemote).length,
+    byHost,
+    entries: entries.map((e) => ({
+      slug: e.slug,
+      name: e.name,
+      path: e.path,
+      branch: e.git?.branch ?? null,
+      head: e.git?.head ?? null,
+      dirty: e.git?.dirty ?? null,
+      ahead: e.git?.ahead ?? null,
+      behind: e.git?.behind ?? null,
+      hasRemote: Boolean(e.git?.hasRemote),
+      remoteCount: e.git?.remoteCount ?? 0,
+      remote: e.git?.origin
+        ? { name: e.git.origin.name, url: e.git.origin.url, host: e.git.origin.host, owner: e.git.origin.owner, repo: remoteRepoName(e.git.origin) }
+        : null,
+      remotes: (e.git?.remotes || []).map((r) => ({ name: r.name, url: r.url, host: r.host, owner: r.owner, repo: remoteRepoName(r) })),
+      upstream: e.git?.upstream ?? null,
+      lastCommitAt: e.git?.lastCommitAt ?? null,
+      notes: e.notes ?? '',
+      tags: e.tags ?? [],
+      registeredAt: e.registeredAt,
+      updatedAt: e.updatedAt,
+      file: e.file,
+    })),
+    malformed: reg.malformed,
+  };
+}
+
+async function registryDefaultRoot() {
+  const state = await readState();
+  return state.reposRoot || DEFAULT_ROOT;
+}
+
+function registryConsentView(consent) {
+  const grants = consentGrants(consent);
+  const latest = grants.slice().sort((a, b) => String(b.grantedAt).localeCompare(String(a.grantedAt)))[0] || null;
+  return {
+    recorded: consent?.granted === true,
+    grantCount: grants.length,
+    grants,
+    grantedAt: latest?.grantedAt || null,
+    root: latest?.root || null,
+    depth: latest?.depth ?? null,
+  };
+}
+
+/** 读侧：文件库即事实来源，回「有哪些仓库 + 有没有绑远端」；库不存在就回该问的问题。 */
+async function registryListPayload(opts = {}) {
+  const reg = await readRegistry();
+  const consent = await readConsent();
+  if (!reg.exists) {
+    const root = opts.root || (await registryDefaultRoot());
+    const depth = Number.isInteger(opts.depth) ? opts.depth : 3;
+    return {
+      ok: false,
+      libraryExists: false,
+      consentRequired: consent.granted !== true,
+      dir: REGISTRY_REPO_DIR,
+      consent: registryConsentView(consent),
+      ask: registryConsentQuestion({ root, depth, action: 'build' }),
+      instruction: '登记文件库还不存在：先按 ask.question 向用户提问；用户同意后跑 gh_repo_registry {action:"build", consent:true} 建库，再用本工具读库。',
+    };
+  }
+  return {
+    ok: true,
+    libraryExists: true,
+    action: 'list',
+    consent: registryConsentView(consent),
+    ...registryLibraryPayload(reg, {
+      prefix: opts.prefix,
+      onlyMissingRemote: opts.onlyMissingRemote === true || opts.only_missing_remote === true,
+      hasRemote: opts.hasRemote === true || opts.has_remote === true,
+      host: opts.host,
+      tag: opts.tag,
+    }),
+  };
+}
+
+/** 写侧 / 状态侧唯一入口；工具、Host Service、回环 HTTP 都走这里。 */
+async function registryAction(opts = {}) {
+  const action = String(opts.action || 'status');
+  if (!REGISTRY_ACTIONS.includes(action)) {
+    return { ok: false, error: 'action 未知：' + action, action, known: REGISTRY_ACTIONS };
+  }
+  const root = opts.root || (await registryDefaultRoot());
+  const depth = Number.isInteger(opts.depth) ? opts.depth : 3;
+  const consent = await readConsent();
+  const reg = await readRegistry();
+  const grantedNow = opts.consent === true;
+  const granted = grantedNow || consentCovers(consent, { root, depth });
+
+  if (action === 'status') {
+    return {
+      ok: true,
+      action,
+      root,
+      depth,
+      dir: REGISTRY_DIR,
+      repoDir: REGISTRY_REPO_DIR,
+      indexFile: REGISTRY_INDEX_FILE,
+      consentFile: REGISTRY_CONSENT_FILE,
+      libraryExists: reg.exists,
+      count: reg.entries.length,
+      remoteBound: reg.entries.filter((e) => e.git?.hasRemote).length,
+      withoutRemote: reg.entries.filter((e) => !e.git?.hasRemote).length,
+      malformed: reg.malformed,
+      index: await readRegistryIndex(),
+      consent: registryConsentView(consent),
+      ...(consent.granted ? {} : { ask: registryConsentQuestion({ root, depth, action: 'build' }) }),
+      nextStep: !consent.granted
+        ? '还没授权：跑 action:"plan" 拿计划与 ask，再问用户是否同意建库'
+        : (reg.exists ? '库已就绪：新仓库出现或远端变了就跑 action:"rescan"' : '已授权但库还没建：跑 action:"build"'),
+    };
+  }
+
+  if (action === 'plan') {
+    const plan = await registryPlan({ root, depth });
+    if (!plan.ok) return plan;
+    return {
+      ok: true,
+      action,
+      ...plan,
+      dryRun: true,
+      wrote: false,
+      consentRequired: !granted,
+      consent: registryConsentView(consent),
+      ...(granted ? {} : { ask: registryConsentQuestion({ root, depth, action: 'build' }) }),
+    };
+  }
+
+  if (action === 'verify') {
+    const v = await registryVerify({ root, depth });
+    return { ok: true, action, ...v, consentRequired: !granted, consent: registryConsentView(consent) };
+  }
+
+  if (action === 'forget') {
+    const key = String(opts.path || opts.slug || '').trim();
+    if (!key) return { ok: false, error: 'forget 需要 path 或 slug' };
+    const hit = reg.entries.find((e) => e.path === key || e.slug === key);
+    if (!hit) return { ok: false, error: '库里没有这个条目', key, count: reg.entries.length };
+    await fs.rm(path.join(REGISTRY_REPO_DIR, hit.slug + '.json'), { force: true });
+    const rest = reg.entries.filter((e) => e.slug !== hit.slug);
+    const index = registryIndexObject(rest, { action: 'forget', root, depth });
+    await writeJsonAtomic(REGISTRY_INDEX_FILE, index);
+    return {
+      ok: true, action, removed: { slug: hit.slug, path: hit.path }, count: rest.length,
+      note: '只删登记条目，不碰仓库本身',
+    };
+  }
+
+  if (action === 'revoke') {
+    const existed = await fs.stat(REGISTRY_CONSENT_FILE).then(() => true).catch(() => false);
+    if (existed) await fs.rm(REGISTRY_CONSENT_FILE, { force: true });
+    return {
+      ok: true, action, revoked: existed, libraryKept: reg.exists,
+      count: reg.entries.length, dir: REGISTRY_REPO_DIR,
+      note: '只撤销授权：已建的文件库保留可读，之后的 build/rescan 会重新问一次；要清库用 action:"purge"',
+    };
+  }
+
+  if (action === 'purge') {
+    const consentFileExists = await fs.stat(REGISTRY_CONSENT_FILE).then(() => true).catch(() => false);
+    if (opts.confirm !== true) {
+      return {
+        ok: false, action, confirmRequired: true, dryRun: true, dir: REGISTRY_DIR,
+        wouldRemove: { entries: reg.entries.length, indexFile: reg.exists, consentFile: consentFileExists },
+        hint: '真要清库再带 confirm:true 重调',
+      };
+    }
+    await fs.rm(REGISTRY_DIR, { recursive: true, force: true });
+    return { ok: true, action, removedDir: REGISTRY_DIR, removedEntries: reg.entries.length, removedConsent: consentFileExists };
+  }
+
+  // build / rescan：唯一的落盘路径，先过授权闸门。
+  if (!granted) return consentRequiredPayload({ root, depth, action, consent });
+  const prevPaths = new Set(reg.entries.map((e) => e.path));
+  // 只有「本次调用真的拿到了同意」才重写 consent.json。
+  // 沿用已记录的授权时一律不动它 —— 否则 rescan 会把 via 从 ui:registry-panel / tool:consent:true
+  // 改写成 recorded-consent，审计链就断了（本轮实测到过）。
+  const record = grantedNow ? mergeConsent(consent, { root, depth, via: opts.via || 'tool:consent:true' }) : null;
+  const res = await registryWrite({
+    root,
+    depth,
+    prevSource: action === 'rescan' ? 'rescan' : 'scan',
+    action,
+    prune: opts.prune === true,
+    note: opts.note,
+    tags: Array.isArray(opts.tags) ? opts.tags : undefined,
+    consentRecord: record,
+  });
+  return {
+    ok: true,
+    action,
+    dir: REGISTRY_REPO_DIR,
+    indexFile: REGISTRY_INDEX_FILE,
+    consentFile: REGISTRY_CONSENT_FILE,
+    root,
+    depth,
+    registered: res.written.length,
+    added: res.written.filter((e) => !prevPaths.has(e.path)).length,
+    refreshed: res.written.filter((e) => prevPaths.has(e.path)).length,
+    pruned: res.pruned,
+    remoteBound: res.index.remoteBound,
+    withoutRemote: res.index.withoutRemote,
+    wroteFiles: res.written.length + 1,
+    touchedWorkTrees: false,
+    consent: registryConsentView(record || consent),
+  };
+}
+
+/** gh_sync 工具体与 Host Service sync 的唯一实现（审计 R3：两边各写一遍会漂移）。 */
+async function syncRepos({ root, depth, message, push, dryRun } = {}) {
+  const state = await readState();
+  const useRoot = root || state.reposRoot || DEFAULT_ROOT;
+  const useDepth = Number.isInteger(depth) ? depth : 3;
+  const usePush = push !== false;
+  const useMessage = String(message || `chore: sync ${new Date().toISOString().slice(0, 10)}`);
+  const repos = await findRepos(useRoot, useDepth);
+  const planned = [];
+  for (const repo of repos) {
+    const st = await repoStatus(repo);
+    if (st.dirty > 0) planned.push(st);
+  }
+  if (dryRun) return { root: useRoot, dryRun: true, message: useMessage, wouldCommit: planned.length, repos: planned };
+  const results = [];
+  for (const st of planned) results.push(await commitRepo(st.repo, useMessage, usePush));
+  return {
+    root: useRoot,
+    message: useMessage,
+    scanned: repos.length,
+    committed: results.filter((r) => r.ok).length,
+    failed: results.filter((r) => !r.ok).length,
+    results,
+  };
+}
+
 // ---------- 工具定义 ----------
 
 // ---------- 协议层：工具协议与插件协议的单一事实来源 ----------
 // 任何消费方（其它插件、页面、外部脚本）都应该能只读这一处就知道：
 // 调用什么、传什么、拿到什么、错在哪。
 const PROTOCOL_ID = 'dsh-github-resident';
-const PROTOCOL_VERSION = 4;
+const PROTOCOL_VERSION = 6;
 const PROTOCOL_SPEC = PROTOCOL_ID + '/' + PROTOCOL_VERSION;
 const SERVICE_KEY = 'githubResident';
 
@@ -159,6 +807,8 @@ const TOOL_PROTOCOL = [
   { name: 'gh_resident_status', kind: 'read', required: [], optional: ['root', 'depth'], returns: ['token', 'identity', 'gitGlobal', 'gitCredentials', 'repoCount', 'dirtyRepos', 'repos'] },
   { name: 'gh_resident_login', kind: 'write', required: ['token', 'user_login'], optional: ['user_name', 'user_email', 'repos_root'], returns: ['ok', 'identity', 'credentialHelper', 'gitUser'] },
   { name: 'gh_repos', kind: 'read', required: [], optional: ['root', 'depth'], returns: ['root', 'count', 'repos'] },
+  { name: 'gh_repo_registry', kind: 'write', required: [], optional: ['action', 'root', 'depth', 'consent', 'confirm', 'prune', 'path', 'slug', 'note', 'tags'], returns: ['ok', 'action', 'consentRequired', 'ask', 'dir', 'count', 'registered', 'added', 'refreshed', 'pruned', 'remoteBound', 'withoutRemote', 'drift', 'inSync', 'libraryExists'] },
+  { name: 'gh_repo_registry_list', kind: 'read', required: [], optional: ['root', 'prefix', 'only_missing_remote', 'has_remote', 'host', 'tag'], returns: ['libraryExists', 'dir', 'count', 'libraryCount', 'remoteBound', 'withoutRemote', 'byHost', 'entries', 'malformed'] },
   { name: 'gh_commit', kind: 'write', required: ['repo', 'message'], optional: ['push'], returns: ['ok', 'sha', 'files', 'push'] },
   { name: 'gh_sync', kind: 'write', required: [], optional: ['root', 'depth', 'message', 'push', 'dry_run'], returns: ['root', 'scanned', 'committed', 'failed', 'results'] },
   { name: 'gh_pr', kind: 'write', required: ['repo', 'title'], optional: ['head', 'base', 'body', 'draft'], returns: ['ok', 'number', 'url', 'base', 'status'] },
@@ -180,6 +830,8 @@ const ERROR_CODES = {
   E_NO_UPSTREAM: '仓库没有配置 upstream，push 无处可去',
   E_API: 'GitHub REST API 返回非 2xx',
   E_ARGS: '必填参数缺失或类型不符',
+  E_REGISTRY_CONSENT: '登记文件库尚未获得授权：先按回执里的 ask 问用户，同意后带 consent:true 重调',
+  E_REGISTRY_LIB: '登记文件库不存在：先 gh_repo_registry {action:"build", consent:true} 建库',
   E_INTERFACE_DOWN: '插件回环接口不可达（插件未启用或未刷新页面）',
 };
 
@@ -212,7 +864,7 @@ function textTool({ toolName, description, parameters, execute, readOnly }) {
       const out = await execute(args, exec);
       const plain = out && typeof out === 'object' && !Array.isArray(out);
       return plain
-        ? { protocol: PROTOCOL_SPEC, ok: out.ok !== false, ...out }
+        ? { ...out, protocol: PROTOCOL_SPEC, ok: out.ok !== false }
         : { protocol: PROTOCOL_SPEC, ok: true, data: out };
     },
     isConcurrencySafe: () => Boolean(readOnly),
@@ -294,9 +946,12 @@ export function apply(ctx) {
         ...(args.repos_root ? { reposRoot: args.repos_root } : {}),
         updatedAt: new Date().toISOString(),
       });
-      await fs.writeFile(CRED_FILE, `https://${login}:${token}@github.com\n`, { mode: 0o600 });
-      await fs.chmod(CRED_FILE, 0o600);
-      const setHelper = await git(process.cwd(), ['config', '--global', 'credential.helper', 'store']);
+      // 只替换 github.com 那一行：整文件覆写会把用户其它 host 的凭据一起冲掉（审计 L6）。
+      await writeCredentialLine(CRED_FILE, 'github.com', `${login}:${token}`);
+      const helperBefore = (await git(process.cwd(), ['config', '--global', 'credential.helper'])).stdout.trim();
+      const setHelper = helperBefore && helperBefore !== 'store'
+        ? { code: 0, stdout: helperBefore, stderr: '' }   // 已有非 store 的 helper（如 gh）时不覆盖
+        : await git(process.cwd(), ['config', '--global', 'credential.helper', 'store']);
       const setUser = { name: null, email: null };
       if (args.user_name) {
         await git(process.cwd(), ['config', '--global', 'user.name', String(args.user_name)]);
@@ -310,7 +965,9 @@ export function apply(ctx) {
       return {
         ok: me.ok,
         stateFile: STATE_FILE,
-        credentialHelper: setHelper.code === 0 ? 'store' : 'set failed',
+        credentialHelper: (helperBefore && helperBefore !== 'store')
+          ? helperBefore + '（保留原有 helper，未改写）'
+          : (setHelper.code === 0 ? 'store' : 'set failed'),
         gitUser: setUser,
         reposRoot: state.reposRoot || DEFAULT_ROOT,
         token: mask(token),
@@ -334,8 +991,61 @@ export function apply(ctx) {
       const repos = await findRepos(root, depth);
       const statuses = [];
       for (const repo of repos) statuses.push(await repoStatus(repo));
-      return { root, depth, count: statuses.length, repos: statuses };
+      const reg = await readRegistry();
+      const registered = new Set(reg.entries.map((e) => e.path));
+      const unregistered = statuses.filter((s) => !registered.has(s.repo)).length;
+      return {
+        root,
+        depth,
+        count: statuses.length,
+        repos: statuses,
+        registry: {
+          dir: REGISTRY_REPO_DIR,
+          libraryExists: reg.exists,
+          registered: reg.entries.length,
+          unregistered,
+          remoteBound: statuses.filter((s) => s.remote).length,
+          withoutRemote: statuses.filter((s) => !s.remote).length,
+          hint: !reg.exists
+            ? '仓库登记文件库还没建立：把 gh_repo_registry {action:"plan"} 的计划与 ask.question 交给用户，同意后带 consent:true 建库'
+            : (unregistered > 0 ? '有 ' + unregistered + ' 个仓库尚未登记：跑 gh_repo_registry {action:"rescan"}' : '登记库与环境一致'),
+        },
+      };
     },
+  }));
+
+  ctx.tools.register(textTool({
+    toolName: 'gh_repo_registry',
+    description: 'Build and maintain the Git repository registry file library (one JSON file per repository under ~/.dsh/github-resident/registry/repos, plus index.json): each file records the repo path and its git metadata — branch, HEAD, dirty/untracked counts, ahead/behind, upstream, and remotes with credential-stripped URLs — and nothing is ever written inside a repository. Writing requires the user\'s consent: unless consent:true is passed in this call or a consent file is already recorded for the same root/depth, build and rescan write NOTHING and return {consentRequired:true, ask:{question, options, onAgree}} — relay that question to the user verbatim and wait for the answer. status/plan/verify/forget/revoke never need consent; purge needs confirm:true.',
+    parameters: {
+      action: { type: 'string', enum: REGISTRY_ACTIONS, description: 'status (read) | plan (read dry-run diff) | build (write, needs consent) | rescan (refresh git facts, needs consent) | verify (read drift vs disk) | forget (drop one entry; give path or slug) | revoke (drop the recorded consent, keep the library) | purge (delete the whole library, needs confirm:true). Defaults to status.' },
+      root: { type: 'string', description: 'Directory the registry covers. Defaults to the configured reposRoot, then ~/GitHub.' },
+      depth: { type: 'integer', description: 'Max scan depth. Defaults to 3. Widening root/depth beyond a recorded consent asks again.' },
+      consent: { type: 'boolean', description: 'Set true only after the user explicitly agreed in this conversation. Records the consent file; required the first time and whenever root/depth is widened.' },
+      confirm: { type: 'boolean', description: 'purge only: required to actually delete the library. Without it purge only reports what it would remove.' },
+      prune: { type: 'boolean', description: 'build/rescan: also drop registry entries whose path is gone or out of scope. Defaults to false.' },
+      path: { type: 'string', description: 'forget: absolute path of the entry to drop.' },
+      slug: { type: 'string', description: 'forget: entry slug (basename plus sha1 prefix) instead of path.' },
+      note: { type: 'string', description: 'Free-text note stored on every entry written by this call.' },
+      tags: { type: 'array', items: { type: 'string' }, description: 'Tags stored on every entry written by this call.' },
+    },
+    readOnly: false,
+    execute: async (args) => registryAction(args || {}),
+  }));
+
+  ctx.tools.register(textTool({
+    toolName: 'gh_repo_registry_list',
+    description: 'Read the Git repository registry file library — the plugin protocol\'s on-disk contract, one JSON file per repository — and answer "which Git repositories exist in this environment, and which of them have a remote bound". Pure file-library read: it never scans the filesystem and never writes. If the library does not exist yet, it returns {libraryExists:false, ask:{question, options, onAgree}} for you to relay to the user instead of guessing.',
+    parameters: {
+      root: { type: 'string', description: 'Only used to phrase the consent question when the library is missing.' },
+      prefix: { type: 'string', description: 'Only entries whose absolute path starts with this prefix.' },
+      only_missing_remote: { type: 'boolean', description: 'Only repositories with no remote at all.' },
+      has_remote: { type: 'boolean', description: 'Only repositories that do have a remote.' },
+      host: { type: 'string', description: 'Only repositories whose primary remote host equals this, e.g. github.com.' },
+      tag: { type: 'string', description: 'Only entries carrying this tag.' },
+    },
+    readOnly: true,
+    execute: async (args) => registryListPayload(args || {}),
   }));
 
   ctx.tools.register(textTool({
@@ -365,30 +1075,13 @@ export function apply(ctx) {
       dry_run: { type: 'boolean', description: 'Only report what would be committed. Defaults to false.' },
     },
     readOnly: false,
-    execute: async (args) => {
-      const state = await readState();
-      const root = args.root || state.reposRoot || DEFAULT_ROOT;
-      const depth = Number.isInteger(args.depth) ? args.depth : 3;
-      const push = args.push !== false;
-      const message = String(args.message || `chore: sync ${new Date().toISOString().slice(0, 10)}`);
-      const repos = await findRepos(root, depth);
-      const planned = [];
-      for (const repo of repos) {
-        const st = await repoStatus(repo);
-        if (st.dirty > 0) planned.push(st);
-      }
-      if (args.dry_run) return { root, dryRun: true, message, wouldCommit: planned.length, repos: planned };
-      const results = [];
-      for (const st of planned) results.push(await commitRepo(st.repo, message, push));
-      return {
-        root,
-        message,
-        scanned: repos.length,
-        committed: results.filter((r) => r.ok).length,
-        failed: results.filter((r) => !r.ok).length,
-        results,
-      };
-    },
+    execute: async (args) => syncRepos({
+      root: args.root,
+      depth: args.depth,
+      message: args.message,
+      push: args.push,
+      dryRun: args.dry_run === true,
+    }),
   }));
 
   ctx.tools.register(textTool({
@@ -458,6 +1151,13 @@ export function apply(ctx) {
 
   function versionLine(out) {
     return (out || '').split('\n')[0].trim() || null;
+  }
+
+  /** 从 PATH 解析命令的真实绝对路径（N5：原来把 PATH 里的 gh 报成 /usr/bin/gh）。 */
+  async function whichCmd(name) {
+    const r = await run('sh', ['-c', 'command -v ' + name]);
+    const p = (r.stdout || '').trim().split('\n')[0].trim();
+    return p.startsWith('/') ? p : null;
   }
 
   /** 真跑一次 --version：存在但跑不起来（架构不符/动态库缺）不算可用。 */
@@ -699,7 +1399,9 @@ export function apply(ctx) {
     if (!force && ghMemo && !install) return ghMemo;
     const sys = await probeGh('gh');
     if (sys.ok) {
-      ghMemo = { ok: true, layer: 'system', path: sys.bin === 'gh' ? '/usr/bin/gh' : sys.bin, version: sys.version };
+      // 报告真实路径：下游（buildSnapshot / gh_cli_status / teardown）都是拿这个路径去执行（N5）。
+      const abs = sys.bin === 'gh' ? ((await whichCmd('gh')) || '/usr/bin/gh') : sys.bin;
+      ghMemo = { ok: true, layer: 'system', path: abs, version: sys.version };
       return ghMemo;
     }
     const cached = await probeGh(GH_BIN);
@@ -724,7 +1426,10 @@ export function apply(ctx) {
   /** 旧的强制落地入口（gh_cli_install 用），保留完整诊断。 */
   async function installGh() {
     const sys = await probeGh('gh');
-    if (sys.ok) return { installed: true, alreadyPresent: true, version: sys.version, path: '/usr/bin/gh', layer: 'system' };
+    if (sys.ok) {
+      const abs = sys.bin === 'gh' ? ((await whichCmd('gh')) || '/usr/bin/gh') : sys.bin;
+      return { installed: true, alreadyPresent: true, version: sys.version, path: abs, layer: 'system' };
+    }
     const res = await ensureGh({ force: true });
     return {
       installed: res.ok,
@@ -751,61 +1456,7 @@ export function apply(ctx) {
     return { via: 'none', note: '自行打开返回的 verification_uri' };
   }
 
-  /** 起一次 gh 的设备码流程（用 script 提供 TTY），抓出一次性码后立刻返回，不阻塞。 */
-  function startDeviceFlow(timeoutMs = 9000) {
-    return new Promise((resolve) => {
-      resolveGh().then((g) => {
-        if (!g.ok) {
-          resolve({ child: null, code: null, output: '', error: 'gh 不可用且自带安装未成功', ensure: g.ensure || null });
-          return;
-        }
-        const shellSafe = !/['"\\$`;&|<>]/.test(g.path);
-        if (!shellSafe) {
-          resolve({ child: null, code: null, output: '', error: '自带 gh 路径含 shell 元字符，拒绝拼接：' + g.path });
-          return;
-        }
-        const argv = ['auth', 'login', '--hostname', 'github.com', '--git-protocol', 'https', '--web'];
-        let child = null;
-        let out = '';
-        let feeder = null;
-        const done = (extra = {}) => {
-          if (feeder) clearInterval(feeder);
-          const clean = out
-            .replace(/\u001b\[[0-9;?]*[a-zA-Z]/g, '')
-            .replace(/\u001b[78=]/g, '');
-          const code = (clean.match(/\b[A-Z0-9]{4}-[A-Z0-9]{4}\b/) || [])[0] || null;
-          if (child) child.unref();
-          resolve({ child, code, output: clean.slice(-800), ghPath: g.path, ghLayer: g.layer, ...extra });
-        };
-        try {
-          child = spawn('script', ['-qec', `${g.path} ${argv.join(' ')}`, '/dev/null'], {
-            detached: true,
-            stdio: ['pipe', 'pipe', 'pipe'],
-          });
-        // gh 先问「Authenticate Git with your GitHub credentials? (Y/n)」，再问
-        // 「Press Enter to open github.com in your browser...」。终端重绘会吃掉
-        // 单次输入，所以按节奏重复喂：第一次答 Y，之后一律回车。
-        let n = 0;
-        feeder = setInterval(() => {
-          n += 1;
-          try { child.stdin.write(n === 1 ? 'Y\n' : '\n'); } catch { /* 已退出 */ }
-          if (n >= 10) clearInterval(feeder);
-        }, 550);
-      } catch (err) {
-        resolve({ child: null, code: null, output: '', spawnError: String(err) });
-        return;
-      }
-      const onData = (buf) => { out += buf.toString(); };
-      child.stdout.on('data', onData);
-      child.stderr.on('data', onData);
-      child.on('error', (err) => resolve({ child: null, code: null, output: out, spawnError: String(err) }));
-      const timer = setTimeout(done, timeoutMs);
-      child.on('close', () => { clearTimeout(timer); done({ exited: true }); });
-      });
-    });
-  }
-
-  // gh 的交互流程必须挂在真 TTY 上，`script` 转发非终端 stdin 不可靠；
+    // gh 的交互流程必须挂在真 TTY 上，`script` 转发非终端 stdin 不可靠；
   // 这里用 python3 的 pty.fork 起一个真终端：自动回答两个提示、抓出一次性码，
   // 然后继续持有 pty 不放（gh 仍在轮询），授权完成后 gh 自己把凭据写进 hosts.yml。
   const DEVICE_FLOW_PY = String.raw`
@@ -1276,6 +1927,8 @@ sys.stdout.flush()
         { name: 'protocol', args: [], returns: '本协议文档' },
         { name: 'status', args: [], returns: '{ token, identity, gitGlobal, gitCredentials, repoCount, dirtyRepos, repos }' },
         { name: 'repos', args: '{ root?: string, depth?: number }', returns: '{ root, count, repos }' },
+        { name: 'registry', args: '{ action?, root?, depth?, consent?, confirm?, prune?, path?, slug?, note?, tags? }', returns: '{ ok, action, consentRequired?, ask?, dir, registered|count, remoteBound, withoutRemote, drift? }' },
+        { name: 'registryList', args: '{ root?, prefix?, onlyMissingRemote?, hasRemote?, host?, tag? }', returns: '{ libraryExists, dir, count, libraryCount, remoteBound, withoutRemote, byHost, entries, malformed }' },
         { name: 'sync', args: '{ root?, depth?, message?, push?, dryRun? }', returns: '{ root, scanned, committed, failed, results }' },
         { name: 'authStart', args: [], returns: '{ user_code, verification_uri, opened }' },
         { name: 'logout', args: '{ hostname?, confirm?, revoke?, purge_git?, reset_state?, uninstall_gh?, remove_gh_config?, dry_run? }', returns: '{ ok, dryRun, found|steps, verify, leftover }' },
@@ -1292,6 +1945,13 @@ sys.stdout.flush()
         { method: 'GET', path: '/gh/version', returns: '当前版本 / 最新版本 / 是否可更新' },
         { method: 'POST', path: '/gh/update', returns: '自更新结果（系统层只报告）' },
         { method: 'GET', path: '/protocol', returns: '本文档（机器可读）' },
+        { method: 'GET', path: '/registry', returns: '登记库状态：授权、条目数、有/无远端、index.json' },
+        { method: 'GET', path: '/registry/list', returns: '登记库清单（?prefix= / ?host= / ?tag= / ?missing_remote=1）' },
+        { method: 'POST', path: '/registry/plan', returns: '只读计划：会新登记谁、谁失效（不落盘）' },
+        { method: 'POST', path: '/registry/build', returns: '建库/刷新（?consent=1 且带浏览器来源头才落盘，否则只回 ask）' },
+        { method: 'POST', path: '/registry/verify', returns: '与磁盘对账（未登记 / 已消失 / 不再是仓库 / 越界）' },
+        { method: 'POST', path: '/registry/revoke', returns: '撤授权（库保留）' },
+        { method: 'POST', path: '/registry/purge', returns: '删整棵库（?confirm=1）' },
         { method: 'POST', path: '/auth/start', returns: '一次性码 + 授权页' },
         { method: 'POST', path: '/logout', returns: '凭据拆除勘察或执行结果（token 只回掩码）' },
       ],
@@ -1303,11 +1963,67 @@ sys.stdout.flush()
     },
     tools: TOOL_PROTOCOL,
     errors: ERROR_CODES,
+    registry: {
+      schema: REGISTRY_SCHEMA,
+      schemaVersion: REGISTRY_SCHEMA_VERSION,
+      dir: REGISTRY_DIR,
+      repoDir: REGISTRY_REPO_DIR,
+      indexFile: REGISTRY_INDEX_FILE,
+      consentFile: REGISTRY_CONSENT_FILE,
+      envOverride: 'DSH_GH_REGISTRY_DIR 覆盖整棵数据目录（授权文件、index.json、repos/ 都在它下面）；DSH_GH_API_PORT 改回环端口（默认 31790）',
+      oneFilePerRepo: '<slug>.json，slug = <basename>-<sha1(绝对路径)[:12]>；目录名即事实来源，消费方只读目录即可',
+      entry: {
+        schema: 'string，固定 ' + REGISTRY_SCHEMA,
+        schemaVersion: 'number，当前 ' + REGISTRY_SCHEMA_VERSION + '（1 → 2：远端名与仓库名拆成 name / repoName；1 的条目仍能读，仓库名从 URL 反解）',
+        slug: 'string，文件名（不含 .json）',
+        name: 'string，仓库目录名',
+        path: 'string，仓库绝对路径（主键）',
+        registeredAt: 'string，首次登记时间（ISO8601）',
+        updatedAt: 'string，最近一次刷新时间',
+        source: 'string，scan | rescan | manual',
+        notes: 'string，人工备注（build/rescan 不覆盖已有备注，除非显式传 note）',
+        tags: 'string[]，人工标签',
+        git: {
+          isRepo: 'boolean，探测时是否仍是 git 仓库',
+          branch: 'string，当前分支（游离头为 HEAD）',
+          head: 'string|null，短 SHA',
+          dirty: 'number，git status --porcelain 的行数',
+          untracked: 'number，其中未跟踪条目数',
+          clean: 'boolean，dirty === 0',
+          lastCommitAt: 'string|null，%cI',
+          lastCommitSubject: 'string|null',
+          hasRemote: 'boolean，是否有任何远端',
+          remoteCount: 'number',
+          remotes: '[{ name（远端名，如 origin/upstream）, url, scheme, host, owner, repoName（URL 里的仓库名）}]，url 已剥掉 userinfo',
+          origin: 'object|null，名为 origin 的远端（没有才退回第一个远端）',
+          url: 'string|null，origin.url 的别名',
+          upstream: 'string|null，@{upstream}，没配追踪分支时为 null',
+          ahead: 'number|null，相对 upstream 领先的提交数',
+          behind: 'number|null，相对 upstream 落后的提交数',
+          localBranches: 'number',
+        },
+      },
+      consent: {
+        schema: REGISTRY_CONSENT_SCHEMA,
+        fields: ['granted', 'updatedAt', 'grants[]: { root, depth, grantedAt, via, tool }'],
+        rule: '每个 root 一条 grant；请求的 root 必须命中某条 grant，且请求 depth 不得大于该 grant 的 depth（depth 只有「扫描深度」一个含义；缺 depth 的旧 grant 不覆盖任何请求）；不满足即重新问用户。consent:true 是一次性等价凭据，用后落成一条 grant',
+        provenance: "grant.via 记来源：tool:consent:true（会话里用户同意）/ ui:registry-panel（设置页按钮）/ recorded-consent（沿用旧授权）；HTTP 的 ?consent=1 只接受带 Origin/Referer 的浏览器请求", 
+        revoke: 'action:"revoke" 只删授权文件（库保留可读）；action:"purge" + confirm:true 才删整棵目录',
+      },
+      invariants: [
+        '未授权时 build/rescan 一个字节都不写，只回 { consentRequired:true, ask:{...} }',
+        '所有写入都在 REGISTRY_DIR 之内，绝不写进任何仓库（登记不改变工作树 dirty）',
+        '远端 URL 落盘前剥掉 userinfo；token 永不进入登记库',
+        'index.json 是派生视图：可由 repos/*.json 重建，不作为事实来源',
+      ],
+    },
     guarantees: {
       masking: '任何输出都不含 token 原文，只出现掩码',
       loopbackOnly: 'HTTP 只监听 127.0.0.1',
       readOnlyTools: TOOL_PROTOCOL.filter((t) => t.kind === 'read').map((t) => t.name),
-      idempotent: '只读工具可重复调用；gh_sync 支持 dry_run 预演',
+      idempotent: '只读工具可重复调用；gh_sync 支持 dry_run 预演；registry build/rescan 幂等（同路径同 slug）',
+      registryConsent: '登记库的建立与刷新必须先拿到用户同意：工具只回 ask 载荷，由模型转述给用户',
+      registryWritesOnlyItsOwnDir: '登记过程不在任何仓库里写文件',
     },
   };
 
@@ -1325,29 +2041,15 @@ sys.stdout.flush()
       for (const repo of list) out.push(await repoStatus(repo));
       return { root, count: out.length, repos: out };
     },
-    sync: async (opts = {}) => {
-      const state = await readState();
-      const root = opts.root || state.reposRoot || DEFAULT_ROOT;
-      const depth = Number.isInteger(opts.depth) ? opts.depth : 3;
-      const repos = await findRepos(root, depth);
-      const planned = [];
-      for (const repo of repos) {
-        const st = await repoStatus(repo);
-        if (st.dirty > 0) planned.push(st);
-      }
-      if (opts.dryRun) return { root, dryRun: true, wouldCommit: planned.length, repos: planned };
-      const message = opts.message || 'chore: sync ' + new Date().toISOString().slice(0, 10);
-      const results = [];
-      for (const st of planned) results.push(await commitRepo(st.repo, message, opts.push !== false));
-      return {
-        root,
-        message,
-        scanned: repos.length,
-        committed: results.filter((r) => r.ok).length,
-        failed: results.filter((r) => !r.ok).length,
-        results,
-      };
-    },
+    registry: async (opts = {}) => registryAction(opts),
+    registryList: async (opts = {}) => registryListPayload(opts),
+    sync: async (opts = {}) => syncRepos({
+      root: opts.root,
+      depth: opts.depth,
+      message: opts.message,
+      push: opts.push,
+      dryRun: opts.dryRun === true,
+    }),
     authStart: async () => {
       const flow = await startDeviceFlowPty();
       const opened = await openUrl(GH_DEVICE_URL);
@@ -1377,19 +2079,52 @@ sys.stdout.flush()
   // 这里在 127.0.0.1 上开一个小接口，浏览器直连取状态与一次性码。
   // 只监听回环、只回状态与一次性码，任何 token 都不出现在响应里。
 
-  const API_PORT = 31790;
+  const API_PORT = Number(process.env.DSH_GH_API_PORT) || 31790;
   const API_ORIGIN = 'http://127.0.0.1:' + API_PORT;
   let lastFlow = null;
+  let lastServerError = null;
 
-  function sendJson(res, code, body) {
-    res.writeHead(code, {
+  /** 请求自带的浏览器来源头（Origin 优先，退回 Referer）。 */
+  function pageOriginOf(req) {
+    return String((req && req.headers && (req.headers.origin || req.headers.referer)) || '');
+  }
+
+  /** 只有回环来源算「本机页面」（设置页）；其余一律不给 CORS，也不放行写路由（审计 L4）。 */
+  function originAllowed(req) {
+    try {
+      const u = new URL(pageOriginOf(req));
+      return u.hostname === '127.0.0.1' || u.hostname === 'localhost' || u.hostname === '::1' || u.hostname === '[::1]';
+    } catch {
+      return false;
+    }
+  }
+
+  /** 写路由统一闸门：缺来源头 = 机器调用，只回错，不改任何东西。 */
+  function originGate(res, req, action, code) {
+    if (originAllowed(req)) return false;
+    sendJson(res, 200, {
+      ok: false,
+      action,
+      error: (code || 'E_ORIGIN') + '：这条路由只接受带本机页面来源头（Origin/Referer）的请求',
+      hint: '机器调用请走 gh_* 工具：需要同意时工具先回 ask，由模型把问题交给用户',
+    }, req);
+    return true;
+  }
+
+  function sendJson(res, code, body, req) {
+    const headers = {
       'content-type': 'application/json; charset=utf-8',
-      'access-control-allow-origin': '*',
       'access-control-allow-headers': 'content-type',
       'access-control-allow-methods': 'GET,POST,OPTIONS',
       'cache-control': 'no-store',
-    });
-    res.end(JSON.stringify(body));
+    };
+    // 原来恒发 ACAO:* —— 任意网页都能读本机状态（审计 L4）。改成只回环来源回显。
+    if (originAllowed(req)) {
+      headers['access-control-allow-origin'] = pageOriginOf(req);
+      headers.vary = 'Origin';
+    }
+    res.writeHead(code, headers);
+    res.end(code === 204 ? undefined : JSON.stringify(body));
   }
 
   // ---------- 版本自更新 ----------
@@ -1434,8 +2169,21 @@ sys.stdout.flush()
    * 没有缓存时才真查一次（并把结果缓存起来）。加载期由 scheduleVersionWork() 预热。
    */
   async function versionStatus({ force = false } = {}) {
-    if (!force && versionState && Date.now() - versionState.at < VERSION_PROBE_TTL_MS) return versionState;
-    if (!force && versionState) return versionState;
+    // 读路径永不 fork 子进程：有状态就先回状态，过期只在**后台**回源（审计 L2：
+    // 原来第二条 if 让 TTL 永不生效，长驻进程里 latest 会永久停在首次探测结果）。
+    if (!force && versionState) {
+      if (Date.now() - versionState.at >= VERSION_PROBE_TTL_MS) refreshVersionState().catch(() => {});
+      return versionState;
+    }
+    return refreshVersionState({ force });
+  }
+
+  let versionRefresh = null;
+
+  /** 真正回源查一次版本状态；并发调用共享同一次探测。 */
+  async function refreshVersionState({ force = false } = {}) {
+    if (versionRefresh) return versionRefresh;
+    versionRefresh = (async () => {
     const g = await resolveGh({ install: false });
     const cur = g.ok ? parseGhVersion(g.version) : null;
     const latest = await latestRelease({ force });
@@ -1452,6 +2200,8 @@ sys.stdout.flush()
       ...(lastAutoUpdate ? { lastUpdate: lastAutoUpdate } : {}),
     };
     return versionState;
+    })().finally(() => { versionRefresh = null; });
+    return versionRefresh;
   }
 
   /** 自更新：只换插件自带的那份；系统层只报告。 */
@@ -1510,6 +2260,8 @@ sys.stdout.flush()
   let gcInFlight = null;
 
   async function gcCacheOnce({ dry_run: dryRun = false, keep_versions: keepVersions = 2 } = {}) {
+    // 下限 1：keep_versions:0 原本走 slice(0) 会删光所有版本目录（审计 L7）。
+    keepVersions = Math.max(1, Number.isInteger(keepVersions) ? keepVersions : 2);
     const removed = [];
     const kept = [];
     const sizeOf = async (p) => { try { const s = await fs.stat(p); return s.isDirectory() ? 0 : s.size; } catch { return 0; } };
@@ -1556,6 +2308,9 @@ sys.stdout.flush()
   let snapshotInFlight = null;
   let snapshotTriedAt = 0;
   let lastSnapshotError = null;
+  // 检查阶段：idle 未跑过 / running 进行中 / ready 有结论 / failed 失败 / disabled 被开关关掉
+  //（N4：面板得能分清「进行中」与「从未启动」）
+  let snapshotProbe = { state: 'idle', at: null, error: null };
 
   async function buildSnapshot() {
     const state = await readState();
@@ -1590,11 +2345,49 @@ sys.stdout.flush()
   function refreshSnapshot(force = false) {
     if (!force && snapshot && Date.now() - snapshot.at < SNAPSHOT_TTL_MS) return Promise.resolve(snapshot.data);
     if (snapshotInFlight && !force) return snapshotInFlight;
+    snapshotTriedAt = Date.now();
+    snapshotProbe = { state: 'running', at: new Date().toISOString(), error: null };
     snapshotInFlight = buildSnapshot()
-      .then((data) => { snapshot = { at: Date.now(), data }; return data; })
-      .catch((e) => { lastSnapshotError = { at: new Date().toISOString(), error: String(e).slice(0, 300) }; return snapshot ? snapshot.data : null; })
+      .then((data) => {
+        snapshot = { at: Date.now(), data };
+        snapshotProbe = { state: 'ready', at: new Date().toISOString(), error: null };
+        return data;
+      })
+      .catch((e) => {
+        const error = String(e).slice(0, 300);
+        lastSnapshotError = { at: new Date().toISOString(), error };
+        snapshotProbe = { state: 'failed', at: new Date().toISOString(), error };
+        return snapshot ? snapshot.data : null;
+      })
       .finally(() => { snapshotInFlight = null; });
     return snapshotInFlight;
+  }
+
+  /**
+   * 快照过期就在这里补一次**后台**检查（N2：原来 readSnapshot 只看「有没有快照」，
+   * 不看 age，`SNAPSHOT_TTL_MS` 因此形同虚设，快照一旦建立就永不更新）。
+   * 失败后按 SNAPSHOT_RETRY_MS 退避（N3：这两个量原本声明了却没人用）。
+   */
+  function maybeRefreshStale() {
+    if (snapshotInFlight) return;
+    if (snapshot && Date.now() - snapshot.at < SNAPSHOT_TTL_MS) return;
+    if (snapshotProbe.state === 'failed' && snapshotTriedAt && Date.now() - snapshotTriedAt < SNAPSHOT_RETRY_MS) return;
+    refreshSnapshot(true).catch(() => {});
+  }
+
+  /** 回执里的检查阶段（面板据此如实显示，不再把「没跑」显示成「正在跑」）。 */
+  function probeView() {
+    return {
+      state: snapshotProbe.state,
+      at: snapshotProbe.at,
+      error: snapshotProbe.error,
+      inFlight: Boolean(snapshotInFlight),
+      ttlMs: SNAPSHOT_TTL_MS,
+      retryMs: SNAPSHOT_RETRY_MS,
+      disabled: process.env.DSH_GH_NO_STATE_CHECK === '1',
+      snapshotAt: snapshot ? new Date(snapshot.at).toISOString() : null,
+      snapshotAgeMs: snapshot ? Date.now() - snapshot.at : null,
+    };
   }
 
   /** 读取入口：有快照立刻回；过期就后台刷，不等它。 */
@@ -1606,7 +2399,10 @@ sys.stdout.flush()
   async function readSnapshot({ refresh = false, peek = false } = {}) {
     if (refresh) return refreshSnapshot(true);
     if (peek) return snapshot ? { data: snapshot.data, at: snapshot.at } : { data: null, at: null };
-    if (snapshot) return snapshot.data;
+    if (snapshot) {
+      maybeRefreshStale();   // 过期就后台补，读路径照样不阻塞（N2）
+      return snapshot.data;
+    }
     return {
       gh: { installed: null, version: null, layer: 'checking', path: null, willAutoLand: null },
       authenticated: null, account: null,
@@ -1619,8 +2415,10 @@ sys.stdout.flush()
   /** 设置页首屏只要缓存，不进任何子进程。 */
   async function peekSnapshot() {
     const { data, at } = await readSnapshot({ peek: true });
-    return data ? { ...data, snapshotAt: new Date(at).toISOString(), snapshotAgeMs: Date.now() - at, cached: true }
-      : { cached: false, probing: true, gh: { installed: null, version: null, layer: 'checking', path: null }, authenticated: null, account: null };
+    const probe = probeView();
+    return data
+      ? { ...data, snapshotAt: new Date(at).toISOString(), snapshotAgeMs: Date.now() - at, cached: true, probe }
+      : { cached: false, probing: true, probe, gh: { installed: null, version: null, layer: 'checking', path: null }, authenticated: null, account: null };
   }
 
   /**
@@ -1631,7 +2429,7 @@ sys.stdout.flush()
     const base = (await readSnapshot(opts)) || {};
     if (opts.cached === true && !opts.refresh) {
       const peeked = await peekSnapshot();
-      return { ...peeked, lastFlow, updates: versionState, ...(lastGc ? { lastGc } : {}), cached: peeked.cached === true };
+      return { ...peeked, lastFlow, updates: versionState, ...(lastGc ? { lastGc } : {}), cached: peeked.cached === true, probe: peeked.probe || probeView() };
     }
     const updates = await versionStatus().catch(() => null);
     return {
@@ -1645,6 +2443,7 @@ sys.stdout.flush()
       snapshotAgeMs: snapshot ? Date.now() - snapshot.at : null,
       ...(lastSnapshotError ? { snapshotError: lastSnapshotError } : {}),
       snapshotTtlMs: SNAPSHOT_TTL_MS,
+      probe: probeView(),
     };
   }
 
@@ -1653,43 +2452,123 @@ sys.stdout.flush()
     const server = http.createServer(async (req, res) => {
       try {
         const url = new URL(req.url || '/', API_ORIGIN);
+        const send = (code, body) => sendJson(res, code, body, req);
         if (req.method === 'OPTIONS') {
-          sendJson(res, 204, {});
+          send(204, {});
           return;
         }
         if (url.pathname === '/state') {
           // ?refresh=1 才同步重建；?cached=1 只回缓存（首屏用），默认同样只读快照。
-          sendJson(res, 200, await statePayload({
+          const snap = await statePayload({
             refresh: url.searchParams.get('refresh') === '1',
             cached: url.searchParams.get('cached') === '1',
-          }));
+          });
+          // 面板连的是 31790；端口被占时这里能看出「服务没起来」（审计 L4/L5）。
+          send(200, { ...snap, apiPort: API_PORT, ...(lastServerError ? { serverError: lastServerError } : {}) });
           return;
         }
         if (url.pathname === '/gh/version') {
-          sendJson(res, 200, await versionStatus({ force: url.searchParams.get('force') === '1' }));
+          send(200, await versionStatus({ force: url.searchParams.get('force') === '1' }));
           return;
         }
         if (url.pathname === '/gh/update' && req.method === 'POST') {
-          sendJson(res, 200, await autoUpdate({ force: url.searchParams.get('force') === '1' }));
+          if (originGate(res, req, 'gh-update')) return;
+          send(200, await autoUpdate({ force: url.searchParams.get('force') === '1' }));
           return;
         }
         if (url.pathname === '/protocol') {
-          sendJson(res, 200, PROTOCOL);
+          send(200, PROTOCOL);
+          return;
+        }
+        if (url.pathname === '/registry') {
+          send(200, await registryAction({ action: 'status' }));
+          return;
+        }
+        if (url.pathname === '/registry/list') {
+          send(200, await registryListPayload({
+            prefix: url.searchParams.get('prefix') || undefined,
+            host: url.searchParams.get('host') || undefined,
+            tag: url.searchParams.get('tag') || undefined,
+            onlyMissingRemote: url.searchParams.get('missing_remote') === '1',
+          }));
+          return;
+        }
+        if (url.pathname === '/registry/plan' && req.method === 'POST') {
+          const d = Number(url.searchParams.get('depth'));
+          send(200, await registryAction({
+            action: 'plan',
+            root: url.searchParams.get('root') || undefined,
+            depth: Number.isInteger(d) && d > 0 ? d : undefined,
+          }));
+          return;
+        }
+        if (url.pathname === '/registry/verify' && req.method === 'POST') {
+          send(200, await registryAction({ action: 'verify', root: url.searchParams.get('root') || undefined }));
+          return;
+        }
+        if (url.pathname === '/registry/revoke' && req.method === 'POST') {
+          if (originGate(res, req, 'revoke', 'E_REGISTRY_ORIGIN')) return;
+          send(200, await registryAction({ action: 'revoke' }));
+          return;
+        }
+        if (url.pathname === '/registry/purge' && req.method === 'POST') {
+          // 破坏性动作同样只接受设置页来的请求；工具路径要 confirm:true。
+          const wantsConfirm = url.searchParams.get('confirm') === '1';
+          if (wantsConfirm && !originAllowed(req)) {
+            send(200, {
+              ok: false, action: 'purge', confirmRequired: true, dryRun: true,
+              error: 'E_REGISTRY_ORIGIN：confirm=1 只接受来自设置页的请求（缺 Origin/Referer）',
+            });
+            return;
+          }
+          send(200, await registryAction({ action: 'purge', confirm: wantsConfirm }));
+          return;
+        }
+        if (url.pathname === '/registry/build' && req.method === 'POST') {
+          // 同意是「人自己点的」这件事：?consent=1 只接受带浏览器来源头（Origin/Referer）的请求 ——
+          // 也就是设置页里的按钮。没有来源头的机器调用一律走工具路径：工具先回 ask，由模型问用户。
+          const d = Number(url.searchParams.get('depth'));
+          const wantsConsent = url.searchParams.get('consent') === '1';
+          const action = url.searchParams.get('rescan') === '1' ? 'rescan' : 'build';
+          const root = url.searchParams.get('root') || undefined;
+          if (wantsConsent && !originAllowed(req)) {
+            send(200, {
+              ...(await consentRequiredPayload({
+                root: root || (await registryDefaultRoot()),
+                depth: Number.isInteger(d) && d > 0 ? d : 3,
+                action,
+                consent: await readConsent(),
+              })),
+              error: 'E_REGISTRY_CONSENT_ORIGIN：consent=1 只接受来自设置页的请求（缺 Origin/Referer）',
+              hint: '机器调用请走 gh_repo_registry 工具：它会先回 ask，由模型把问题交给用户',
+            });
+            return;
+          }
+          send(200, await registryAction({
+            action,
+            consent: wantsConsent ? true : undefined,
+            via: wantsConsent ? 'ui:registry-panel' : undefined,
+            prune: url.searchParams.get('prune') === '1',
+            root,
+            depth: Number.isInteger(d) && d > 0 ? d : undefined,
+          }));
           return;
         }
         if (url.pathname === '/logout' && req.method === 'POST') {
-          sendJson(res, 200, await teardown({ confirm: false }));
+          if (originGate(res, req, 'logout')) return;
+          send(200, await teardown({ confirm: false }));
           return;
         }
         if (url.pathname === '/auth/start' && req.method === 'POST') {
+          if (originGate(res, req, 'auth-start')) return;
           if (!(await ghVersion())) {
-            sendJson(res, 200, { ok: false, error: 'gh 不可用，且自带安装没成功；看 gh_cli_install 的 attempts 诊断' });
+            send(200, { ok: false, error: 'gh 不可用，且自带安装没成功；看 gh_cli_install 的 attempts 诊断' });
             return;
           }
           const flow = await startDeviceFlowPty();
           const opened = await openUrl(GH_DEVICE_URL);
           lastFlow = { user_code: flow.code, at: new Date().toISOString(), opened };
-          sendJson(res, 200, {
+          send(200, {
             ok: Boolean(flow.code),
             user_code: flow.code,
             verification_uri: GH_DEVICE_URL,
@@ -1697,12 +2576,21 @@ sys.stdout.flush()
           });
           return;
         }
-        sendJson(res, 404, { error: 'not found' });
+        send(404, { error: 'not found' });
       } catch (err) {
-        sendJson(res, 500, { error: String(err) });
+        send(500, { error: String(err) });
       }
     });
-    server.on('error', () => { /* 端口被占（重复加载）时静默，首个实例继续服务 */ });
+    // 端口被占（重复加载）不该静默：留一条诊断，/state 里能看到（审计 L5）。
+    server.on('error', (e) => {
+      lastServerError = {
+        at: new Date().toISOString(),
+        port: API_PORT,
+        code: e && e.code ? e.code : null,
+        message: String((e && e.message) || e).slice(0, 200),
+        note: '端口被占时首个实例继续服务；本实例的 HTTP 路由不可达',
+      };
+    });
     server.listen(port, '127.0.0.1');
     return server;
   }
@@ -1711,7 +2599,10 @@ sys.stdout.flush()
   // 这样用户第一次调 gh_* 时通常已经就绪，而插件加载本身不被几十 MB 下载拖住。
   /** 加载期唯一一次账号检查：结果落进快照，之后所有读取都只碰内存。 */
   function scheduleStartupChecks() {
-    if (process.env.DSH_GH_NO_STATE_CHECK === '1') return;
+    if (process.env.DSH_GH_NO_STATE_CHECK === '1') {
+      snapshotProbe = { state: 'disabled', at: new Date().toISOString(), error: null };   // N4：面板照实说「未启动」
+      return;
+    }
     refreshSnapshot(true).catch(() => {});
   }
 
@@ -1740,11 +2631,13 @@ sys.stdout.flush()
   if (typeof ctx.effect === 'function') {
     ctx.effect(() => {
       let handle = null;
-      startLoopbackServer(API_PORT).then((s) => { handle = s; });
+      let disposed = false;
+      // dispose 可能早于 listen 回调：那时也要关掉，否则端口留在旧实例手里（审计 L5）。
+      startLoopbackServer(API_PORT).then((s) => { if (disposed) s.close(); else handle = s; });
       scheduleStartupChecks();
       scheduleAutoLand();
       scheduleVersionWork();
-      return () => { if (handle) handle.close(); };
+      return () => { disposed = true; if (handle) handle.close(); };
     });
   } else {
     startLoopbackServer(API_PORT);

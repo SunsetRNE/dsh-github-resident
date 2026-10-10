@@ -48,7 +48,7 @@ await sh('git', ['config', '--global', 'credential.helper', '!/usr/bin/gh auth g
 await sh('git', ['config', '--global', 'credential.https://github.com.helper', '!/usr/bin/gh auth git-credential']);
 
 // ---- 装进假 ctx，抓工具 ----
-const mod = await import(new URL('./index.js', import.meta.url).href);
+const mod = await import(new URL('./plugin.js', import.meta.url).href);
 const tools = new Map();
 const services = new Map();
 mod.apply({

@@ -200,6 +200,75 @@
 
 ---
 
+## 坑 24：先落盘再问用户 = 不可回收
+
+- **现象**：给登记文件库写实现时，"先建库把数据攒起来，之后再加确认"看起来更顺手 —— 但一旦有会话在用户没点头时
+  就把整台机器的仓库路径、远端 URL 落成一堆文件，"撤销"只能靠用户自己去删目录。
+- **真因**：授权闸门不是一个 UI 弹窗，而是**写路径上的唯一入口**。把它写在工具外面（提示词、约定、口头同意），
+  就总有第二个调用方（其它插件、回环 HTTP、脚本）绕过它。
+- **正确做法**：闸门写在唯一的写函数里（`registryAction` 的 build/rescan 分支），未授权时**函数直接返回**
+  `{ consentRequired:true, wrote:false, ask:{ question, options, onAgree } }`，连 `mkdir` 都不执行；
+  同意落成 `consent.json` 里按 root/depth 绑定的 grant，换范围要重新问；`consent:true` 只是一次性等价凭据。
+- **判据**：`verify-registry.mjs` 里 `未授权 build 被闸门拦下`、`未授权时 repos/ 目录不存在`、
+  `未授权时 consent.json 不存在` 三条必须同时 PASS —— 判的是**磁盘上没有任何字节**，不是回执里的一个布尔。
+- **顺带一条**：登记库自己也必须守"不写别人的地盘" —— 所有写入都在 `REGISTRY_DIR` 之内，
+  门禁用 `工作树 dirty 计数不变` 与 `仓库里没多出登记相关文件` 两条挡住"顺手往仓库里塞个 .json"的退化。
+
+---
+
+## 坑 25：把「授权」做成了任何一个调用方都能按的按钮
+
+- **现象**：给登记库配 UI 时，面板必然要打一条 `POST /registry/build?consent=1`；可回环接口对谁都开着，
+  会话里的 agent（有 bash、能 curl）也能按这一条 —— 于是「用户同意」变成了谁都能自称。
+- **真因**：`user-actions.md` 那条规矩是硬的：**授予或确认权限的动作留在人手里**（批准工具调用、回答 agent 的提问、放宽策略）。
+  同意建库正是这一类：它不该存在于「机器可复现」的那条路径上。
+- **正确做法**：两条路径分开 ——
+  ① 人自己点的：设置页按钮 → `consent=1`，路由**要求浏览器来源头**（`Origin`/`Referer`），没有就回
+     `E_REGISTRY_CONSENT_ORIGIN` + 闸门问句，一个字节不写；`grant.via` 记 `ui:registry-panel`，来源可追溯。
+  ② agent 驱动的：工具不落盘，只回 `ask`，由模型把问句交给用户 —— 用户的同意发生在会话里，不是发生在 HTTP 上。
+- **判据**：`verify-ui.mjs` 的 `无 Origin 的 consent=1 被拒` + `被拒时一个字节都没写` + `设置页来源的 consent=1 建成库`
+  + `授权来源记为 ui:registry-panel` 必须同时 PASS。
+- **别夸大**：同 uid 的裸 shell 仍能伪造 `Origin`；挡的是「顺手调用」，真正的门在工具路径。这条要写进 README，不能写成「绝对安全」。
+
+## 坑 26：为了补「没有浏览器」的缺，自己写了个假 React 渲染器
+
+- **现象**：改完设置页面板，想给「面板长什么样」也出一条判据，于是用最小 React 桩把组件渲染成对象树，断言文案里有「绑定 github.com/OWNER/alpha」。
+  它还真红过两条（桩没展开函数组件），修好之后全绿 —— 于是很容易就当成了面板已被验证。
+- **真因**：那套通过只证明我的桩写得对。假渲染器看不见真实样式、主题 token、slot 上下文与布局，
+  而插件开发规范里写得很直白：没有浏览器控制就不要自造渲染器/截图去替代，**视觉验证缺位就直说缺位**。
+- **正确做法**：UI 侧的判据停在能真验的那几层 —— ① 宿主半边在测试端口上真起回环服务、真打面板会打的每条路由（含来源门）；
+  ② client.js 当脚本执行、只 require react、注册出哪两个 `settings.section`（id / order / label）；③ 客户端用到的路径 ⊆ 宿主 `PROTOCOL.http.endpoints`。
+  「长什么样」留给人在设置页里刷新一次亲眼看。
+- **判据**：`verify-ui.mjs` 的 `客户端每条路径都有宿主路由`、`新页 order/label 正确`、`无 Origin 的 consent=1 被拒` 三条，
+  外加它文件头那句「明确不在本件范围内：视觉验证」。
+
+---
+
+## 坑 27：同一个面板里两个「授权」
+
+- **现象**：用户在设置里看到两页 —— 一页「已授权 · SunsetRNE」，另一页「未授权 · 等你点头」，直接问「怎么注成两个页面了？一个有登录，另外一个显示没登录？不应该共用吗？」。
+- **真因**：**账号凭据的「授权」和功能开关的「同意」共用一个词**，而两页各自维护渲染，用户没有任何线索知道这是两件事；再叠上「一个新页」，看起来就像账号被注成了两份。
+- **正确做法**：① 功能许可不许叫「授权」——叫「建库许可」，状态文案叫「登记库未建立 / 登记库已建立」；
+  ② 账号状态两页读同一份来源（`/state?cached=1`），一页只显示、不另存登录态；③ 页内显式写「和账号登录是两件事」，许可行写清它管的是什么。
+- **判据**：`verify-ui.mjs` D 段四条 —— 登记库区域必须出现「登记库未建立 / 建库许可」、不得出现「未授权 / 已授权」、
+  必须读 `/state?cached=1`、必须有「和账号登录是两件事」这类免责描述。改回旧用词立刻红。
+
+---
+
+## 坑 28：一个字段名担两个含义 + 刷新覆盖审计链
+
+- **现象**：条目里写 `remotes = remotes.map(r => ({ name: r.name, ...remoteView(r.url) }))`，而 `remoteView` 也返回一个 `name`（**URL 里的仓库名**）。
+  对象展开顺序让后者静默盖掉前者 —— 于是 `remotes[].name` 永远是仓库名；`remotes.find(r => r.name === 'origin')` 永远找不到 origin，
+  退化成「取列表第一个远端」；多远端仓库（`git remote -v` 里 upstream 排在 origin 前面）会把上游当成 origin 写进 `git.origin`。
+- **真因**：同一个键背两个语义，没有任何类型或断言挡着；而当时的门禁只查 `host/owner/repo` —— 这三项在两种语义下恰好都对，所以它一直绿着。
+- **正确做法**：拆字段 —— `name` 只做远端名，`repoName` 才是 URL 里的仓库名；条目 `schemaVersion` 1 → 2；
+  旧条目仍能读（仓库名从 URL 反解），一次 `rescan` 自动升级。门禁补两条：**远端名不是 origin 的仓库**、
+  **多远端时 origin 命中正确的那一个**，并且把 fixture 造成「upstream 先加、origin 后加」，否则这个 bug 抓不到。
+- **附带一条**：`mergeConsent` 在**沿用**已记录授权时也回写了 `consent.json`，把 `via` 从 `tool:consent:true` / `ui:registry-panel`
+  改写成 `recorded-consent` —— 一次 rescan 就把「当初是谁点头的」抹平了。修法：只有本次真拿到同意才写；门禁查「rescan 后 via 不变」。
+
+---
+
 ## 安装 / 改名 SOP（照这个顺序做，不会炸）
 
 0. 要连带销毁凭据：先 `gh_cli_logout`（`confirm:true, revoke:true, purge_git:true, reset_state:true, uninstall_gh:true`），再往下走。
@@ -208,7 +277,7 @@
 3. 若改了包名：同步 `package.json` / `cordis.patch.yml` / `client.js` 三处 → `mv` 目录。
 4. `plugin_manager remove_bundle <旧包名>`（有就删，会顺手清链接）。
 5. `plugin_manager install_bundle <新目录绝对路径>`。
-6. `npm run verify` → `verify-bundle.sh` 必须 `fail=0`，四个 node 验证件都必须 `failed=0`（`verify-real-artifact.mjs` 断网时 SKIP 不算失败）。
+6. `npm run verify` → `verify-bundle.sh` 必须 `fail=0`，五个 node 验证件都必须 `failed=0`（含 `verify-registry.mjs`）（`verify-real-artifact.mjs` 断网时 SKIP 不算失败）。
 7. 客户端半边改动：**刷新页面**（非 `dev:web` 模式没有热更新）。
 8. 每次宿主重启后：回到第 5 步。
 
