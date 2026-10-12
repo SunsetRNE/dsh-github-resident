@@ -14,8 +14,7 @@
 //   $env:DSH_AUTH_URL='http://127.0.0.1:3080/?token=...'
 //   node tests/diag-live-return-vs-wait.js
 
-const { chromium } = require('playwright')
-
+import { chromium } from 'playwright'
 const AUTH_URL = process.env.DSH_AUTH_URL
 if (!AUTH_URL) { console.error('缺少 DSH_AUTH_URL'); process.exit(1) }
 const GAP_MS = Number(process.env.GAP_MS || 3000)

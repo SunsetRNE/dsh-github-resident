@@ -22,10 +22,11 @@
 //        于是状态栏那一格永远等不到读数（真机日志里的 `host.call.fail` + `chain.derive.error` 就是它）；
 //   三、环境那几步有结论（不是全 pending、也不是 `ok:false`），且真客户端的 `loadChain` 跑完之后
 //      会话状态里真的有了链快照、`envLabel` 不再是 `--` —— 这才是「进工作区后环境被检测过一次」。
-const path = require('path')
-const { pathToFileURL } = require('url')
-const { compileFn } = require('./lib/eval-probe.js')
-
+import path from 'node:path'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+import { compileFn } from './lib/eval-probe.js'
+import * as nodeFs from 'node:fs'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0
@@ -173,7 +174,7 @@ async function main () {
     const env = await res.json()
     return env && env.result
   } } } : undefined) }))
-  const chainSrc = require('fs').readFileSync(path.join(ROOT, 'src/client/kernel/probe-chain.js'), 'utf8')
+  const chainSrc = nodeFs.readFileSync(path.join(ROOT, 'src/client/kernel/probe-chain.js'), 'utf8')
   const cache = new Map()
   const keyOf = (cwd, bid, lang) => String(cwd) + '|' + String(bid || '') + '|' + String(lang || '')
   const sandbox = {

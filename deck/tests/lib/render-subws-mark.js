@@ -19,12 +19,15 @@
  *   r.hostCalls   给 host.call 的调用记录（用来断言「点一下打开工作区根」）
  *   r.hasLink     渲染结果里有没有那圈可点的链接
  */
-const fs = require('fs')
-const path = require('path')
-const { JSDOM } = require('jsdom')
-// 本文件选 compileFn 手法：两处都只是把真源码文本当函数体造函数，能一眼看清放进去哪些名字，也避开集中扫描器只认文本形状的判定。
-const { compileFn } = require('./eval-probe.js')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import { JSDOM } from 'jsdom'
+import { compileFn } from './eval-probe.js'
+import React from 'react'
+import ReactDOMClient from 'react-dom/client'
+import { act } from 'react'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..', '..')
 const MARK_REL = 'src/client/views/SubworkspaceMark.js'
 
@@ -111,10 +114,6 @@ async function renderMark(store, opts) {
   global.IS_REACT_ACT_ENVIRONMENT = true
   window.IS_REACT_ACT_ENVIRONMENT = true
 
-  const React = require('react')
-  const ReactDOMClient = require('react-dom/client')
-  const { act } = require('react')
-
   const tr = function (key, params) {
     let s = (key === 'panel.wsMarkTip') ? tips[lang] : key
     if (params) s = s.replace(/\{(\w+)\}/g, function (m, name) { return (name in params) ? String(params[name]) : m })
@@ -184,4 +183,4 @@ async function renderMark(store, opts) {
   }
 }
 
-module.exports = { renderMark: renderMark, tipsFromLocale: tipsFromLocale, keyOfFn: keyOfFn, tipTextOf: tipTextOf, ROOT: ROOT }
+export { renderMark, tipsFromLocale, keyOfFn, tipTextOf, ROOT }

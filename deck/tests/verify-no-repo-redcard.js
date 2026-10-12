@@ -3,7 +3,7 @@
 // 2026-08-28 B Timeline 定版修订：全屏红卡（ListTab 首屏）与顶部弱化/重置卡退役——
 //   远端未关联由检查页行内红卡（gh:remote FAIL 行）表达；本门禁改为验组件/表单/提交链路保留、
 //   ListTab/ChecksTab「不再挂载红卡与顶部错误信息」，其余（i18n/样式 token/dismiss 状态机/initPublish 链路）维持。
-const fs = require('fs');
+import fs from 'node:fs'
 const host = fs.readFileSync('host.js', 'utf8');
 const pkgHost = fs.readFileSync('package/lib/index.js', 'utf8');
 const pubSrc = fs.readFileSync('src/host/publishFlow.js', 'utf8'); // #450 H6：initPublish 体已搬入 publishFlow.js（注册仍在 host），体断言跟随

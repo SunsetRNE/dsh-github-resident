@@ -10,11 +10,11 @@
 // 本票没有把任何产物拼进客户端闭包，所以这里不查行首 export 与版本占位符；
 // 将来哪一票真要拼，那一票把这两条检查加进来。
 // 用法：node tests/verify-version-control-freshness.js（在仓库根目录）
-const fs = require('fs')
-const path = require('path')
-const { spawnSync } = require('child_process')
-const { pathToFileURL } = require('url')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import { spawnSync } from 'node:child_process'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 const check = (ok, msg) => { console.log((ok ? '  PASS ' : '  FAIL ') + msg); if (!ok) failed = true }

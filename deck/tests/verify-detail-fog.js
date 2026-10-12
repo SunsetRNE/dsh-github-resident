@@ -1,13 +1,13 @@
 // verify-detail-fog.js — 分层 MapDetail 迷雾/四态数据验证（T3 #444）
 // 断言：快照中每 map 的票 level 分层正确、被阻塞票可识别为迷雾、四态动作映射可推导
 // 用法: node tests/verify-detail-fog.js <仓库根目录>
-const fsx = require('fs')
+import fsx from 'node:fs'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const fsp = fsx.promises
-const path = require('path')
-const { spawn } = require('child_process')
-// 按文本求值走共用入口，理由与用法见 tests/lib/eval-probe.js 文件头。
-const { compileFn } = require('./lib/eval-probe.js')
-
+import path from 'node:path'
+import { spawn } from 'node:child_process'
+import { compileFn } from './lib/eval-probe.js'
 const REPO_CWD = process.argv[2] || process.cwd()
 const HOST_JS = path.join(__dirname, '..', 'host.js')
 

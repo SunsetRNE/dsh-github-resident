@@ -12,10 +12,9 @@
 //   ③ 面板内容出现之后，还在等什么（内容长齐用了多久）
 //   ④ 这段时间前端调了宿主哪些接口、各自多久（宿主侧真身从插件自己的日志里读）
 
-const { chromium } = require('playwright')
-const fs = require('node:fs')
-const path = require('node:path')
-
+import { chromium } from 'playwright'
+import fs from 'node:fs'
+import path from 'node:path'
 const AUTH_URL = process.env.DSH_AUTH_URL
 if (!AUTH_URL) { console.error('缺少 DSH_AUTH_URL'); process.exit(1) }
 

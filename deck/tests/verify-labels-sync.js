@@ -1,7 +1,9 @@
 // verify-labels-sync.js — #188 单源标签名子集校验（仅比 name，上游 19 中含 10 即 ok）
 // 用法: node tests/verify-labels-sync.js
-const fs = require('fs')
-const path = require('path')
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 let failed=false
 const check=(ok,msg)=>{ console.log((ok?'  PASS ':'  FAIL ')+msg); if(!ok) failed=true }
 

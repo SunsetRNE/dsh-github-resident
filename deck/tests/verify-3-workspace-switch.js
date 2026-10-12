@@ -15,9 +15,13 @@
  *      （repoKeys/repoRoots/chainCache/workspaceStore/wf.detect/wf.chain/wf.snapshot/wf.bind/
  *      建仓失效点/detect 入口）必须出现规整钥匙调用（门禁扫描先例：verify-client-hardcode-gate）。
  */
-const fs = require('fs')
-const path = require('path')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import * as nodePath from 'node:path'
+import * as nodePath2 from 'node:path'
+import * as nodeUrl from 'node:url'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 let failed = false
 let passed = 0
 const ok = function (name) { passed++; console.log('  PASS', name) }
@@ -25,12 +29,12 @@ const bad = function (name) { failed = true; console.log('  FAIL', name) }
 
 const BS = String.fromCharCode(92) // 反斜杠（路径构造用，避免源码转义噪音）
 const W = function (s) { return s.split('/').join(BS) } // 'D:/work/a' → 'D:' + BS + 'work' + BS + 'a'
-const winPlat = { os: 'win32', path: require('path').win32 }
-const posixPlat = { os: 'linux', path: require('path').posix }
+const winPlat = { os: 'win32', path: nodePath.win32 }
+const posixPlat = { os: 'linux', path: nodePath2.posix }
 
 async function main() {
   const fp = path.resolve(__dirname, '..', 'src', 'host', 'workspaceKey.js')
-  const wm = await import(require('url').pathToFileURL(fp).href)
+  const wm = await import(nodeUrl.pathToFileURL(fp).href)
   const norm = wm.normalizeWorkspacePath
   const canon = wm.canonicalWorkspaceKey
 

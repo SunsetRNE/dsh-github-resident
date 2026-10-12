@@ -14,10 +14,11 @@
  *   D. 归属标志：只在「所选目录 ≠ 工作区根」时出现，浮层文本按定稿四行的顺序拼出来。
  *   E. 双产物一致：client.js 与 package/lib/client.js 都带着这套接线。
  */
-const fs = require('fs')
-const path = require('path')
-const { compileFn } = require('./lib/eval-probe.js')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import { compileFn } from './lib/eval-probe.js'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const root = path.resolve(__dirname, '..')
 let failed = false
 let passed = 0

@@ -5,10 +5,11 @@
 // 要求：写开关函数的三条失败路各落一条告警级分类行，复用现成常驻事件
 //   host.call.fail（不新增事件名、不碰 54 总数），字段只用白名单三键
 //  （method、kind、errorHash），告警级始终落盘、不依赖调试开关。
-const fs = require('fs')
-const path = require('path')
-const { compileFn } = require('./lib/eval-probe.js')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import { compileFn } from './lib/eval-probe.js'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

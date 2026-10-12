@@ -14,9 +14,10 @@
 //   六、界面接线与门禁：视图里零中文字面量、文案走词条、中英词条成对、图标与窄面板三档都在，
 //       常驻日志点落在内核文件（渲染目录的日志白名单一个字没动），双产物都带上新内核片。
 // 用法: node tests/verify-685-healthcheck-button.js
-const fs = require('fs')
-const path = require('path')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

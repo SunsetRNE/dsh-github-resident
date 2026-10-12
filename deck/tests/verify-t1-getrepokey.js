@@ -10,13 +10,11 @@
 //   ② 场景 6（cwd 是子目录）是本仓库里唯一一条按「会话所选目录在仓库子目录里」跑的用例：#652 起
 //      工作区身份要锚到工作区根，场景 6 就是这条规则的回归点——cwd 在子目录里，照样命中仓库根那个仓库。
 
-const fsx = require('fs')
+import fsx from 'node:fs'
 const fsp = fsx.promises
-const path = require('path')
-const { spawn, spawnSync } = require('child_process')
-const os = require('os')
-
-// ---------- mock subprocess：git 走真二进制；gh 走 mock（cwd 含 .git 才返回成功） ----------
+import path from 'node:path'
+import { spawn, spawnSync } from 'node:child_process'
+import os from 'node:os'
 const ghCalls = []
 /** 这条命令是不是被 mock 的那条 gh：宿主在不同链上写的是 'gh'，解析出来的可能是 MOCK_GH 或真路径。 */
 function isGhArgv(arg0) {

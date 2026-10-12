@@ -16,9 +16,12 @@
  *
  * 用法：node tests/verify-964-same-key-ride.js
  */
-const nodePath = require('path')
-const { pathToFileURL } = require('url')
-
+import nodePath from 'node:path'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+import * as nodeOs from 'node:os'
+import * as nodeFs from 'node:fs'
+import path from 'node:path'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = nodePath.resolve(__dirname, '..')
 const url = (rel) => pathToFileURL(nodePath.join(ROOT, rel)).href
 
@@ -34,7 +37,7 @@ function must(cond, invariant, detail) {
 function title(t) { console.log('\n' + t) }
 
 const OS = process.platform === 'win32' ? 'win32' : (process.platform === 'darwin' ? 'darwin' : 'linux')
-const PLATFORM = { os: OS, path: nodePath, async getHome() { return require('os').homedir() } }
+const PLATFORM = { os: OS, path: nodePath, async getHome() { return nodeOs.homedir() } }
 
 function makeChainTable() {
   const m = new Map()
@@ -183,7 +186,7 @@ async function main() {
 
   title('七）日志纪律：只复用已有事件名，不新增')
   {
-    const src = require('fs').readFileSync(nodePath.join(ROOT, 'src/host/detectChain.js'), 'utf8')
+    const src = nodeFs.readFileSync(nodePath.join(ROOT, 'src/host/detectChain.js'), 'utf8')
     must(src.indexOf('dedup.hit') >= 0, '在途命中复用已有事件 dedup.hit', 'dedup.hit missing')
     const hits = Array.from(src.matchAll(/fire\s*\(\s*['"](?:info|debug|warn|error)['"]\s*,\s*['"]([^'"]+)['"]/g)).map((m) => m[1])
     const fresh = hits.filter((e) => /ride|merge|coalesc/i.test(e))

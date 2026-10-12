@@ -17,9 +17,9 @@
 //   二、两份回包的键集合必须完全一样（杜绝再次各拼一份信封）。
 //
 // 用法：node tests/verify-reply-envelope-parity.js（在插件根目录）
-const path = require('path')
-const { pathToFileURL } = require('url')
-
+import path from 'node:path'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 
 let failed = false

@@ -13,7 +13,7 @@
 //   7) skilldesc 文案评审（第一性原理）：
 //      —— 27 条 skill 全部命中 zh + en 两块字典，键集合相等
 //      —— 旧版「自指 / jargon-only / 元评论」关键词不得出现
-const fs = require('fs')
+import fs from 'node:fs'
 const files = process.argv.slice(2)
 const targets = files.length ? files : ['client.js', 'package/lib/client.js']
 let failed = false

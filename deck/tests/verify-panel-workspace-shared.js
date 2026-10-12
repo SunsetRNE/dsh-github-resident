@@ -11,11 +11,12 @@
  *  - 双产物一致性
  *  - 行为模拟：同 cwd 两种写法归并一组且只求值一次、版本最新者胜、在途复用
  */
-const fs = require('fs')
-const path = require('path')
-const crypto = require('crypto')
-const assert = require('assert')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import crypto from 'node:crypto'
+import assert from 'node:assert'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const root = path.resolve(__dirname, '..')
 let failed = false
 let passed = 0

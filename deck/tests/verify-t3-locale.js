@@ -3,7 +3,7 @@
 // 验证：
 //   1) zh/en 字典键完全一致（双语平衡）
 //   2) 所有 tr('...') 调用键都存在（无悬空键；以 '.' 结尾的键为动态前缀，校验前缀存在）
-const fs = require('fs')
+import fs from 'node:fs'
 const files = process.argv.slice(2)
 const targets = files.length ? files : ['client.js', 'package/lib/client.js']
 let failed = false

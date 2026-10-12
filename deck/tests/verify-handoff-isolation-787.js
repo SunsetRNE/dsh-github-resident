@@ -10,10 +10,9 @@
 //
 // 本测试不复制业务逻辑：从目标文件提取真实函数源码并在沙箱以忠实替身执行
 // （与 verify-handoff-split.js 同范式），能抓住“逻辑改坏 / 双源漂移”两类回归。
-const fs = require('fs')
-const assert = require('assert')
-const { compileFn } = require('./lib/eval-probe.js')
-
+import fs from 'node:fs'
+import assert from 'node:assert'
+import { compileFn } from './lib/eval-probe.js'
 const files = process.argv.slice(2).length ? process.argv.slice(2) : ['client.js', 'package/lib/client.js']
 const readSrc = (f) => fs.readFileSync(f, 'utf8')
 

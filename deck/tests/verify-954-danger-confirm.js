@@ -16,9 +16,10 @@
 //   - 主理人接盘时确认框与留痕横幅搬进了新叶子 statusbar/LogDangerConfirm.js（菜单叶子贴 350 行粒度红线，
 //     照 #851 样式叶子的做法另起），所以第 2/3/4 组断言读「菜单叶子 + 新叶子」两份合起来的内容；
 //     第 1 组与日志那条仍只盯菜单叶子（状态与调用留在那儿）。
-const path = require('path')
-const fs = require('fs')
-
+import path from 'node:path'
+import fs from 'node:fs'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

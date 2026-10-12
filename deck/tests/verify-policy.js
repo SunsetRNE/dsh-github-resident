@@ -6,9 +6,9 @@
 // 另断言三档降级顺序（先降「别处变化」的灵敏度，再降后台对账的频率，最后才动本地写入的即时性），
 // 且四个档位的数值全部等于 budget.js 的常量本身（证明数字只有一个来源，没有在 policy.js 里重写一份）。
 // 最后带一层「断言装置自检」：把裁决改坏成四种错法，同一套断言必须判红——门禁自己有牙齿。
-const path = require('path')
-const { pathToFileURL } = require('url')
-
+import path from 'node:path'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

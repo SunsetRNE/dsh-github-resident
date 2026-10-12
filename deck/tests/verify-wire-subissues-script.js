@@ -30,11 +30,12 @@
  * 假 gh 刻意贴真 gh：未知票报错（不是返回空正文）、拒绝自挂与改挂、拒绝重复边、按 per_page 截断、
  * 正文按服务端规则归一化（CRLF→LF）。可用 FAKE_GH_FAIL_AT / FAKE_GH_* 开关切换失败与不支持。
  */
-const fs = require('fs')
-const path = require('path')
-const os = require('os')
-const { spawnSync } = require('child_process')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import os from 'node:os'
+import { spawnSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.join(__dirname, '..')
 const SCRIPT = path.join(ROOT, 'scripts', 'wire-subissues.mjs')
 const SIBLING_SCRIPT = path.join(ROOT, 'scripts', 'fix-issue-body.mjs')

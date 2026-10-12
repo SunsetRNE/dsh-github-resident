@@ -18,11 +18,11 @@
 //      · 喂给处理链的那一份必须按链自己的判据成形（16 位根指纹 + 白名单里的后端名），
 //        **链真的把它记下来**、界面的读数里真的出现那一张票；
 //      · 没上报过的工作区同一笔必须被推迟（负控）。
-const path = require('path')
-const os = require('os')
-const fs = require('fs')
-const { pathToFileURL } = require('url')
-
+import path from 'node:path'
+import os from 'node:os'
+import fs from 'node:fs'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

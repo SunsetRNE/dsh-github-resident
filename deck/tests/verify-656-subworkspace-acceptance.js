@@ -28,14 +28,14 @@
  *
  * 用法：node tests/verify-656-subworkspace-acceptance.js
  */
-const fsx = require('fs')
+import fsx from 'node:fs'
+import path from 'node:path'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const fsp = fsx.promises
-const nodePath = require('path')
-const nodeOs = require('os')
-const { pathToFileURL } = require('url')
-// 本文件按文本求值统一走共用入口 compileFn：把真源文本配假零件造成模块（理由与用法见 tests/lib/eval-probe.js 文件头）。
-const { compileFn } = require('./lib/eval-probe.js')
-
+import nodePath from 'node:path'
+import nodeOs from 'node:os'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+import { compileFn } from './lib/eval-probe.js'
 const ROOT = nodePath.resolve(__dirname, '..')
 const read = (rel) => fsx.readFileSync(nodePath.join(ROOT, rel), 'utf8')
 const noExport = (s) => s.replace(/^[ \t]*export[ \t]+/gm, '')

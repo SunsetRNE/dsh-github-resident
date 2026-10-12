@@ -1,4 +1,4 @@
-const fs = require("fs")
+import fs from 'node:fs'
 let failed = false
 const check = (ok, msg) => { console.log((ok ? "  PASS " : "  FAIL ") + msg); if (!ok) failed = true }
 const files = ["client.js", "package/lib/client.js"]

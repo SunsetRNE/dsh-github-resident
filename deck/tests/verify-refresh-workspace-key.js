@@ -16,11 +16,11 @@
 //      其中 ① 与 ② 正是真机那次错位的两半。
 //   三、反证：把 cwd **原文**喂给闸，它就是另一格（后台档被判 background-inactive 推迟）——
 //      这条判据有牙齿，改动把钥匙改回原文时，本门禁的第二组断言会红。
-const path = require('path')
-const fs = require('fs')
-const os = require('os')
-const { pathToFileURL } = require('url')
-
+import path from 'node:path'
+import fs from 'node:fs'
+import os from 'node:os'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

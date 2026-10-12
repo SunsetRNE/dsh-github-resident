@@ -10,8 +10,10 @@
 //   5) 本地存档两把钥匙名不动（dsws.cfg / dsws.templates），旧模板读取仍合并。
 //
 // 用法：在插件根目录执行 node tests/verify-config-defaults.js，可独立运行。
-const fs = require('fs')
-const path = require('path')
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const root = path.resolve(__dirname, '..')
 const read = (rel) => fs.readFileSync(path.join(root, rel), 'utf8')
 

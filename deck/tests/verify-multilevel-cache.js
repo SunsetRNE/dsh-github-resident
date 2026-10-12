@@ -10,10 +10,11 @@
  *  - 淘汰逻辑行为模拟：超出 SNAP_DISK_CAP 按最旧淘汰
  *  - 双产物一致：client.js 与 package/lib/client.js 均含上述接线
  */
-const fs = require('fs')
-const path = require('path')
-const assert = require('assert')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import assert from 'node:assert'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const root = path.resolve(__dirname, '..')
 let failed = false
 let passed = 0

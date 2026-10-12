@@ -4,9 +4,10 @@
 // 调用预算：坏号全链最多4次（GraphQL2：普通工单1＋拉取请求1；REST2：/issues1＋/pulls1；每路各一次）。
 // 快照提示错配多一次往返可接受（先按提示查，不中再走另一路）；限流走既有降级通道，不在本探针单测。
 // 运行：node tests/verify-524-pr-detail.js
-const fs = require('fs')
-const path = require('path')
-const { pathToFileURL } = require('url')
+import fs from 'node:fs'
+import path from 'node:path'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 let pass = 0
 let fail = 0
 const check = (ok, msg) => { if (!ok) { fail++; console.error('FAIL', msg) } else { pass++; console.log('PASS', msg) } }

@@ -14,10 +14,12 @@
  * 用法：node tests/verify-bundled-discovery.js
  * 退出码 0 = 通过，1 = 失败
  */
-const { readFileSync, existsSync, readdirSync, statSync, mkdtempSync, rmSync, writeFileSync } = require('node:fs')
-const path = require('node:path')
-const os = require('node:os')
-
+import { readFileSync, existsSync, readdirSync, statSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import path from 'node:path'
+import os from 'node:os'
+import fsM from 'node:fs'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 const BUNDLED_DIR_CANDIDATES = [
   path.join(ROOT, 'package/bundled-skills'),
@@ -171,7 +173,6 @@ async function main() {
   try {
     tmpHome = mkdtempSync(path.join(os.tmpdir(), 'bundled-test-home-'))
     const userSkillDir = path.join(tmpHome, '.agents', 'skills', 'wayfinder')
-    const fsM = require('node:fs')
     fsM.mkdirSync(userSkillDir, { recursive:true })
     const bundledWayfinderMd = readFileSync(path.join(bundledDir, 'wayfinder', 'SKILL.md'), 'utf8')
     const userMd = bundledWayfinderMd.replace(/description:.*/, 'description: user override wayfinder (500) ')

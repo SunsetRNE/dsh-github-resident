@@ -3,9 +3,9 @@
 //   写出来的每个字段前面都有我们定义的注释，且注释文字与核里那份常量逐字一致；
 //   两个文件的头一句都是「本文件的注释由插件生成；你自己加的注释会在下次写入时被替换。」
 // 用法：node tests/verify-config-store-comments.js（在仓库根目录）
-const path = require('path')
-const { pathToFileURL } = require('url')
-
+import path from 'node:path'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 const check = (ok, msg, detail) => {

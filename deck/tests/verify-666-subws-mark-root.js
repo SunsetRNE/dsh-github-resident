@@ -22,10 +22,15 @@
  *   F. 真盘上溯：在真目录上跑一遍宿主的锚根判定（自带 .git 就停在那层），证明快照里那个 workspaceRoot
  *      真的是「从子目录一路往上找到的根」，而不是把所选目录原样回传。
  */
-const fs = require('fs')
-const path = require('path')
-const { compileFn } = require('./lib/eval-probe.js')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import { compileFn } from './lib/eval-probe.js'
+import fsx from 'node:fs'
+import nodePath from 'node:path'
+import nodeOs from 'node:os'
+import { pathToFileURL } from 'node:url'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const root = path.resolve(__dirname, '..')
 let failed = false
 let passed = 0
@@ -44,8 +49,7 @@ const PLAIN_DIR = 'D:\\scratch\\no-repo\\sub'
 
 // E 组与 F 组都要渲染组件，所以在模块这一层就把它取来（渲染环境由 tests/lib 里那个工具搭）。
 // 规整函数与浮层文案也从这个工具里取，不在本文件另抄一份 —— 两处各写一份会各自漂。
-const { renderMark, tipTextOf, keyOfFn, tipsFromLocale } = require('./lib/render-subws-mark.js')
-
+import { renderMark, tipTextOf, keyOfFn, tipsFromLocale } from './lib/render-subws-mark.js'
 console.log('=== #666 面板归属标志：取根 · 该不该出现 · 显示哪几行 ===')
 
 // ── 真件一：内核里那把规整函数（与 verify-653 同口径，不是另写的仿制品）
@@ -339,10 +343,6 @@ try {
 //   守，不在这里再断一遍；这里只断本票要的那条链：宿主产出 → 客户端显示。）
 console.log('\nF) 宿主产出的那个值，喂给标志对不对（真盘上跑一遍 canonicalWorkspaceKey）')
 try {
-  const fsx = require('fs')
-  const nodePath = require('path')
-  const nodeOs = require('os')
-  const { pathToFileURL } = require('url')
   const fsp = fsx.promises
 
   // 夹具放系统临时目录：盘根在 Linux 与 macOS 上不可写，放那儿会让这条门禁在 CI 上变红。
@@ -403,10 +403,6 @@ try {
 //   （这条电话原本只答 cwd，不能因为算根出问题就把它的行为改坏）。
 console.log('\nG) wf.cwd 顺手带回工作区根：算得出来就带上，算不出来不许影响它原有的答复')
 try {
-  const fsx = require('fs')
-  const nodePath = require('path')
-  const nodeOs = require('os')
-  const { pathToFileURL } = require('url')
   const fsp = fsx.promises
 
   const wm = await import(pathToFileURL(nodePath.join(root, 'src/host/workspaceKey.js')).href)

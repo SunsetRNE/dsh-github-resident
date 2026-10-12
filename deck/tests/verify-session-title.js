@@ -1,8 +1,10 @@
 // tests/verify-session-title.js — #210/#205 会话标题契约 12 例（真源：src/shared/naming-titles.js，#265 迁移，S2 #452 拆出）
 // 用法: node tests/verify-session-title.js
-const fs = require('fs');
-const path = require('path');
+import fs from 'node:fs'
+import path from 'node:path'
 
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 let failed = false;
 const ok = (cond, msg) => { console.log((cond ? '  PASS ' : '  FAIL ') + msg); if (!cond) failed = true; };
 const eq = (a, b, msg) => {

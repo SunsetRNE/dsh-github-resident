@@ -21,9 +21,9 @@
 // 反证（三向验证的第二、三向，每次运行都跑）：把探测间隔拧坏（5 秒 → 0.1 秒）必须判红；
 // 把「刚离开的那个」的慢档也拧成快档（两个活跃工作区都按 5 秒探）必须判红 —— 它顶破的是读份额那道线；
 // 把旋钮整体收紧的合规变体必须判绿。
-const path = require('path')
-const { pathToFileURL } = require('url')
-
+import path from 'node:path'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

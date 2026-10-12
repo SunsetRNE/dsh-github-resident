@@ -5,9 +5,8 @@
 //   2) 补充按钮取 needs-info 标签色，取不到时兜底 #c084fc
 //   3) 两处（actionColorOf 与 mkRowAction）口径一致；详情页顶栏调 actionColorOf 自动生效
 //   4) 兜底色 #c084fc 与 10 个核心标签色均不完全相同
-const fs = require('fs')
-// 按文本求值走共用入口，理由与用法见 tests/lib/eval-probe.js 文件头。
-const { compileFn } = require('./lib/eval-probe.js')
+import fs from 'node:fs'
+import { compileFn } from './lib/eval-probe.js'
 let failed = false
 const check = function (ok, msg) { console.log((ok ? '  PASS ' : '  FAIL ') + msg); if (!ok) failed = true }
 

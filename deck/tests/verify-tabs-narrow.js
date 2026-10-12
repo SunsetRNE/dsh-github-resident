@@ -12,10 +12,8 @@
 //      （动作按钮 minLevel=1、tab 三键 minLevel=2；原生 title 已移除，避免双提示）。
 //   6) hook 合法性：Overlay 的 tabsRef/effect 在 `if (!s.open) return null` 之前，effect 依赖 [s.open]。
 //   7) 双源镜像：CSS（dsws-tabs/l 规则）+ tabs 容器 JSX + 折叠 effect 块 byte-for-byte 等价。
-const fs = require('fs')
-// 本文件按文本求值统一走共用入口 compileFn：从产物里切出折叠判定函数再造成真函数（理由与用法见 tests/lib/eval-probe.js 文件头）。
-const { compileFn } = require('./lib/eval-probe.js')
-
+import fs from 'node:fs'
+import { compileFn } from './lib/eval-probe.js'
 const files = process.argv.slice(2).length ? process.argv.slice(2) : ['client.js', 'package/lib/client.js']
 
 // ---- Part A：CSS / JS 静态契约 ----

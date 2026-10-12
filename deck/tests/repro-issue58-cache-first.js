@@ -2,10 +2,11 @@
 // 目标：验证切换面板时不应出现“加载中”全屏遮罩，应为缓存优先秒开 + 后台静默刷新
 // 检测点（静态）+ 动态模拟（内存 per-cwd 缓存 + 空 cwd 探路）
 // 用法: node tests/repro-issue58-cache-first.js
-const fs = require('fs')
-const path = require('path')
-const assert = require('assert')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import assert from 'node:assert'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 function read(rel){ return fs.readFileSync(path.join(__dirname,'..',rel),'utf8') }
 
 const client = read('client.js')

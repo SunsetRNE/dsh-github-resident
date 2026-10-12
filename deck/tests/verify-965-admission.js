@@ -11,8 +11,11 @@
  * 用法：node tests/verify-965-admission.js
  * 退出码：0 = 通过；1 = 有违规。
  */
-const path = require('path')
-
+import path from 'node:path'
+import fs from 'node:fs'
+import { pathToFileURL as f } from 'node:url'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0
@@ -116,7 +119,6 @@ async function main() {
 
   // 5. 接线：真起进程的四处共用同一道（房间纪律走白名单目录；一次请求只占一个名额）。
   {
-    const fs = require('fs')
     const read = (p) => fs.readFileSync(path.join(ROOT, p), 'utf8')
     const repoKeys = read('src/host/repoKeys.js')
     const plat = read('src/host/platformChannel.js')
@@ -144,7 +146,6 @@ async function main() {
 }
 
 function pathToFileURL() {
-  const { pathToFileURL: f } = require('url')
   return f(path.join(ROOT, 'src', 'shared', 'tracker', 'outbound-admission.js'))
 }
 

@@ -1,9 +1,8 @@
 // verify-panel-workspace-isolation.js — #45 多工作区隔离回归
 // 验证 client.js 的 probeNow 已按 cwd 分组隔离，禁止跨工作区广播
 // 用法: node tests/verify-panel-workspace-isolation.js
-const fs = require('fs')
-const assert = require('assert')
-
+import fs from 'node:fs'
+import assert from 'node:assert'
 function checkFile(path){
   const src = fs.readFileSync(path, 'utf8')
   const checks = []

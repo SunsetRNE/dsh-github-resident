@@ -15,8 +15,7 @@
  *
  * 运行：node tests/verify-dirwritable.js（已接入 npm run verify）
  */
-const assert = require('node:assert/strict')
-
+import assert from 'node:assert/strict'
 async function main() {
   const { createPredicateRegistry } = await import('../src/host/tracker/predicateCore.js') // V1 #461：predicateRegistry.js 已拆为两块
   const { PRIMITIVE_KIND } = await import('../src/shared/tracker/chain-types.js')

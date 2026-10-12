@@ -3,11 +3,11 @@
 // 覆盖 3 组：开关持久化（新键 dsws.debug、默认关闭、不动 dsws.cfg）、
 //   对账（启动本地秒显、宿主为准、失败保持本地不回退开启）、广播（沿 broadcastCfg 同构）。
 // 外加 4 项底座自检：统一接口同名同参、体内兜底第一行、批量字面、双产物含新电话名。
-const fs = require('fs')
-const path = require('path')
-// 按文本求值走共用入口，理由与用法见 tests/lib/eval-probe.js 文件头。
-const { compileFn } = require('./lib/eval-probe.js')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import { compileFn } from './lib/eval-probe.js'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

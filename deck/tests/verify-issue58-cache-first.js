@@ -2,10 +2,11 @@
 // 契约：打开/切换面板时缓存优先秒开，不闪“加载中”遮罩，后台静默刷新 + diff 增量
 // 覆盖：per-cwd 内存表 / 空 cwd 同步 / loading 守卫 / 三分支 / tab 静默 / 多工作区隔离
 // 用法: node tests/verify-issue58-cache-first.js
-const fs = require('fs')
-const path = require('path')
-const assert = require('assert')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import assert from 'node:assert'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 function read(rel){ return fs.readFileSync(path.join(__dirname,'..',rel),'utf8') }
 const client = read('client.js')
 const pkg = read('package/lib/client.js')

@@ -3,10 +3,11 @@
 // 验收：身兼两职的票（既是地图容器、又是别张地图的子票）在列表数组只留一行，
 // 地图容器优先；子票归属不动；同号异类不互吞；指认不出的条目不吞；异常输入不崩。
 // 用法: node tests/verify-589-list-dedupe.js
-const assert = require('assert')
-const fs = require('fs')
-const path = require('path')
-
+import assert from 'node:assert'
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 async function loadDedupe() {
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'shared', 'tracker', 'list-dedupe.js'), 'utf8')
   const tmp = path.join(__dirname, 'tmp-589-verify-dedupe.mjs')

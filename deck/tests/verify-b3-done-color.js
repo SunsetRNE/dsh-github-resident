@@ -7,7 +7,7 @@
 //   4) 范围守卫：仅列表行（openInNewSession(st, x)）带 mapDone 配色；详情面板（st, t）与 map 详情（st, m）的
 //      新会话按钮不得带 mapDone 配色（D9/6A：只改 map 列表行，其余状态不变）
 //   5) 双源镜像一致性（client.js ↔ package/lib/client.js 关键特征逐字等价）
-const fs = require('fs')
+import fs from 'node:fs'
 const files = ['client.js', 'package/lib/client.js']
 let failed = false
 const check = function (ok, msg) { console.log((ok ? '  PASS ' : '  FAIL ') + msg); if (!ok) failed = true }

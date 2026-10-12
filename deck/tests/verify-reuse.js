@@ -2,8 +2,8 @@
 // 作用：卡住新增的全局 store 直读与 portal/翻转样板重复，按 2 标记 3 即抽 5 必卡执行
 // 形态：文本扫描（同 verify-no-cross-import 轻量），白名单仅内核底座与悬浮样板真源
 // 用法: node tests/verify-reuse.js
-const fs = require('fs')
-const path = require('path')
+import fs from 'node:fs'
+import path from 'node:path'
 let failed = false
 let warned = false
 const check = (ok, level, msg) => {

@@ -1,9 +1,8 @@
 // verify-progress.js — dsh-waystation v1.5 T12/T16：进度块解析 + 正文容错 + 渲染契约校验
 // 用法: node tests/verify-progress.js（在插件根目录）
 // 验证：1) parseProgress 变体解析 2) normalizeBody 容错（字面 \n + BOM） 3) host/package 均带 progress 字段 4) client/package 均含进度渲染
-const fs = require('fs')
-// 按文本求值走共用入口，理由与用法见 tests/lib/eval-probe.js 文件头。
-const { evalWithScope } = require('./lib/eval-probe.js')
+import fs from 'node:fs'
+import { evalWithScope } from './lib/eval-probe.js'
 const host = fs.readFileSync('host.js', 'utf8')
 const pkg = fs.readFileSync('package/lib/index.js', 'utf8')
 const cli = fs.readFileSync('client.js', 'utf8')

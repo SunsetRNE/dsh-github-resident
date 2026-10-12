@@ -25,9 +25,12 @@
 // 文件内换行增减不会把基线冲掉；新增目标才算新违规。
 //
 // 用法：node tests/verify-no-same-layer-import.js（在插件根目录）
-const fs = require('fs')
-const path = require('path')
-const builtinModules = require('module').builtinModules
+import fs from 'node:fs'
+import path from 'node:path'
+import * as nodeModule from 'node:module'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const builtinModules = nodeModule.builtinModules
 
 const ROOT = path.resolve(__dirname, '..')
 const BASELINE_FILE = path.join(__dirname, 'same-layer-baseline.json')

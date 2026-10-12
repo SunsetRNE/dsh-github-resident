@@ -9,7 +9,7 @@
 //   2. 门控确认（开门链两个窗与切换后端确认）不再往会话里注入任何文字，所以原先「这几处都走决策器」
 //      那几条断言反过来钉：那三处的源码里不许再出现注入调用；状态栏黄条那条路照旧走决策器（它要弹布局小卡）。
 //   3. 「建仓成功后补发一次」那对标记与它的两个消费方留着（置真它的那一档已退役，今天走不到），照旧钉住。
-const fs = require('fs')
+import fs from 'node:fs'
 let failed = false
 const check = (ok, msg) => { console.log((ok ? '  PASS ' : '  FAIL ') + msg); if (!ok) failed = true }
 const prompts = fs.readFileSync('src/client/kernel/prompts.js', 'utf8')

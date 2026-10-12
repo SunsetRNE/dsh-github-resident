@@ -12,12 +12,14 @@
 //      文案取包的单语渲染（中文界面纯中文），关闭与轮询收尾按包的约定来。
 //
 // 用法：node tests/verify-587-update-live.js（在仓库根目录；先跑 node scripts/build.mjs）
-const fs = require('fs')
-const os = require('os')
-const path = require('path')
-// 按文本求值走共用入口，理由与用法见 tests/lib/eval-probe.js 文件头。
-const { compileFn } = require('./lib/eval-probe.js')
-
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { compileFn } from './lib/eval-probe.js'
+import { JSDOM } from 'jsdom'
+import * as nodeUrl from 'node:url'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 const LF = String.fromCharCode(10)
 let failed = false
@@ -35,9 +37,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
   let profilePluginDirName = ''
   let profileName = ''
   // 2026-10-12 身份融合：本机装的不再是独立 Deck（`dsh-mattpocock-skills-deck`），而是合并包
-  //   `@local/dsh-github-resident-v2`。候选名按「合并包 → 旧 Deck」顺序试：装了哪个就按哪个当判据输入，
+  //   `@sunsetrne/dsh-github-resident-v2`。候选名按「合并包 → 旧 Deck」顺序试：装了哪个就按哪个当判据输入，
   //   两个都没装才由下面的断言报红（不假装通过）。
-  // 带 scope 的包在 node_modules 里是两层（@local/dsh-github-resident-v2），所以候选用相对路径。
+  // 带 scope 的包在 node_modules 里是两层（@sunsetrne/dsh-github-resident-v2），所以候选用相对路径。
   const CANDIDATE_DIRS = [
     path.join('@local', 'dsh-github-resident-v2'),   // 合并包（node_modules 里的目录名就是包名）
     'dsh-mattpocock-skills-deck',                    // 旧独立 Deck（回退形态）
@@ -69,7 +71,7 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
   const profileDir = path.join(profilesDir, profileName)
   check(!!installedVersion, '读到磁盘上装的那一版（' + installedVersion + '）')
 
-  const readerUrl = require('url').pathToFileURL(path.join(ROOT, 'node_modules', 'dsh-plugin-update', 'dist', 'reader.js')).href
+  const readerUrl = nodeUrl.pathToFileURL(path.join(ROOT, 'node_modules', 'dsh-plugin-update', 'dist', 'reader.js')).href
   // 通道按磁盘上装的那一版推：0.11.0 起稳定通道下装好的测试版走「通道不对」（channel-mismatch），
   // 于是本该报「缺一次重启」的场景报成别的（0.10.0 及之前是「安装无效」）。
   // 本机装的是稳定版时行为一个字不变；装的是测试版时按测试版通道判，两种装法都成立（2026-10-10）。
@@ -133,7 +135,6 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
   check(product.includes("theme: 'archive'"), '发布产物挂载点传档案卷皮肤（只用档案卷）')
   check(!product.includes('useUpdatePanel'), '发布产物无自有按钮状态机（useUpdatePanel 已删）')
 
-  const { JSDOM } = require('jsdom')
   const dom = new JSDOM('<!doctype html><html lang="zh-CN"><head></head><body><div id="root"></div></body></html>', { url: 'http://127.0.0.1:43120/' })
   const { window } = dom
   if (typeof window.MutationObserver === 'undefined') {

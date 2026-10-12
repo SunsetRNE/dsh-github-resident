@@ -14,9 +14,10 @@
 //   F) 批量改色 N+1 消除：10 个标签同时撞 404，仓库权限只真问一次。
 //   G) deck_context 能力位：GitHub 只读时 repo 带权限位 + “这个仓库只读”提示；
 //      Markdown 恒可写；GitLab 诚实未知；README 与提示词里有权限前置与 fork 指路。
-const path = require('path')
-const { pathToFileURL } = require('url')
-
+import path from 'node:path'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+import fs from 'node:fs'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0
@@ -226,7 +227,6 @@ async function main() {
 
   // ── G) 能力位 + 文档 + 提示词 ──
   {
-    const fs = require('fs')
     const zh = fs.readFileSync(path.join(ROOT, 'README.md'), 'utf8')
     check(zh.includes('push') && zh.includes('triage') && /只读|读权限/.test(zh), 'G1 README 有 push/triage 前置条件（只读时标签链不可用）')
     const en = fs.readFileSync(path.join(ROOT, 'docs', 'README.en.md'), 'utf8')

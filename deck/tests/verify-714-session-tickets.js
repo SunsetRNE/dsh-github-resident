@@ -15,11 +15,11 @@
 //   ① 键里少了会话段（那正是「同根多会话互相覆盖」的那个坏实现）→ 记不进去；
 //   ② 读工具那一路被当成写（那正是「链被噪音灌满」的那个坏实现）→ 20 张读会多出 20 条；
 //   ③ 落盘那份里混进路径原文 → 隐私自检必须认出来。
-const fs = require('fs')
-const os = require('os')
-const path = require('path')
-const { pathToFileURL } = require('url')
-
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

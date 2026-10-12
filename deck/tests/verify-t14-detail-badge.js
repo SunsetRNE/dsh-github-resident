@@ -10,9 +10,8 @@
 //   c) 标题 div 保留 dsws-mtitle + dsws-tt-wrap、title 属性（tooltip）与 flex:1 minWidth:0
 //   d) 徽章锚点仅 1 处（无重复写入漂移）+ 双源特征逐字等价
 //   e) 上下文锚定：该块位于 map 详情渲染内（前置为新会话按钮行）
-const fs = require('fs')
-// 按文本求值走共用入口，理由与用法见 tests/lib/eval-probe.js 文件头。
-const { compileFn } = require('./lib/eval-probe.js')
+import fs from 'node:fs'
+import { compileFn } from './lib/eval-probe.js'
 const files = ['client.js', 'package/lib/client.js']
 let failed = false
 let passed = 0

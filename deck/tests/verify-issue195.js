@@ -9,7 +9,7 @@
 //   行为金样在 tests/verify-663-gh-install-inject.js；本文件钉的是跨文件的这几条老契约不许回退。
 // 保留的：#195 当年修的 gh 探测缓存与 checksums 那几个读数口径里仍然成立的部分（`let ghPathError` 永久缓存
 //   不许回来、ghLastError 与 resetGhCache 要在、没有「安装副按钮」外链、没有 installGh 提示词键）。
-const fs = require('fs')
+import fs from 'node:fs'
 const files = process.argv.slice(2)
 const targets = files.length ? files : ['client.js', 'package/lib/client.js', 'host.js', 'package/lib/index.js', 'src/host/tracker/contract.js', 'src/host/tracker/backends/github/preflight.js', 'src/host/tracker/backends/github/index.js']
 let failed = false

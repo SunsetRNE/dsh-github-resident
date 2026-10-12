@@ -8,7 +8,7 @@
 //   2) 底部执行态字色同样与默认同值，不再是绿色系深字
 //   3) 空状态与完成态两边保持不变（橙 #f59e0b / 绿 #3fb950 仍在）
 //   4) 顶部执行态仍走默认样式（不写死底色），行级执行标准仍是紫色
-const fs = require('fs')
+import fs from 'node:fs'
 let failed = false
 const check = function (ok, msg) { console.log((ok ? '  PASS ' : '  FAIL ') + msg); if (!ok) failed = true }
 

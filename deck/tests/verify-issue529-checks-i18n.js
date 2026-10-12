@@ -3,10 +3,11 @@
 // 用法：node tests/verify-issue529-checks-i18n.js（在插件根目录；无需网络）
 // 背景：环境检查面板的标题栏与按钮早已走词条，但十条检查项标题、行内说明与底部诊断卡
 // 是写死的中文或直取中文兜底，且链请求没带语言导致 host 明细恒为中文。本门禁钉住四条验收判据。
-const fs = require('fs')
-const path = require('path')
-// 本文件选 compileFn 手法：这段把检查页里抠出来的一行守卫原文当函数体造函数，依赖由 deps 逐个按参数名传进去。
-const { compileFn } = require('./lib/eval-probe.js')
+import fs from 'node:fs'
+import path from 'node:path'
+import { compileFn } from './lib/eval-probe.js'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const root = path.resolve(__dirname, '..')
 
 let failed = false

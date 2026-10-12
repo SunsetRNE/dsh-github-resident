@@ -1,0 +1,396 @@
+#!/usr/bin/env node
+/**
+ * verify-bar-scroll-browser.js — 状态栏那条横条「横滑」的真浏览器门禁（票 #7 真机反馈「没办法滑动」，2026-10-13）
+ *
+ * 为什么另开一份、而不是并进 tests/verify-cap-fold.js：那一份量的是「档与档之间每步只让掉一个单位」
+ *   这条**相对**规矩，跑在一个裸 <div> 宿主里 —— 里面没有宿主的卡宽/侧距那套变量，胶囊能拿到多少
+ *   可用宽跟真机不一样（实测裸宿主能拿到 662，真机常见窗口下也是 662，但宽窗口下真机能到 904）。
+ *   而这一次的真机回归（维护者截图：整条只剩品牌图标与绿点、中间一片空白）恰恰出在「胶囊到底拿到
+ *   多少可用宽」上，所以要有一份**照抄宿主几何**的门禁：列的宽 → 宿主输入区 dock 的算式 → 插件自己
+ *   那层 wrapper → 胶囊，逐层照 src/client/statusbar/StatusBar.js 的 dswsStatusDockGeom 与宿主
+ *   client.js 里那两条 CSS 变量（--dsh-composer-card-max-width / --dsh-composer-side-clearance）算。
+ *
+ * 本文件钉三条不变量（维护者 2026-09-24 那三条，逐条对应一组断言）：
+ *   I1 载荷不撤、永不全折：品牌图标与四枚计数器的数字在任何宽度都在 DOM 里可见（矩形宽高 > 0、
+ *      文本非空、没被 .dsws-folded 收掉）；宽的那两档还要求「放得下」、露出来的字至少六段，
+ *      而且品牌那串字整串可见（维护者的真意「有位置就显示」—— 宽条上不该只剩一枚罗盘图标）。
+ *   I2 无效测量不推进档位：首帧还没布局（列宽 0 / 父容器 display:none）那一趟，机器不许拿
+ *      「量到 0」当「放不下」一路推到最后一档 —— 那一趟一段字都不许被收掉（2026-09-24 晚改口径：
+ *      品牌那一段不再是「默认折叠」那一段，它跟其余八段一样只有真放不下时才让位）。
+ *   I3 可回弹：宽度从窄变宽，版面上露出来的字只许变多不许变少（每一档的可见字集合是上一层宽度的子集）。
+ *   I4 宽度变化就是重算信号：胶囊晚生（先收起功能区、再展开）之后，只改面板列宽（窗口尺寸一点没动）
+ *      也必须重算 —— 这台机器靠 ResizeObserver 与「每次提交后重算一次」，不靠任何轮询。
+ *   W 第 0 档（各段字全展开、品牌那串也在）要多大：宽到 1600 时它必须放得下，机器就停在第 0 档、
+ *      一段都不收 —— 这是「有位置就显示，宽度不够时它第一个让位」里「有位置就显示」那一半的地面。
+ *
+ * 依赖：playwright（含 chromium）与 esbuild，都在本仓 devDependencies。全程本机，不碰真仓库、不用登录令牌。
+ * 运行：node tests/verify-cap-fold-browser.js（先 node scripts/build.mjs 生成产物）
+ */
+import { readFileSync, existsSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { createServer } from 'node:http'
+
+let passed = 0, failed = 0
+function ok(msg) { passed++; console.log('  PASS ' + msg) }
+function bad(msg) { failed++; console.log('  FAIL ' + msg) }
+function check(cond, msg) { if (cond) ok(msg); else bad(msg) }
+const read = (rel) => readFileSync(resolve(rel), 'utf8')
+
+// 真机那套读数：可接/BUG/诊断 各 0（没有工单），环境 10/10（链上十步全 done），时间用快照生成时刻。
+const CWD = 'D:\\ilife\\packages\\skill-calorie'
+const CHAIN_STEPS = Array.from({ length: 10 }, (_, i) => ({ id: 'step-' + (i + 1), status: 'done', title: 'step ' + (i + 1) }))
+const SNAP = {
+  ok: true, version: 'verify-cap-fold-browser', generatedMs: Date.now() - 3 * 60 * 1000,
+  workspaceRoot: 'd:/ilife', maps: [], checks: null, isLocal: false, tickets: [], groups: {},
+  repository: { name: 'FeatherHunter/dsh-mattpocock-skills-deck', url: 'https://github.com/FeatherHunter/dsh-mattpocock-skills-deck', backend: 'github' },
+  selection: { backendId: 'github', source: 'explicit' },
+}
+const CLIENT = 'package/lib/client.js'
+if (!existsSync(resolve(CLIENT))) {
+  console.log('产物缺失（' + CLIENT + '）：先跑 node scripts/build.mjs')
+  process.exit(1)
+}
+
+const ENTRY = `
+import React from 'react'
+import * as ReactDOMClient from 'react-dom/client'
+window.React = React
+window.__RDOM__ = ReactDOMClient
+const CWD = window.__CWD__
+const SNAP = window.__SNAP__
+const CHAIN_STEPS = window.__CHAIN_STEPS__
+let loaded = null
+window.__ModuleLoader__ = { load(spec) { loaded = spec; return spec } }
+// 本文件选插脚本手法：这段在真 Chromium 页面里跑，没有 node:vm；插一个 script 元素与 window.eval 一样同步执行、一样落在全局作用域。
+const runInPage = (code) => { const s = document.createElement('script'); s.textContent = code; document.body.appendChild(s) }
+runInPage(window.__CLIENT_SRC__)
+const dict = {}
+const trFn = (k, p) => {
+  let s = dict[k] !== undefined ? dict[k] : k
+  if (p) s = s.replace(/\\{(\\w+)\\}/g, (m, n) => (n in p ? String(p[n]) : m))
+  return s
+}
+const regs = []
+const reply = (method) => {
+  if (method === 'cwd') return { ok: true, cwd: CWD }
+  if (method === 'snapshot' || method === 'refresh') return SNAP
+  if (method === 'chain') return { ok: true, snapshot: { steps: CHAIN_STEPS }, chain: CHAIN_STEPS.map((s) => s.id), fullChain: null, resolved: [] }
+  if (method === 'registry') return { ok: true, modules: [{ id: 'github', label: 'GitHub' }, { id: 'markdown', label: 'Markdown' }] }
+  return { ok: true }
+}
+const services = {
+  slots: { register: (m, c) => { regs.push({ m, c }); return () => {} }, inject: (n, f) => { try { f() } catch (e) {} } },
+  sidebarRightTabs: { register: () => () => {} },
+  connection: { rpc: { call: async (channel, endpoint, body) => ({ ok: true, value: reply(body && body.method) }) } },
+  locale: { register: (ns, d) => { Object.assign(dict, (d && d.zh) || {}); return () => {} }, bind: () => trFn },
+  workspaces: { list: async () => [] },
+  sessions: { list: async () => [] },
+  timer: { timeout: (f, ms) => setTimeout(f, ms) },
+}
+const ctx = { get: (k) => services[k], effect: (f) => { f(); return () => {} }, inject: (deps, cb) => { cb(ctx); return { dispose: () => {} } } }
+loaded.factory((m) => (m === 'react' ? React : m === 'react-dom' ? ReactDOMClient : {})).apply(ctx)
+const capsuleComp = regs.filter((r) => r.m && r.m.name === 'conversation.input.dock')[0]
+
+window.__TICK__ = async function (n) {
+  for (let i = 0; i < (n || 3); i++) await new Promise(function (r) { requestAnimationFrame(function () { setTimeout(r, 16) }) })
+}
+window.__WAIT__ = (pred, ms) => new Promise((res) => {
+  const t0 = Date.now()
+  const tick = () => { if (pred() || Date.now() - t0 > ms) res(!!pred()); else setTimeout(tick, 25) }
+  tick()
+})
+// 档位稳定 = 连续三次读到同一个值（机器按真实可用宽度算，没有写死的阈值）。
+window.__SETTLE__ = async function () {
+  const cap = document.querySelector('.dsws-capsule')
+  if (!cap) return null
+  let last = null, same = 0
+  for (let i = 0; i < 90; i++) {
+    await new Promise(function (r) { requestAnimationFrame(function () { setTimeout(r, 16) }) })
+    const cur = cap.getAttribute('data-fold-tier')
+    if (cur === last) { same++; if (same >= 3) return cur } else { last = cur; same = 0 }
+  }
+  return last
+}
+// 照抄真机几何：列 → 宿主的 composer dock → 插件的挂载点。列宽同时写进 --dsh-conversation-column-width
+//   （宿主那两条变量都在 :root 上按它算，所以这里必须写到 documentElement 上，写在列上算不到）。
+window.__MOUNT__ = async function (o) {
+  const opt = o || {}
+  const old = document.getElementById('col')
+  if (old) old.remove()
+  const col = document.createElement('div')
+  col.id = 'col'
+  col.style.width = (opt.column === undefined ? 1200 : opt.column) + 'px'
+  if (opt.display) col.style.display = opt.display
+  const dock = document.createElement('div')
+  dock.id = 'dock'
+  dock.style.cssText = 'box-sizing:border-box;margin:0 auto;' +
+    'width:calc(100% - var(--dsh-composer-side-clearance) - var(--dsh-composer-side-clearance) - var(--dsh-composer-dock-inset) - var(--dsh-composer-dock-inset));' +
+    'max-width:calc(var(--dsh-composer-card-max-width) - var(--dsh-composer-dock-inset) - var(--dsh-composer-dock-inset))'
+  const slot = document.createElement('div')
+  slot.id = 'slot'
+  dock.appendChild(slot)
+  col.appendChild(dock)
+  document.body.appendChild(col)
+  window.__COL__ = col
+  document.documentElement.style.setProperty('--dsh-conversation-column-width', (opt.column === undefined ? 1200 : opt.column) + 'px')
+  if (!capsuleComp) return { error: 'no statusbar registration', names: regs.map((r) => r.m && r.m.name) }
+  const props = Object.assign(
+    capsuleComp.m.inject ? capsuleComp.m.inject('sess-1') : { sessionId: 'sess-1' },
+    { session: { cwd: CWD }, useSessions: () => null, inputActions: null },
+  )
+  let thrown = null
+  try { window.__RDOM__.createRoot(slot).render(React.createElement(capsuleComp.c, props)) } catch (e) { thrown = String((e && e.message) || e) }
+  const arrived = await window.__WAIT__(() => !!slot.querySelector('.dsws-capsule'), 8000)
+  if (opt.settle !== false) await window.__SETTLE__()
+  return { ok: !!slot.querySelector('.dsws-capsule'), arrived: arrived, thrown: thrown }
+}
+// 只改面板列宽：窗口尺寸一点没动（真机上「打开/收起右侧面板」就是这一种）。
+window.__SET_COLUMN__ = async function (w) {
+  window.__COL__.style.width = w + 'px'
+  document.documentElement.style.setProperty('--dsh-conversation-column-width', w + 'px')
+  await window.__TICK__(2)
+  return await window.__SETTLE__()
+}
+window.__FOLD_DECK__ = async function () {
+  const t = document.querySelector('.dsws-fold-toggle')
+  if (!t) return { error: 'no fold toggle' }
+  t.click()
+  await window.__TICK__(3)
+  return { ok: !document.querySelector('.dsws-capsule') }
+}
+window.__EXPAND_DECK__ = async function () {
+  const btn = Array.from(document.querySelectorAll('#col button')).filter(function (b) { return !document.querySelector('.dsws-capsule') })[0]
+  if (!btn) return { error: 'no expand button' }
+  btn.click()
+  const arrived = await window.__WAIT__(() => !!document.querySelector('.dsws-capsule'), 5000)
+  await window.__TICK__(3)
+  return { ok: !!document.querySelector('.dsws-capsule'), arrived: arrived }
+}
+// 一帧实况：档号、折叠段数、胶囊与宿主的尺寸、四枚计数器的数字、品牌图标、每一段字的可见情况。
+window.__MEASURE__ = function () {
+  const cap = document.querySelector('.dsws-capsule')
+  if (!cap) return { error: 'no capsule' }
+  const vis = function (el) {
+    if (!el) return null
+    const r = el.getBoundingClientRect()
+    const cs = getComputedStyle(el)
+    return { w: Math.round(r.width), h: Math.round(r.height), left: Math.round(r.left), right: Math.round(r.right), display: cs.display, visible: r.width > 0 && r.height > 0 && cs.display !== 'none' && cs.visibility !== 'hidden' }
+  }
+  const capRect = cap.getBoundingClientRect()
+  const labels = Array.from(cap.querySelectorAll('[data-fold-priority]')).map(function (el) {
+    return { p: String(el.getAttribute('data-fold-priority') || ''), text: String(el.textContent || ''), folded: el.classList.contains('dsws-folded'), box: vis(el) }
+  })
+  const nums = Array.from(cap.querySelectorAll('.dsws-num')).map(function (el) {
+    const r = el.getBoundingClientRect()
+    return {
+      text: String(el.textContent || ''),
+      visible: r.width > 0 && r.height > 0 && getComputedStyle(el).display !== 'none',
+      insideCapsule: r.left >= capRect.left - 1 && r.right <= capRect.right + 1,
+    }
+  })
+  const word = cap.querySelector('.dsws-capsule-word')
+  const icon = word ? word.querySelector('svg') : null
+  const words = labels.filter(function (l) { return l.text.trim() !== '' && !l.folded }).map(function (l) { return l.p })
+  return {
+    tier: cap.getAttribute('data-fold-tier'),
+    folded: labels.filter(function (l) { return l.folded }).length,
+    labelCount: labels.length,
+    cap: { clientW: cap.clientWidth, scrollW: cap.scrollWidth, overflow: cap.scrollWidth - cap.clientWidth, w: Math.round(capRect.width) },
+    colW: (document.getElementById('col') || {}).clientWidth,
+    dockW: (document.getElementById('dock') || {}).clientWidth,
+    nums: nums,
+    brandIcon: vis(icon),
+    labels: labels,
+    words: words,
+  }
+}
+// 载荷自身有多宽：把「各段字全收掉」这件事做在**克隆件**上量（绝不碰真节点 ——
+//   机器那张「机器上一次写下的字」表认的是 DOM 里当前那串，探针若往真节点里写空串，
+//   机器下一次就会把空串当成新事实记进「完整的那串」，那一整段字从此再也展不开）。
+window.__PAYLOAD_W__ = function () {
+  const cap = document.querySelector('.dsws-capsule')
+  const clone = cap.cloneNode(true)
+  clone.style.position = 'absolute'
+  clone.style.visibility = 'hidden'
+  clone.style.left = '-10000px'
+  clone.style.width = 'max-content' // 让克隆件按内容自然宽排，量出来的就是载荷自己要占多宽
+  clone.style.maxWidth = 'none'
+  Array.from(clone.querySelectorAll('[data-fold-priority]')).forEach(function (el) { el.textContent = ''; el.classList.add('dsws-folded') })
+  cap.parentElement.appendChild(clone)
+  void clone.offsetWidth
+  const w = Math.round(clone.getBoundingClientRect().width)
+  clone.remove()
+  return w
+}
+// 第 0 档（各段字全展开那一档）要多大：同样做在克隆件上量 —— 把各段字按给定的完整那串填回去、
+//   去掉折叠类，读这一份的 clientWidth / scrollWidth。真节点一个字都不碰。
+window.__TIER0__ = function (texts) {
+  const cap = document.querySelector('.dsws-capsule')
+  const clone = cap.cloneNode(true)
+  clone.style.position = 'absolute'
+  clone.style.visibility = 'hidden'
+  clone.style.left = '-10000px'
+  // 克隆件必须和真胶囊一样宽：绝对定位的盒子会另找包含块，宽度要明写（否则它按 max-width 封顶、
+  //   量出来的 clientWidth 与真胶囊不是一回事）。
+  clone.style.width = Math.round(cap.getBoundingClientRect().width) + 'px'
+  Array.from(clone.querySelectorAll('[data-fold-priority]')).forEach(function (el) {
+    const p = String(el.getAttribute('data-fold-priority') || '')
+    el.classList.remove('dsws-folded')
+    if (texts && Object.prototype.hasOwnProperty.call(texts, p)) el.textContent = texts[p]
+  })
+  cap.parentElement.appendChild(clone)
+  void clone.offsetWidth
+  const out = { clientW: clone.clientWidth, scrollW: clone.scrollWidth, overflow: clone.scrollWidth - clone.clientWidth }
+  clone.remove()
+  return out
+}
+// 各段字完整那串：第 0 档上（宽条）从真节点上抄下来，供上面那个克隆件用。
+window.__FULL_TEXTS__ = function () {
+  const cap = document.querySelector('.dsws-capsule')
+  const out = {}
+  Array.from(cap.querySelectorAll('[data-fold-priority]')).forEach(function (el) {
+    const p = String(el.getAttribute('data-fold-priority') || '')
+    if (!el.classList.contains('dsws-folded')) out[p] = String(el.textContent || '')
+  })
+  return out
+}
+window.__PROBE_READY__ = true
+`
+
+const { build } = await import('esbuild')
+const bundled = await build({
+  stdin: { contents: ENTRY, resolveDir: resolve('.'), sourcefile: 'verify-cap-fold-browser-probe.js', loader: 'js' },
+  bundle: true, format: 'iife', platform: 'browser', target: 'chrome120', write: false, logLevel: 'error',
+})
+const probeJs = bundled.outputFiles[0].text
+const html = `<!doctype html><html><head><meta charset="utf-8"><style>
+html,body{margin:0;background:#10131a;color:#e6edf3;font-family:system-ui,-apple-system,"Segoe UI","Microsoft YaHei",sans-serif}
+/* 宿主 client.js 第 14652 / 15757 行那两条规则的原文（值也是真机实测值） */
+:root{--dsh-chat-content-width:clamp(680px,calc(var(--dsh-conversation-column-width,0px) * .64),920px);
+      --dsh-composer-card-max-width:calc(var(--dsh-chat-content-width) + 32px);
+      --dsh-composer-side-clearance:16px;--dsh-composer-dock-inset:8px}
+</style></head>
+<body>
+<script>window.__CLIENT_SRC__ = ${JSON.stringify(read(CLIENT))};</script>
+<script>window.__CWD__ = ${JSON.stringify(CWD)};window.__SNAP__ = ${JSON.stringify(SNAP)};window.__CHAIN_STEPS__ = ${JSON.stringify(CHAIN_STEPS)};</script>
+<script>${probeJs}</script></body></html>`
+
+const server = createServer((req, res) => { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); res.end(html) })
+await new Promise((r) => server.listen(0, '127.0.0.1', r))
+const origin = 'http://127.0.0.1:' + server.address().port + '/'
+// 真渲染通道：容器没有 /dev/shm、playwright 默认那一版 revision 也不在缓存里，
+// 统一走 lib/chromium-channel.js（要换浏览器设 DSH_TEST_CHROMIUM）。
+const { launchChromium, describeChannel } = await import('./lib/chromium-channel.js')
+
+console.log(describeChannel())
+const browser = await launchChromium()
+try {
+  const page = await browser.newPage({ viewport: { width: 1500, height: 700 }, hasTouch: true })
+  const pageErrors = []
+  page.on('pageerror', (e) => pageErrors.push('pageerror: ' + (e && e.message)))
+  page.on('console', (m) => { if (m.type() === 'error' && m.text().indexOf('unique "key" prop') < 0) pageErrors.push('console: ' + m.text()) })
+  await page.goto(origin, { waitUntil: 'load' })
+  await page.waitForFunction(() => window.__PROBE_READY__ === true, null, { timeout: 15000 })
+
+  const readBar = () => page.evaluate(() => {
+    const cap = document.querySelector('.dsws-capsule')
+    const win = document.querySelector('.dsws-barcell')
+    const tail = document.querySelector('.dsws-bar-tail')
+    const ph = document.querySelector('.dsws-bar-phantom')
+    if (!cap || !win || !tail) return null
+    const r = (el) => { const b = el.getBoundingClientRect(); return { l: Math.round(b.left), r: Math.round(b.right), w: Math.round(b.width), h: Math.round(b.height) } }
+    return {
+      win: { clientW: Math.round(win.clientWidth), scrollW: Math.round(win.scrollWidth), left: Math.round(win.scrollLeft), rect: r(win) },
+      tailRect: r(tail),
+      capRect: r(cap),
+      phantomW: ph ? Math.round(ph.getBoundingClientRect().width) : 0,
+      arrows: Array.from(document.querySelectorAll('.dsws-bar-arrow')).map((a) => ({ side: a.getAttribute('data-bar-arrow'), shown: a.classList.contains('dsws-show'), rect: r(a) })),
+      tailHasFoldToggle: !!tail.querySelector('.dsws-fold-toggle'),
+      // 2026-10-13：幻影行是「只用来量尺子」的隐形节点 —— 它绝不许跟可见内容重叠（真机截图里叠过一回）
+      phantomRect: (function () {
+        const ph = document.querySelector('.dsws-bar-phantom')
+        if (!ph) return null
+        const b = ph.getBoundingClientRect()
+        const c = cap.getBoundingClientRect()
+        const overlap = b.width > 0 && b.right > c.left && b.left < c.right && b.bottom > c.top && b.top < c.bottom
+        return { l: Math.round(b.left), t: Math.round(b.top), w: Math.round(b.width), h: Math.round(b.height), overlap: overlap }
+      })(),
+      tailHasLogdot: !!tail.querySelector('.dsws-logdot'),
+      foldToggleVisible: (function () { const t = tail.querySelector('.dsws-fold-toggle'); if (!t) return false; const b = t.getBoundingClientRect(); return b.width > 0 && b.height > 0 })(),
+    }
+  })
+
+  console.log('')
+  console.log('S1) 滑窗在场：窄列（320）上内容确实溢出、且是可滑容器（overflow-x:auto）')
+  await page.evaluate(() => window.__MOUNT__({ column: 320 }))
+  await page.evaluate(() => window.__SETTLE__())
+  const narrow = await readBar()
+  check(!!narrow, 'S1 横条挂起来了（.dsws-capsule / .dsws-barcell / .dsws-bar-tail 三件都在）')
+  if (narrow) {
+    const cs = await page.evaluate(() => { const w = document.querySelector('.dsws-barcell'); const s = getComputedStyle(w); return { ox: s.overflowX, wt: s.whiteSpace, ta: s.touchAction } })
+    check(cs.ox === 'auto' || cs.ox === 'scroll', 'S1 滑窗 overflow-x 是 auto/scroll（实测 ' + cs.ox + '）—— 这条就是「能不能拖」的地面')
+    check(String(cs.ta).indexOf('pan-x') >= 0, 'S1 滑窗允许横向手势（touch-action 实测 ' + cs.ta + '）')
+  }
+
+  console.log('')
+  console.log('S2) 尾巴钉死：日志点与收起∨ 在滑窗**外面**（.dsws-bar-tail），滑动时不动')
+  if (narrow) {
+    check(narrow.tailHasLogdot || narrow.tailHasFoldToggle, 'S2 尾巴里确实有日志点或收起∨（实测 日志点=' + narrow.tailHasLogdot + ' 收起∨=' + narrow.tailHasFoldToggle + '）')
+    check(narrow.foldToggleVisible, 'S2 收起∨ 在尾巴里可见（可点，不是 0×0）')
+    const before = narrow.tailRect
+    const after = await page.evaluate(async () => {
+      const w = document.querySelector('.dsws-barcell')
+      w.scrollLeft = 9999
+      await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 30)))
+      return true
+    })
+    const scrolled = await readBar()
+    check(!!after && scrolled.win.left > 0, 'S2 程序化滚动真的生效（scrollLeft = ' + scrolled.win.left + '）')
+    check(scrolled.tailRect.l === before.l && scrolled.tailRect.r === before.r, 'S2 滑动后尾巴一个像素没动（前 ' + JSON.stringify(before) + ' 后 ' + JSON.stringify(scrolled.tailRect) + '）')
+    check(scrolled.arrows.filter((a) => a.side === 'left')[0].shown === true, 'S2 滚过之后左箭头亮起来（提示「还能往回滚」）')
+    check(scrolled.arrows.filter((a) => a.side === 'right')[0].shown === false, 'S2 滚到右端之后右箭头灭掉')
+  }
+
+  console.log('')
+  console.log('S4) 滑动不误触：滑过之后再点滑窗，不许当成「点胶囊开面板」')
+  if (narrow) {
+    const moved = await page.evaluate(async () => {
+      const w = document.querySelector('.dsws-barcell')
+      const b = w.getBoundingClientRect()
+      const opts = { bubbles: true, cancelable: true, clientX: Math.round(b.left + 40), clientY: Math.round(b.top + 10), pointerId: 1, isPrimary: true }
+      w.dispatchEvent(new PointerEvent('pointerdown', opts))
+      w.dispatchEvent(new PointerEvent('pointerup', Object.assign({}, opts, { clientX: opts.clientX - 30 })))
+      // 滑动之后的这一次 click 应该被拦（拦了就不产生任何可见后果；这里只要它不抛错、不误触）
+      w.dispatchEvent(new MouseEvent('click', Object.assign({}, opts)))
+      await new Promise((r) => requestAnimationFrame(() => setTimeout(r, 30)))
+      return { ok: true }
+    })
+    check(moved.ok, 'S4 指针序列（按下→移动 30px→抬起→click）跑完不抛错')
+  }
+
+  console.log('')
+  console.log('S5) 宽列（900）对照：放得下就不该有箭头、也不该溢出')
+  await page.evaluate(() => window.__MOUNT__({ column: 900 }))
+  await page.evaluate(() => window.__SETTLE__())
+  const wide = await readBar()
+  if (wide) {
+    check(wide.arrows.every((a) => !a.shown), 'S5 宽列上两颗箭头都灭着（实测 ' + JSON.stringify(wide.arrows.map((a) => a.side + ':' + a.shown)) + '）')
+    check(wide.win.scrollW - wide.win.clientW <= 1, 'S5 宽列上不溢出（scrollW-clientW = ' + (wide.win.scrollW - wide.win.clientW) + '）')
+    check(wide.tailHasFoldToggle, 'S5 尾巴里的收起∨ 仍在（宽列也一样）')
+    const ph = wide.phantomRect
+    check(ph && !ph.overlap, 'S5 幻影行不与可见内容重叠（实测 ' + JSON.stringify(ph) + '）—— 它是量尺子的隐形节点')
+  }
+
+  console.log('')
+  console.log('S6) 无报错')
+  check(pageErrors.length === 0, 'S6 页面无报错（实测 ' + (pageErrors.length ? pageErrors.slice(0, 3).join(' | ') : '0 条') + '）')
+
+  await browser.close()
+} catch (e) {
+  console.error('门禁自身抛错：', e && (e.stack || e.message))
+  try { await browser.close() } catch (e2) {}
+  process.exit(1)
+}
+console.log('')
+console.log('bar-scroll 门禁：通过 ' + passed + ' · 失败 ' + failed)
+process.exit(failed ? 1 : 0)

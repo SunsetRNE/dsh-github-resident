@@ -4,9 +4,10 @@
 // 增删事件必须同步更新附录对照表，否则红。
 // 做法：读工作区本地附录修订版，核对 counts 字面与编号清单；
 // 再扫描源码里加引号的事件名，逐个点名，退役的三条出现即红。
-const fs = require('fs')
-const path = require('path')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

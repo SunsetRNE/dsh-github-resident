@@ -6,9 +6,9 @@
 // 所以这里把三种形态、两类工具名、十几种命令行形态逐条钉住，另加两条反向断言：
 //   ① 返回结果里不许出现命令原文（参数只做瞬时匹配，绝不外流）；
 //   ② 用到的原因代号必须都在 DETECT_REASONS 那张表里（日志里只记代号，代号表要能解释它）。
-const path = require('path')
-const { pathToFileURL } = require('url')
-
+import path from 'node:path'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

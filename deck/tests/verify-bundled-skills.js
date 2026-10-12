@@ -14,10 +14,11 @@
  * 用法：node tests/verify-bundled-skills.js
  * 退出码 0 = 通过；1 = 失败
  */
-const { readFileSync, existsSync, readdirSync, statSync } = require('node:fs')
-const path = require('node:path')
-const { spawnSync } = require('node:child_process')
-
+import { readFileSync, existsSync, readdirSync, statSync } from 'node:fs'
+import path from 'node:path'
+import { spawnSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 const BUNDLED_DIR = path.join(ROOT, 'package/bundled-skills')
 const PKG_JSON = path.join(ROOT, 'package/package.json')

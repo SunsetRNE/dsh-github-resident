@@ -11,10 +11,10 @@
 // 用法：node tests/verify-730-cwd-consistent.js（插件根目录，可独立运行）
 // 接线说明：本文件暂不进 package.json 的 verify 链（接线由统筹者统一做），
 //   验收与全链时由统筹者接线，平时单跑本文件。
-const fs = require('fs')
-const path = require('path')
-const { pathToFileURL } = require('url')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 const SHARED_REL = path.join('src', 'shared', 'session-cwd.js')
 let failed = false

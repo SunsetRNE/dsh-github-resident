@@ -21,11 +21,12 @@
  *
  * 用法：node tests/verify-968-skill-ondemand.js（在插件根目录执行）
  */
-const fsx = require('fs')
-const nodePath = require('path')
-const nodeOs = require('os')
-const { pathToFileURL } = require('url')
-
+import fsx from 'node:fs'
+import nodePath from 'node:path'
+import nodeOs from 'node:os'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+import path from 'node:path'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = nodePath.resolve(__dirname, '..')
 const url = (rel) => pathToFileURL(nodePath.join(ROOT, rel)).href
 

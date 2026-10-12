@@ -16,8 +16,11 @@
  *   src/host 全树另有若干源码级 \\n 在正则字面量与代码注释里（mapBody.js / parseIssueTracker.js /
  *   gitlab/graph-blocking.js），它们不是模板文本，不属本门禁扫描面（按全树断言会误红）。
  */
-const fs = require('fs')
-const path = require('path')
+import fs from 'node:fs'
+import path from 'node:path'
+import * as nodeCrypto from 'node:crypto'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.join(__dirname, '..')
 let failed = false
 
@@ -65,7 +68,7 @@ const checkText = function (where, name, v) {
 }
 
 // #603：白名单是「钉死的教学片段清单」—— 条数与内容指纹都要对得上，防悄悄加口子
-const fingerprint = require('crypto').createHash('sha256').update(ALLOWED_LITERAL_BSN.join('\u0000'), 'utf8').digest('hex').slice(0, 16)
+const fingerprint = nodeCrypto.createHash('sha256').update(ALLOWED_LITERAL_BSN.join('\u0000'), 'utf8').digest('hex').slice(0, 16)
 if (ALLOWED_LITERAL_BSN.length !== EXPECT_ALLOWED_COUNT || fingerprint !== EXPECT_ALLOWED_FINGERPRINT) {
   failed = true
   console.log('FAIL ALLOWED_LITERAL_BSN 与钉死的教学片段清单不一致（实际 ' + ALLOWED_LITERAL_BSN.length + ' 条 / 指纹 ' + fingerprint +

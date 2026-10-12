@@ -5,9 +5,10 @@
 //   ① 第二次补边不再整仓拉取：定向重读脏票，整仓列表只在第一次出现。
 //   ② 同调用内成环照拒（名册路径不断环检查）。
 //   ③ 名册缺席时一切照旧（老行为：每次整仓拉取，不崩）。
-const path = require('path')
-const { pathToFileURL } = require('url')
-
+import path from 'node:path'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+import transports from './deck-tools-matrix-transports.js'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0
@@ -17,7 +18,6 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 async function main() {
   console.log('#895 回归门禁：github 房名册定向刷新（脚本化 gh 计数）')
-  const transports = require('./deck-tools-matrix-transports.js')
   const scopeMod = await imp('src/shared/deck-tools/call-scope.js')
   const registryMod = await imp('src/host/tracker/registryCore.js')
   const githubModule = (await imp('src/host/tracker/backends/github/index.js')).githubModule

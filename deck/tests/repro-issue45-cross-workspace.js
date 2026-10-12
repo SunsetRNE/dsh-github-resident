@@ -1,9 +1,7 @@
 // repro-issue45-cross-workspace.js — 复现 #45 多工作区异步回调导致右侧面板串台
 // 最小化反馈环：模拟 client.js 的 probeNow 广播逻辑，证明跨工作区污染
 // 用法: node tests/repro-issue45-cross-workspace.js
-const assert = require('assert')
-
-// 模拟 stores 与 shared（与 client.js 结构对齐）
+import assert from 'node:assert'
 function makeStore(cwd, snapshot) {
   return { cwd, snapshot, lastDiff: null, rowFlash:{}, issueFlash:{}, snapMode:'real', snapError:null, tick:0, subs:[], sessionId: 'sid-'+cwd }
 }

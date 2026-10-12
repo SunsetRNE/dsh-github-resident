@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 // check-963-log-order: 963 新方案本地日志顺序验证（四幕，只看外部行为与事件顺序）。
-const nodePath = require('path');
-const nodeOs = require('os');
-const { pathToFileURL } = require('url');
+import nodePath from 'node:path'
+import nodeOs from 'node:os'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+import path from 'node:path'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const WT = nodePath.resolve(__dirname, '..');
 const url = (rel) => pathToFileURL(nodePath.join(WT, rel)).href;
 let total = 0; const broken = [];

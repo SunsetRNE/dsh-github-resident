@@ -13,10 +13,10 @@
 //      合并提交的补丁如实说 merge-commit（真机核到：清单那一路给的是相对第一个父提交的真实行数，不空）。
 // 最后带反证：拿「不读 git、直接回一份好看的首屏」「把 rev 当没看见」「合并提交当没有改动」
 // 「不校验 rev 就拼进 argv」四种坏实现喂同一套断言，每一种都必须当场判红。
-const fs = require('fs')
-const path = require('path')
-const { pathToFileURL } = require('url')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

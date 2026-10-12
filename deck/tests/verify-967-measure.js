@@ -1,8 +1,12 @@
 // tests/verify-967-measure.js —— 967 量测小件的门禁（只读量测，不改业务）。
 // 用法：在插件根目录执行 node tests/verify-967-measure.js，可独立运行。
 // 量测的接缝是三个纯函数（耗时分布、在飞分布、触发源排行、复用数），只看算出来的数，不看内部队列数组长什么样。
-const path = require('path');
+import path from 'node:path'
 
+import { fileURLToPath } from 'node:url'
+import { createRequire } from 'node:module'
+const require = createRequire(import.meta.url)
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..');
 let failed = false;
 let total = 0;

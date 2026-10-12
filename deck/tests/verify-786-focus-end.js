@@ -5,11 +5,12 @@
 //   a) 注入完成后光标落在文本末尾，可立刻打字；内容很长时输入框滚到底，不停顶部；
 //   b) 现状光标在第一行第一个字符前，本改动只加兜底，不改注入主路径（setDraft 全文替换不动）；
 //   c) 找不到宿主输入框就安静跳过，绝不抛错；插件自己的输入框一律不碰。
-const fs = require('fs')
-const assert = require('assert')
-const path = require('path')
-const { compileFn } = require('./lib/eval-probe.js')
-
+import fs from 'node:fs'
+import assert from 'node:assert'
+import path from 'node:path'
+import { compileFn } from './lib/eval-probe.js'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const root = path.join(__dirname, '..')
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8')
 const ok = (name, cond) => { if (!cond) throw new Error('FAIL · ' + name); console.log('  PASS · ' + name) }

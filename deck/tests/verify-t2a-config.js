@@ -5,9 +5,7 @@
 //   3) broadcastCfg 同步所有会话 store（ui/size）
 //   4) startText 注入（execute 模板占位符 + 前缀开关）
 // 用法: node tests/verify-t2a-config.js
-const assert = require('assert')
-
-// ---- 内存 localStorage ----
+import assert from 'node:assert'
 function makeStorage() {
   const m = new Map()
   return {

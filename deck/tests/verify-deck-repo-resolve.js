@@ -6,9 +6,9 @@
 // 地图 0 张、读票 refId missing）。修法是调用方按通用形状自己补：
 // 有 getRepoKey 能力的后端（三层兜底）补上，没有的跳过，下游照旧诚实失败。
 // 本门禁盯住：空才补、有就不碰、能力缺席跳过、失败超时都诚实、补全走闸。
-const path = require('path')
-const { pathToFileURL } = require('url')
-
+import path from 'node:path'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

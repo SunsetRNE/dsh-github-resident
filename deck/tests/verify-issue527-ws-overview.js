@@ -3,8 +3,10 @@
 // 背景：总览是只读的，每一行只留后端名字加来源徽标。之前有一处放错位置的调用，
 // 在每一行末尾又放了一个本该只出现在横幅上的折叠按钮，点它只会折叠横幅，
 // 跟总览这一行的内容没有关系。本门禁钉住三条验收判据：行内无按钮、顶部总览开关还在、横幅折叠不受影响。
-const fs = require('fs')
-const path = require('path')
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const root = path.resolve(__dirname, '..')
 
 let failed = false

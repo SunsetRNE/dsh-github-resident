@@ -1,7 +1,6 @@
 // repro-issue179-workspace-switch.js — 复现 #179 切工作区后右侧仓库名残留 D:\2Study\...
 // 用法: node tests/repro-issue179-workspace-switch.js
-const fs = require('fs')
-
+import fs from 'node:fs'
 console.log('=== 复现 #179：切工作区后右侧面板仓库名残留 DSH 本体路径 ===')
 
 const srcDock = fs.readFileSync('src/client/panel/Dock.js','utf8')

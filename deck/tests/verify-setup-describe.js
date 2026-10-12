@@ -13,10 +13,9 @@
 //      另含 #619 的旧调色盘注入通道残留：paletteNote 键名，以及「标签调色盘 / Label palette」那段文案
 //   6) 手动命令路径锚点：注入文本以 /setup-matt-pocock-skills 开头
 // 用法: node tests/verify-setup-describe.js
-const fs = require('fs')
-const path = require('path')
-const { pathToFileURL } = require('url')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import { pathToFileURL } from 'node:url'
 let failed = false, total = 0, passed = 0
 const check = (ok, msg) => { total++; if (ok) passed++; else { failed = true; console.log('  FAIL ' + msg) } }
 

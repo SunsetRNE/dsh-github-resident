@@ -14,8 +14,10 @@
  *   PREVIEW_VALUES（设置页演示数据）；清尾批后 LEGACY_LINK_TEMPLATES/typeof 守卫/LEGACY_ISSUE_URL 已全部删除，不再登记
  * 扫描前剥离块注释与整行注释，注记里的旧词不再误报。
  */
-const fs = require('fs')
-const path = require('path')
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const root = path.resolve(__dirname, '..')
 
 let failed = false

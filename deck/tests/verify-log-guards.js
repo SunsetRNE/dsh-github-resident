@@ -6,9 +6,10 @@
 // 它的判断写在外层函数入口并附带结果变化才记）；房内三点六个事件与
 // 执行 gh 的外层判断逐项点名；命名守护那两条还在排定时器的调度行同行判开关，
 // 退役的自续 tick 调度行反向锁死（不许回来）。
-const fs = require('fs')
-const path = require('path')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

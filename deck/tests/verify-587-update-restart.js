@@ -9,9 +9,10 @@
 //   4) 文案与埋点：挂载点不写死中文，不新增事件名。
 //   5) 文件粒度：相关文件都在 350 行以内。
 // 用法：node tests/verify-587-update-restart.js（在仓库根目录）
-const fs = require('fs')
-const path = require('path')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

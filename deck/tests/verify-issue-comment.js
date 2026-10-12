@@ -4,9 +4,8 @@
 // - 集成差异冒烟：diffSnapshots 对「纯评论变化（updatedAt bump）」产出行闪烁——根票（孤儿票）补口 + 子票元组扩展
 // - 门禁自检：UI 层零 backendId 字面量（贪婪后端分支红线）+ locale 中英键完整
 // 用法: node tests/verify-issue-comment.js
-const fs = require('fs')
-// 本文件按文本求值统一走共用入口 compileFn：从构建产物里切出谓词与函数体再造成真函数（理由与用法见 tests/lib/eval-probe.js 文件头）。
-const { compileFn } = require('./lib/eval-probe.js')
+import fs from 'node:fs'
+import { compileFn } from './lib/eval-probe.js'
 let failed = false
 const check = (ok, msg) => { console.log((ok ? '  PASS ' : '  FAIL ') + msg); if (!ok) failed = true }
 

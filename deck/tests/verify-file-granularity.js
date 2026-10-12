@@ -9,9 +9,10 @@
 //   4) 拆分票让某个文件达标后，必须同票重录基线把它移出，否则门禁会失败提醒。
 // 用法: node tests/verify-file-granularity.js（在插件根目录）
 //      node tests/verify-file-granularity.js --record-baseline（重录基线：只记录当前超标文件）
-const fs = require('fs')
-const path = require('path')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 const SRC = path.join(ROOT, 'src')
 const BASELINE_FILE = path.join(__dirname, 'file-granularity-baseline.json')

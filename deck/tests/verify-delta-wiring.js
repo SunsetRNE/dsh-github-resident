@@ -12,10 +12,10 @@
 //      因为客户端内核在源码层是文本拼接的，没有可跑的模块实例）；被推迟那一档一个请求都不发。
 //
 // 假传输层照 tests/verify-delta-patch.js 那份口径：真发出去的每一条都报给闸，argv 原样记下来给断言用。
-const path = require('path')
-const fs = require('fs')
-const { pathToFileURL } = require('url')
-
+import path from 'node:path'
+import fs from 'node:fs'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

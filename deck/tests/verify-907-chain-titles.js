@@ -12,12 +12,11 @@
 //   二、信封：瘦身行走的是那一份字段清单，两条电话（wf.snapshot / wf.refresh）的调用点一处不漏。
 //   三、界面查标题：按票号查到标题；哪儿都没有的票号仍是空，不凭空编一个。
 //   四、画法：有标题画标题；没标题留白、不画第二个票号；那句话只在无障碍名里；那一行仍然点得开。
-const fs = require('fs')
-const path = require('path')
-const { pathToFileURL } = require('url')
-// 本文件按文本求值统一走共用入口 compileFn：把真源文本配假 React 等零件造成模块（理由与用法见 tests/lib/eval-probe.js 文件头）。
-const { compileFn } = require('./lib/eval-probe.js')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+import { compileFn } from './lib/eval-probe.js'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 const problems = []

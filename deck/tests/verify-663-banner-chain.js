@@ -4,12 +4,11 @@
 //   喂假会话状态与假链快照，断言「今天该出哪一条横幅」与「那颗按钮点下去干什么」。
 // 取源做法照 tests/verify-668-guide-steps-single-source.js 与 tests/verify-655-setup-layout.js。
 // 用法: node tests/verify-663-banner-chain.js
-const fs = require('fs')
-const path = require('path')
-const { pathToFileURL } = require('url')
-// 按文本求值走共用入口，理由与用法见 tests/lib/eval-probe.js 文件头。
-const { compileFn } = require('./lib/eval-probe.js')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+import { compileFn } from './lib/eval-probe.js'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const root = path.resolve(__dirname, '..')
 let failed = false
 let failedN = 0

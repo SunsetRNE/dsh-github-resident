@@ -30,10 +30,10 @@
  *   node tests/verify-gh-gateway.js --list                # 只列出扫到的调用点，不做判定
  * 退出码：0 = 通过；1 = 有违规。
  */
-const fs = require('fs')
-const path = require('path')
-const { pathToFileURL } = require('url')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 const argv = process.argv.slice(2)
 const argOf = (name, dflt) => {

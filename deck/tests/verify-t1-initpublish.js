@@ -3,15 +3,11 @@
 // 加载方式：经发货产物 package/lib/index.js 的标准分发通道（connection.rpc.handle('/dsws')），与冒烟测试同法。
 // 注意：本文件跑的 publishFlow 那条路，git 命令经 execProc，返回契约是 { ok, text, error, code }（见 src/host/repoKeys.js:196-198）。
 //   initProject 里 execFn 的契约是 { code, stdout, stderr }，形状不同，不能拿来喂这条流程。
-const fsx = require('fs')
+import fsx from 'node:fs'
 const fsp = fsx.promises
-const path = require('path')
-const { spawn, spawnSync } = require('child_process')
-const os = require('os')
-
-// ============ #993/#994：git 侧失败的现场原文与 mock 规则 ============
-// 属主不符的 stderr 原文（git 2.49.0.windows.1 实测；用 git 自带开关 GIT_TEST_ASSUME_DIFFERENT_OWNER=1 强制复现）。
-// 现场实测：此时 rev-parse --is-inside-work-tree / status --porcelain / add . 全部退出码 128，stderr 逐字如下。
+import path from 'node:path'
+import { spawn, spawnSync } from 'node:child_process'
+import os from 'node:os'
 function gitDubiousOwnershipText(dir) {
   return "fatal: detected dubious ownership in repository at '" + dir + "'\n" +
     'To add an exception for this directory, call:\n\n' +

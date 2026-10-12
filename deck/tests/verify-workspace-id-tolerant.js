@@ -3,8 +3,10 @@
 // 验证 src 真源含兼容点：路径读 handle 与别名、编号读 handle 嵌套与大小写变体、
 // 快照收 rows/data/workspacesById/entries、创建按别名逐个试探且接受字符串返回。
 // 查找类断言读 api-workspace.js，复用门与薄转发断言读 api-new-session.js。
-const fs = require('fs')
-const path = require('path')
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const root = path.resolve(__dirname, '..')
 let failed = false
 const check = function (ok, msg) { console.log((ok ? '  PASS ' : '  FAIL ') + msg); if (!ok) failed = true }

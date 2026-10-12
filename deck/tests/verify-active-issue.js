@@ -1,5 +1,5 @@
 // verify-active-issue.js — T6 #11 · activeIssue 状态机与渲染分支校验（map #5 · v1.7.0）
-const fs = require('fs')
+import fs from 'node:fs'
 let failed=false
 const check=(ok,msg)=>{ console.log((ok?'  PASS ':'  FAIL ')+msg); if(!ok) failed=true }
 const cli = fs.readFileSync('client.js','utf8')

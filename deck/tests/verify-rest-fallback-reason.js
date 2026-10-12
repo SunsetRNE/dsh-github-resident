@@ -16,10 +16,11 @@
  * 反证：造一个非配额的 403（权限类，不带限流文案）→ 那句话里不许出现「配额」二字；
  *   把选句改坏（例如所有原因都说配额句）→ 本门禁当场变红。
  */
-const fs = require('fs')
-const path = require('path')
-// 本文件选 compileFn 手法：两处都是把真源文本当函数体造函数，依赖一律按参数名显式传进去，不靠外层作用域。
-const { compileFn } = require('./lib/eval-probe.js')
+import fs from 'node:fs'
+import path from 'node:path'
+import { compileFn } from './lib/eval-probe.js'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.join(__dirname, '..')
 let failed = false
 const check = function (cond, msg) {

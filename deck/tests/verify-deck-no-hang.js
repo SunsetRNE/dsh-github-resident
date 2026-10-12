@@ -12,9 +12,9 @@
 //   ④ 已中止的调用 → 立刻诚实回，不起新进程；
 //   ⑤ 执行层抛错仍走 backend-threw（可重试），与“做不到”分得开（与 verify-deck-tools ⑨ 同口径）。
 // 本文件不联网：后端全是桩，只量“回不回、快不快、判得对不对”。
-const path = require('path')
-const { pathToFileURL } = require('url')
-
+import path from 'node:path'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

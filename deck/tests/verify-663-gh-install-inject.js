@@ -4,11 +4,11 @@
 // 做法：把 src/client/statusbar/bannerChain.js 取出来在沙箱里求值（顺序真源用真的 guide-steps.js），
 //   喂假链快照与假后端声明，断言「注入的到底是哪一段字」与「日志记的是哪一类」。
 // 用法: node tests/verify-663-gh-install-inject.js
-const fs = require('fs')
-const path = require('path')
-const { pathToFileURL } = require('url')
-const { compileFn } = require('./lib/eval-probe.js')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+import { compileFn } from './lib/eval-probe.js'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const root = path.resolve(__dirname, '..')
 let failed = false
 let failedN = 0

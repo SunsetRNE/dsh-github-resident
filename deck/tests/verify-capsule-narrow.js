@@ -9,13 +9,31 @@
 //      - 优先级 = 信息价值：品牌(1) → 沉淀(2)/交接(3)/刷新字(4) → 可接(5)/BUG(6)/诊断(7)/环境(8) → 时间(9)
 //      - 图标+数字永不收缩；最窄态 = 图标+数字紧凑条
 //   4) 点击事件契约：capsule→openPanel / capsule-word→togglePanel / seg/split/timebtn→各自 handler
-//   5) EN locale：i18n 键齐备（panel.title 中英同字 "MattSkills"）
+//   5) EN locale：i18n 键齐备（panel.title 中英同字 —— 品牌改名也不许只改一边）
 //   6) 双源同步：client.js ↔ package/lib/client.js 的 capsule CSS 块 + JSX 块一致
-const fs = require('fs')
+//
+// 2026-10-13（#3）两处改动，都是「让这道门真的能跑、且守的还是原来那件事」：
+//   a. 本文件原先是 CJS（require/fs.readFileSync），而本仓 package.json 是 "type": "module"，
+//      直接跑是加载即 `ReferenceError: require is not defined in ES module scope` —— 一百多条断言一条都没跑到。
+//      改成 ESM（node 内建模块走 import；tests/lib/eval-probe.js 仍是 CJS，借 createRequire 抓一个）。
+//   b. 期望 5 的「panel.title zh = "MattSkills" / en = "MattSkills"」两条是**过期断言**：插件的品牌
+//      早已是 GitHub 常驻 / GitHub Resident（src/client/kernel/locale-panel.js:16 与 :171），
+//      硬写旧字串等于把「守品牌」换成「守某个名字还没改」。原来想守的是那句**中英同字**（同一个品牌
+//      在两个 locale 里渲染同一串字，改一边就红），所以改成量真值 + 直接比 zh===en，而不是把判据降级成
+//      「字符串还在」。真值不写死在门禁里：品牌再改名时这门仍然守得住，只有「只改一遍」才红。
+import fs from 'node:fs'
+import path from 'node:path'
+import { createRequire } from 'node:module'
 // 本文件按文本求值统一走共用入口 compileFn：从产物里切出点击处理体再造成函数（理由与用法见 tests/lib/eval-probe.js 文件头）。
+const require = createRequire(import.meta.url)
 const { compileFn } = require('./lib/eval-probe.js')
 
-const files = process.argv.slice(2).length ? process.argv.slice(2) : ['client.js', 'package/lib/client.js']
+// 默认两源按「本文件所在位置」定位，而不是靠调用者的 cwd：从仓库根跑（npm run verify:deck 的形态）
+// 与从 deck/ 跑都指向同一对产物，改以前那种相对路径写法会随 cwd 漂。
+const DECK_ROOT = path.resolve(import.meta.dirname, '..')
+const files = process.argv.slice(2).length
+  ? process.argv.slice(2)
+  : [path.join(DECK_ROOT, 'client.js'), path.join(DECK_ROOT, 'package/lib/client.js')]
 
 // ---- Part A：CSS / JS 静态契约（双源同步） ----
 const statChecks = function (src, tag) {
@@ -66,7 +84,21 @@ const statChecks = function (src, tag) {
   ok('三支都不再各自硬写外层容器的横向内边距', !/gap:\s*2\s*,[^}]*padding:/.test(src) && !/gap:\s*4\s*,\s*position:\s*'relative'\s*,\s*padding:/.test(src))
   ok('外层容器正常路径仍保留 overflow:hidden 截胶囊溢出、缺 ReactDOM 时 visible 降级',
     /overflow:\s*RDOM\s*\?\s*'hidden'\s*:\s*'visible'/.test(src))
-  ok('胶囊 CSS 不再加 overflow:hidden（让 capsule 圆角背景完整，圆角处不漏白）', !/\.dsws-capsule\s*\{[^}]*overflow:\s*hidden/.test(src))
+  // 2026-10-13（#3）改写：原来这条断言「.dsws-capsule 不含 overflow:hidden」（针对 #640 时期那个裸胶囊，
+  //   担心裁掉圆角背景）。设计已经改成两层：胶囊是**外框**（保留自己的 background/border-radius），
+  //   内容进内层滑窗 .dsws-barcell（overflow-x:auto + overflow-y:hidden + touch-action:pan-x），
+  //   窄屏横滑的裁切就发生在这一层。胶囊自己那层 overflow:hidden 是外框的一部分（#7 落地时加的），
+  //   不是 #640 当年防的那件事，所以判据从「谁都不许裁」改成「裁在哪一层、外框还在不在」——
+  //   滑窗那层被删掉或改回 visible 时照样红（那才是「字溢出到卡片外」）。
+  //   已知副作用（#3 实测，另记不修）：胶囊框高 26px，@media (pointer:coarse) 里那些 44px 命中区
+  //   （::after）会被这层 overflow 裁到 26px 内 —— 窄屏横滑与命中区扩大两条改动在这里互相顶。
+  ok('窄屏横滑的裁切落在内层滑窗 .dsws-barcell（overflow-x:auto + overflow-y 收住、可拖动）',
+    /\.dsws-barcell\{[^}]*overflow-x:\s*auto/.test(src) &&
+    /\.dsws-barcell\{[^}]*overflow-y:\s*hidden/.test(src) &&
+    /\.dsws-barcell\{[^}]*touch-action:\s*pan-x/.test(src))
+  ok('胶囊外框自身的圆角与底色都还在（外层裁切不许把外框裁掉）',
+    /\.dsws-capsule\{[^}]*border-radius:14px/.test(src) &&
+    /\.dsws-capsule\{[^}]*background:var\(--dsw-alias-bg-layer-1/.test(src))
   // 期望 2：children 保持不被挤压（2026-09-24 #725 起：品牌那一段与另两段的挤压规则各自写明）
   //   维护者这一轮定「内容平铺在这一条里」：胶囊两端分布，多出来的空间均分在**各项之间**。
   //   2026-09-24 晚按真机测量改了一处：品牌那一段原来写 `flex:1 1 auto`，它一个元素把余量全吃了
@@ -117,7 +149,13 @@ const statChecks = function (src, tag) {
   ok('V2 · 记下 dataset.fold 折叠段数与 dataset.foldTier 档号（调试与门禁的锚点）',
     /cap\.dataset\.fold\s*=\s*String\(/.test(src) && /cap\.dataset\.foldTier\s*=\s*String\(/.test(src))
   // 3d. foldRef 挂 capsule + ResizeObserver 监听
-  ok('V2 · capsule 根挂 ref: foldRef', /className:\s*['"]dsws-capsule['"][^}]*ref:\s*foldRef/.test(src))
+  // 2026-10-13（#3）放宽：胶囊根上的 ref 从 `ref: foldRef` 改成了回调形态
+  //   `ref: function (el) { foldRef.current = el; barCellRef.current = el }`（#7 横滑要量同一个 DOM 节点）。
+  //   这句要守的是「胶囊根把 ref 交出去」（谁用那个节点由下面两条 ResizeObserver 断言管），
+  //   所以两种形态都认；真丢了 ref（或 ref 指向别人）照样红。
+  ok('V2 · capsule 根挂 ref（foldRef 直接形态或回调形态：函数体里把 foldRef.current 赋成该节点）',
+    /className:\s*['"]dsws-capsule['"][^{]*ref:\s*foldRef\b/.test(src) ||
+    /className:\s*['"]dsws-capsule['"][^{]*ref:\s*function\s*\(el\)\s*\{[^{}]*foldRef\.current\s*=/.test(src))
   ok('V2 · foldRef = React.useRef(null)', /foldRef\s*=\s*React\.useRef\(null\)/.test(src))
   ok('V2 · ResizeObserver 监听 foldRef.current 进合并队列（926 同帧只跑一次）', /new ResizeObserver\(function\s*\(\)\s*\{\s*scheduleFold\(\)\s*\}\)[\s\S]{0,200}roFold\.observe\(foldRef\.current\)/.test(src))
   ok('V2 · window resize 进合并队列（实时响应，926 起与观察器同一队列）', /window\.addEventListener\(['"]resize['"],\s*scheduleFold\)/.test(src))
@@ -151,7 +189,17 @@ const statChecks = function (src, tag) {
   ok('R6b · !firstBlock 分支 wrapper 不再含 alignItems:\'stretch\'', !/display:\s*'flex',\s*justifyContent:\s*'center'[\s\S]{0,200}alignItems:\s*'stretch'/.test(src))
 
   // 期望 4：点击事件契约
-  ok('capsule onClick → openPanel(s)', /className:\s*['"]dsws-capsule['"][^}]*onClick:\s*function\s*\(\)\s*\{\s*openPanel\(s\)/.test(src))
+  // 2026-10-13（#3）改写：#7 横滑落地后，点开面板的点击不再写在胶囊根上，而写在**内层滑窗** .dsws-barcell
+  //   上，并多了一道位移守卫（`if (barMoved.current) { barMoved.current = false; return } openPanel(s)`）——
+  //   拖动横向滚过之后松手不许顺手把面板点开。原来那条断言（胶囊根 `onClick → openPanel(s)`）问的是老结构，
+  //   所以拆成三条问新结构：① 胶囊根不再自己吞点击（否则内层那层白写）；② 滑窗上有点击；③ 那口点击里
+  //   既有守卫、也真的调 openPanel(s)。守卫本身的行为由下面 Part D 真跑一遍。
+  ok('capsule 根不再自己吞点击（点击交内层滑窗，胶囊根只做外形）',
+    !/className:\s*['"]dsws-capsule['"][^{]*onClick:/.test(src))
+  ok('capsule 点击 → 内层滑窗 .dsws-barcell 上有 onClick',
+    /className:\s*['"]dsws-barcell['"][^{]*onClick:/.test(src))
+  ok('capsule 点击 → openPanel(s)，且带拖动位移守卫（拖完松手不许顺手点开）',
+    /className:\s*['"]dsws-barcell['"][^{]*onClick:\s*function\s*\(\)\s*\{[^{}]*barMoved[\s\S]{0,120}?openPanel\(s\)/.test(src))
   ok('capsule-word onClick → togglePanel(s) + stopPropagation', /className:\s*['"]dsws-capsule-word['"][^}]*onClick:[^}]*togglePanel\(s\)/.test(src) && /className:\s*['"]dsws-capsule-word['"][^}]*e\.stopPropagation/.test(src))
   ok('seg onClick → e.stopPropagation + onGo()', /className:\s*['"]dsws-seg['"][^}]*e\.stopPropagation/.test(src) && /className:\s*['"]dsws-seg['"][^}]*onGo\(\)/.test(src))
   ok('timebtn onClick → e.stopPropagation + refreshAll(s)', /className:\s*['"]dsws-timebtn['"][^}]*e\.stopPropagation/.test(src) && /className:\s*['"]dsws-timebtn['"][^}]*refreshAll\(s\)/.test(src))
@@ -165,8 +213,28 @@ const statChecks = function (src, tag) {
   const enBlock = extractLocaleBlock(src, 'en')
   ok('i18n 字典存在 zh 块（zh: { ... }）', !!zhBlock)
   ok('i18n 字典存在 en 块（en: { ... }）', !!enBlock)
-  ok('panel.title zh = "MattSkills"', /'panel\.title':\s*'MattSkills'/.test(zhBlock))
-  ok('panel.title en = "MattSkills"（中英同字）', /'panel\.title':\s*'MattSkills'/.test(enBlock))
+  // 期望 5 的核心（#3 第二次改写，把第一次的猜测纠正掉）：原来两条硬写死 'MattSkills'，早就不是真值
+  //   （真值 zh = GitHub 常驻 / en = GitHub Resident）。但判据**不是**「中英同字」——我第一版按那个理解
+  //   改了，实测两边就是不同的字（英文里品牌本来就叫 GitHub Resident），那是 i18n 字典该有的样子，
+  //   不是缺陷。当初那两条真正守的是「品牌这句话不是空的、也不是没翻译的键」：
+  //     ① 两个 locale 里 panel.title 都取得到、都是非空串（漏翻 / 空串照样红）；
+  //     ② 胶囊上那一段（data-fold-priority=1）与面板头部用的是**同一个键** tr('panel.title')——
+  //        改品牌只需改字典一处，不许某一处写死字面量导致两处显示不同。
+  //   真值仍不写死在门禁里：品牌下次改名，只要顺着键改，这门还是绿的。
+  const panelTitleOf = function (block, lang) {
+    const m = String(block).match(/'panel\.title':\s*'([^']*)'/)
+    if (!m) throw new Error('期望 5 · ' + lang + ' 的 panel.title 取不到（字典块里没有这一键）')
+    return m[1]
+  }
+  const zhTitle = panelTitleOf(zhBlock, 'zh')
+  const enTitle = panelTitleOf(enBlock, 'en')
+  ok('panel.title 两个 locale 都取得到且非空（漏翻 / 空串照样红）：zh=' + JSON.stringify(zhTitle) + ' en=' + JSON.stringify(enTitle),
+    zhTitle.trim().length > 0 && enTitle.trim().length > 0)
+  // 「两处同键」按两处真交付点各断言一次（胶囊那段 + 面板头部那句），不用出现次数 —— 数次数会漏。
+  ok('品牌同键（一）：胶囊里那一段用 tr(\'panel.title\')，不是写死的字面量',
+    /'data-fold-priority':\s*1[\s\S]{0,80}tr\('panel\.title'\)/.test(src))
+  ok('品牌同键（二）：面板头部标题也走同一个键 tr(\'panel.title\')',
+    /className:\s*'t'[^}]*tr\('panel\.title'\)/.test(src) || /h\('strong',\s*null,\s*tr\('panel\.title'\)\)/.test(src))
   ok('nav.triage zh = "诊断"（与诊断段一致，非 "待分诊"）', /'nav\.triage':\s*'诊断'/.test(zhBlock))
   ok('nav.triage en = "Triage"', /'nav\.triage':\s*'Triage'/.test(enBlock))
   ok('nav.word zh = "沉淀"', /'nav\.word':\s*'沉淀'/.test(zhBlock))
@@ -183,16 +251,46 @@ const statChecks = function (src, tag) {
 const behaviorCheck = function (src, tag) {
   const ok = (name, cond) => { if (!cond) throw new Error(tag + ' · ' + name); console.log('  PASS ' + tag + ' · ' + name) }
   // 信息价值顺序（1=最先收）：品牌 → 更新字 → 时间串 → 无数字操作段（沉淀/交接）→ 有数字监控段（可接/BUG/诊断/环境字）→ 在办编号 → 环境计数
-  // 断言：priority 升序 = 上述顺序；且 1..11 全部出现且唯一
+  // 断言：priority 升序 = 上述顺序；且 1..12 全部出现且唯一
+  // 2026-10-13（#3）改判据：唯一性只在**可见那一行**里算。唯一性是这条阶梯的承重墙 —— 阶梯机按
+  //   data-fold-priority 号码认字段、还跨帧用号码当键记折叠状态，号码撞车就会有一格永远收不掉。
+  //   但新增的幻影行（`.dsws-bar-phantom`，aria-hidden，只用来量「不折叠时多宽」）会把这 12 段原样
+  //   再渲染一份（品牌那格与整颗 SessionChainCapsule 都在里面），于是全文件按字面量数会数出两套。
+  // 量法改成按**真源位置**分域计数，两个域各自是一处真源：
+  //   ① .dsws-barcell 那一块（从它开头到 `]` 收尾）—— 明细字段 1..11 的渲染点；
+  //   ② statusbar/SessionChainCapsule.js —— 在办编号（priority=12）的渲染点，它由那一块以组件形式挂进来，
+  //      在本文件里只是 `h(SessionChainCapsule, …)` 一行，看不到 12。
+  //   幻影行那一块是尺子（`aria-hidden`、只借它的宽度），它的副本不参与可见行唯一性；两块在源码里的
+  //   前后顺序是「幻影行在前、可见行在后」，别按 idx 大小硬切。
+  const idxCell = src.indexOf("className: 'dsws-barcell'")
+  const idxPhantom = src.indexOf("className: 'dsws-bar-phantom'")
+  const cellEnd = idxCell >= 0 ? src.indexOf('\n  ])', idxCell) : -1
+  const barCellRegion = idxCell >= 0 ? src.slice(idxCell, cellEnd > idxCell ? cellEnd : idxCell + 8000) : ''
+  const phantomRegion = idxPhantom >= 0
+    ? src.slice(idxPhantom, (function () { const n = src.indexOf("h('div',", idxPhantom); return n > idxPhantom ? n : idxPhantom + 2000 })())
+    : ''
+  let chainSrc = ''
+  try {
+    chainSrc = fs.readFileSync(path.join(DECK_ROOT, 'src/client/statusbar/SessionChainCapsule.js'), 'utf8')
+  } catch { /* 只跑产物、拿不到源码时下面那格会红并说清楚 */ }
+  const countIn = function (text, p) {
+    return (text.match(new RegExp("'data-fold-priority':\\s*" + p + "\\b", 'g')) || []).length
+  }
   const prios = []
-  for (let p = 1; p <= 12; p++) {
-    const re = new RegExp("'data-fold-priority':\\s*" + p + "\\b")
-    const m = src.match(new RegExp("'data-fold-priority':\\s*" + p + "\\b", 'g'))
-    if (!m) throw new Error('priority=' + p + ' 缺失')
-    if (m.length !== 1) throw new Error('priority=' + p + ' 出现 ' + m.length + ' 次（应唯一）')
+  for (let p = 1; p <= 11; p++) {
+    const inCell = countIn(barCellRegion, p)
+    if (!inCell) throw new Error('priority=' + p + ' 在可见行（.dsws-barcell 区块）里缺失')
+    if (inCell !== 1) throw new Error('priority=' + p + ' 在可见行里出现 ' + inCell + ' 次（应唯一）')
     prios.push(p)
   }
-  ok('V2 · 12 个 data-fold-priority 全部存在且唯一（1..12）', prios.length === 12)
+  // 12（在办编号）由 SessionChainCapsule 组件渲染，量它的真源：整组件里恰好一处 12。
+  const inChain = countIn(chainSrc, 12)
+  if (!chainSrc) throw new Error('读不到 src/client/statusbar/SessionChainCapsule.js，无法核对 priority=12 的渲染点')
+  if (inChain !== 1) throw new Error('priority=12 在 SessionChainCapsule.js 里出现 ' + inChain + ' 次（应唯一）')
+  prios.push(12)
+  ok('V2 · 12 个 data-fold-priority 在可见行里全部存在且唯一（1..12）', prios.length === 12)
+  ok('V2 · 幻影行是尺子：品牌那格在里面另有一份副本、整行 aria-hidden（副本不参与可见行唯一性）',
+    countIn(phantomRegion, 1) === 1 && /className:\s*'dsws-bar-phantom'[^}]*'aria-hidden':\s*'true'/.test(src))
   // 语义表：每个 priority 对应的文案来源（tr 键 / 时间戳 / 在办编号 / 环境计数），确保顺序与「信息价值」一致
   // （2026-09-27 定终版：品牌 → 更新字 → 日期串 → 环境字 → 环境计数 → 时间串 → 沉淀 → 交接 → 可接 → BUG → 诊断 → 在办编号）
   const sem = [
@@ -222,11 +320,27 @@ const domSimCheck = function (src, tag) {
     const m = src.match(re)
     return m ? m[1] : null
   }
-  const capBody = findHandler(/onClick:\s*function\s*\(\)\s*\{\s*(openPanel\(s\))\s*\}/)
+  // #3 改写：点开面板的处理器现在挂在 .dsws-barcell 上，且是箭头函数形态、闭包两个变量
+  //   （barMoved 位移标志、s 会话）。抽出来单独跑：参数名写成它真正依赖的那几个。
+  const capFn = (function () {
+    const head = src.match(/className:\s*['"]dsws-barcell['"][^{]*onClick:\s*(?:function\s*\(\)|\(\)\s*=>)\s*\{/)
+    if (!head) return null
+    // 处理体里有嵌套花括号（`if (barMoved.current) { … }`），所以按花括号配平一路读到收尾，
+    // 不靠正则偷懒 —— 非贪婪会停在里层 `}` 上（第一版就是这样红的），贪婪会把后面的兄弟属性一起吞掉。
+    const from = head.index + head[0].length
+    let d = 1
+    let k = from
+    for (; k < src.length; k++) {
+      if (src[k] === '{') d++
+      else if (src[k] === '}') { d--; if (d === 0) break }
+    }
+    if (d !== 0) return null
+    return compileFn(['barMoved', 'openPanel', 's'], src.slice(from, k))
+  })()
   const cwBody = findHandler(/onClick:\s*function\s*\(e\)\s*\{\s*(e\.stopPropagation\(\);\s*togglePanel\(s\))\s*\}/)
   const segBody = findHandler(/onClick:\s*function\s*\(e\)\s*\{\s*(e\.stopPropagation\(\);\s*onGo\(\))\s*\}/)
   const tbBody = findHandler(/onClick:\s*function\s*\(e\)\s*\{\s*(e\.stopPropagation\(\);\s*refreshAll\(s\))\s*\}/)
-  if (!capBody) throw new Error('capsule onClick handler 提取失败')
+  if (!capFn) throw new Error('capsule（.dsws-barcell）onClick handler 提取失败')
   if (!cwBody) throw new Error('capsule-word onClick handler 提取失败')
   if (!segBody) throw new Error('seg onClick handler 提取失败')
   if (!tbBody) throw new Error('timebtn onClick handler 提取失败')
@@ -240,8 +354,17 @@ const domSimCheck = function (src, tag) {
   const calls = { openPanel: 0, togglePanel: 0, onGo: 0, refreshAll: 0 }
   const st = { tag: 'fixture' }
 
-  const r1 = runHandler(capBody, { s: st, openPanel: function (s) { calls.openPanel++; if (s !== st) throw new Error('openPanel 收到的 s 不一致') } })
-  ok('点击胶囊空白 → openPanel(s) 触发 1 次', calls.openPanel === 1 && calls.togglePanel === 0 && calls.onGo === 0 && calls.refreshAll === 0)
+  // ① 拖动位移标志是 false（这一次是「点」不是「拖」）→ 正常开面板
+  let capCalls = 0
+  capFn({ current: false }, function (s) { capCalls++; if (s !== st) throw new Error('openPanel 收到的 s 不一致') }, st)
+  ok('点击胶囊空白（未拖动）→ openPanel(s) 触发 1 次', capCalls === 1)
+  // ② 位移标志是 true（刚横向拖过）→ 这一次不许开面板，且标志要归零（下一次点击照常生效）
+  const moved = { current: true }
+  let capCalls2 = 0
+  capFn(moved, function () { capCalls2++ }, st)
+  ok('拖动后松手那一次点击 → 不开面板（位移守卫拦住），且标志已归零',
+    capCalls2 === 0 && moved.current === false)
+  ok('点击胶囊空白 → 不误触其他三个 handler', calls.togglePanel === 0 && calls.onGo === 0 && calls.refreshAll === 0)
 
   calls.openPanel = 0
   const e2 = makeEvent()
@@ -278,8 +401,13 @@ const domSimCheck = function (src, tag) {
       }
     }
   }
-  verifyIsolation('capsule', capBody, 'openPanel')
-  ok('handler 路由隔离：capsule 只调 openPanel（其他函数 0 次）', true)
+  // 胶囊那口点击的路由隔离：用同一套四路 stub 真跑一次（未拖动），只许 openPanel 被点名一次。
+  const capSeen = { openPanel: 0, togglePanel: 0, onGo: 0, refreshAll: 0 }
+  capFn({ current: false }, function (x) { capSeen.openPanel++; if (x !== st) throw new Error('openPanel 收到的 s 不一致') }, st)
+  // compileFn 造出来的函数只拿到点名的那几个参数，其余三路在这里压根递不进去：
+  //   所以「另外三路 0 次」是结构性的（函数签名里没有它们），不是靠这一次调用碰巧没碰到。
+  ok('handler 路由隔离：capsule（滑窗那口点击）只调 openPanel（其他三路根本没进参数表）',
+    capSeen.openPanel === 1 && capSeen.togglePanel === 0 && capSeen.onGo === 0 && capSeen.refreshAll === 0)
   verifyIsolation('capsule-word', cwBody, 'togglePanel')
   ok('handler 路由隔离：capsule-word 只调 togglePanel（其他函数 0 次）', true)
   verifyIsolation('seg', segBody, 'onGo')

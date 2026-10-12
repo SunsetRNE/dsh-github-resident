@@ -9,11 +9,11 @@
 //   ⑤ 互斥：同计划标识并发第二跑被拒，第一跑不受影响。
 //   ⑥ 毒例：同调用双边成环拒第二条（第一条保留）；同票两写终态等于最后一次意图。
 // 附带：读失败快照计数置空 + 截断旗；落盘游标 roundtrip、删除与过期。
-const path = require('path')
-const fs = require('fs')
-const os = require('os')
-const { pathToFileURL } = require('url')
-
+import path from 'node:path'
+import fs from 'node:fs'
+import os from 'node:os'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

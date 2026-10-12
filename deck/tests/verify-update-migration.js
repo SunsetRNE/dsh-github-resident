@@ -12,10 +12,10 @@
 //   4) 日志事件无新增：更新侧唯一的自有常驻事件仍是装完身份证验明正身那一条。
 // 约束：全程假零件与假网络，不真跑安装命令、不直连官方源。
 // 用法：node tests/verify-update-migration.js（在仓库根目录）
-const fs = require('fs')
-const path = require('path')
-const { pathToFileURL } = require('url')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 const check = (ok, msg) => { console.log((ok ? '  PASS ' : '  FAIL ') + msg); if (!ok) failed = true }

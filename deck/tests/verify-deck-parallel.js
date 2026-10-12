@@ -8,9 +8,9 @@
 //   会丢一次改动，所以同票写序列走单键锁（src/shared/deck-tools/key-lock.js），
 //   不同票、不同仓照旧全并行，读从不拿锁。
 // 本文件不联网：后端全是桩，只验“丢不丢、堵不堵、诚实不诚实”。
-const path = require('path')
-const { pathToFileURL } = require('url')
-
+import path from 'node:path'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

@@ -9,10 +9,10 @@
 //   5. 减少动态下底座仍可见，不闪不抖（媒体查询兜底存在）。
 // 外加三条组合铁律：高危险不用弹跳扩散自动消失气泡；小图标不用缩小下沉倾斜；
 // 无真实时间与真实进度不显示倒计时与百分比；同一时刻只有一个主力过程效果。
-const path = require('path')
-const fs = require('fs')
-const { pathToFileURL } = require('url')
-
+import path from 'node:path'
+import fs from 'node:fs'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

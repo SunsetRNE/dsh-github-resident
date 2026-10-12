@@ -6,8 +6,7 @@
 //   4) 校验：未知占位符拒绝 / 强制占位符缺失拒绝 / 全通过
 //   5) 交接两击一致性（F1：{file} = 第一击渲染解析的实际文件名）
 // 用法: node tests/verify-t2b-templates.js
-const assert = require('assert')
-
+import assert from 'node:assert'
 const GUIDE_LINE = '从第一性原理出发完成任务，并对抗式审查。'
 const PH = ['url', 'number', 'title', 'ts', 'file']
 const TPL_REQUIRED = {

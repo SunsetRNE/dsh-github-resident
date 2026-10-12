@@ -4,9 +4,10 @@
 // 调用处等待写盘完成即红（必须只进队列就返回）。
 // 做法：锁死两底座的分流形状（错误告警取消等待立刻写，普通走 1000 毫秒合并）；
 // 全仓扫描调用处等待写法，出现一处即红。
-const fs = require('fs')
-const path = require('path')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

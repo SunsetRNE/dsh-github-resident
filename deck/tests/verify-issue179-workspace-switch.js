@@ -1,6 +1,6 @@
 // verify-issue179-workspace-switch.js — #179 门禁：切工作区后右侧仓库名不残留 DSH 路径
 // 用法: node tests/verify-issue179-workspace-switch.js
-const fs = require('fs')
+import fs from 'node:fs'
 let failed=false
 const check=(ok,msg)=>{ console.log((ok?'  PASS ':'  FAIL ')+msg); if(!ok) failed=true }
 const srcDock = ['src/client/panel/Dock.js', 'src/client/panel/DockSync.js'].map((f) => fs.readFileSync(f, 'utf8')).join('\n') // V4 #464：跟随逻辑搬到跟随文件，拼合断言意图不变

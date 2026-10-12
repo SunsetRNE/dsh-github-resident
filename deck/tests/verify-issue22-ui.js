@@ -1,9 +1,8 @@
 // verify-issue22-ui.js - issue #22 real Chrome regression
 // Usage: node tests/verify-issue22-ui.js [url]
 // Requires the running DSH web GUI and Chrome.
-const { chromium } = require('playwright')
-const fs = require('fs')
-
+import { chromium } from 'playwright'
+import fs from 'node:fs'
 const DSH = process.argv[2] || 'http://127.0.0.1:59519'
 const OUT = '.bug-investigate/issue22-ui'
 fs.mkdirSync(OUT, { recursive: true })

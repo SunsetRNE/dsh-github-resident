@@ -1,9 +1,11 @@
 // verify-issue212-213-214.js — Regression for #212/#213/#214
 // Phase 1 tight loop per diagnosing-bugs: static check + mocked snapshot build
 
-const fs = require('fs');
-const path = require('path');
+import fs from 'node:fs'
+import path from 'node:path'
 
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 let failures = [];
 
 function assert(cond, msg) {

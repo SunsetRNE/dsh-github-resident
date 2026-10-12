@@ -5,12 +5,12 @@
 //   a) 不是换行结尾的注入文本补 1 个换行，已经是的不重复补，空文本不动；
 //   b) 三处调宿主写草稿的落点共用同一归一（主注入、草稿消费、新会话直注）；
 //   c) 光标兜底（#786）在归一之后跑，自然落到新行开头。
-const fs = require('fs')
-const assert = require('assert')
-const path = require('path')
-// 按文本求值走共用入口，理由与用法见 tests/lib/eval-probe.js 文件头。
-const { compileFn } = require('./lib/eval-probe.js')
-
+import fs from 'node:fs'
+import assert from 'node:assert'
+import path from 'node:path'
+import { compileFn } from './lib/eval-probe.js'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const root = path.join(__dirname, '..')
 const read = (p) => fs.readFileSync(path.join(root, p), 'utf8')
 const ok = (name, cond) => { if (!cond) throw new Error('FAIL · ' + name); console.log('  PASS · ' + name) }

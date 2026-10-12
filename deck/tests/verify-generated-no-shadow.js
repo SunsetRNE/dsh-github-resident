@@ -13,11 +13,11 @@
 //   二、运行时：按真实拼接顺序把这些文件拼起来、建一次客户端日志器，
 //       五个日志电话名与四个更新电话名必须都拼对（顶掉即红）。
 //   三、写到产物里：打包产物必须已经带上修好的这份。
-const fs = require('fs')
-const path = require('path')
-// 按文本求值走共用入口，理由与用法见 tests/lib/eval-probe.js 文件头。
-const { compileFn } = require('./lib/eval-probe.js')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import { compileFn } from './lib/eval-probe.js'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = 0
 let total = 0

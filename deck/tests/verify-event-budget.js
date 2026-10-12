@@ -22,9 +22,9 @@
 //
 // 反证（三向验证的第二、三向，每次运行都跑）：把变化次数按百倍算，点数那一桶必须判红；
 // 把写事件次数按百倍算，写保底与整桶必须判红；把次数减半、旋钮收紧的合规变体必须判绿。
-const path = require('path')
-const { pathToFileURL } = require('url')
-
+import path from 'node:path'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

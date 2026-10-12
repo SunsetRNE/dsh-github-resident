@@ -7,11 +7,8 @@
 // 手法：凡是行为级断言，跑的都是从源文件里原文截出来的函数体（花括号配平截取后求值），
 // 配真实压栈弹栈函数与记录桩；不是照着源码另写一份仿品，所以源码改错名字或改错分支会直接变红。
 // 用法: node tests/verify-map-drill.js（在插件根目录）
-const fs = require('fs')
-const { compileFn } = require('./lib/eval-probe.js')
-
-// effort 维度（2026-09-09）：面板里身份函数来自拼接进闭包的 shared/tracker/constants.js。
-// 本门禁把同一份原文取出来，拼进每个求值沙箱，保证「跑的是真函数」这条纪律不破。
+import fs from 'node:fs'
+import { compileFn } from './lib/eval-probe.js'
 const constantsSrc = fs.readFileSync('src/shared/tracker/constants.js', 'utf8')
 const identitySrc = ['effortOf', 'idOfParts', 'idOf'].map((n) => {
   const m = new RegExp('export function ' + n + '\\([\\s\\S]*?\\n\\}').exec(constantsSrc)

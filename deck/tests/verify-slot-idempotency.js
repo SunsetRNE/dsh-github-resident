@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // verify-slot-idempotency.js — #298 幂等回归：Deck 侧 5 槽位仅注入一次，二次 apply 不增生
-const fs = require('fs')
-const path = require('path')
+import fs from 'node:fs'
+import path from 'node:path'
 let failed = false
 const check = (ok, msg) => { console.log((ok ? '  PASS ' : '  FAIL ') + msg); if (!ok) failed = true }
 

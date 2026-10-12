@@ -7,8 +7,11 @@
 // 英文 Progress 标题也要认、之前写坏留下的双进度区要一次清干净。
 //
 // 用法：在插件根目录执行 node tests/verify-908-progress-replace.js，可独立运行。
-const path = require('path')
-const { pathToFileURL } = require('url')
+import path from 'node:path'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+import fs from 'node:fs'
+import * as nodePath from 'node:path'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 const imp = (rel) => import(pathToFileURL(path.join(ROOT, rel)).href)
 let failed = false
@@ -101,8 +104,7 @@ async function main() {
   check(outH.indexOf('Status:') < outH.indexOf('## Answer'), 'H 整份无进度：字段行还在 Answer 之前')
 
   // 保命栏：旧正文没读回来时只写进度必须被拦下，不能拿空正文覆盖整张票（#908 处理中亲历：一次空写把整票冲成只剩进度段）。
-  const fs = require('fs')
-  const patchSrc = fs.readFileSync(require('path').join(ROOT, 'src/host/tools/deckIssuePatch.js'), 'utf8')
+  const patchSrc = fs.readFileSync(nodePath.join(ROOT, 'src/host/tools/deckIssuePatch.js'), 'utf8')
   check(patchSrc.includes('progressBlocked'), '防冲掉：读不到旧正文时拦下进度写（progressBlocked 分支存在）')
   check(patchSrc.indexOf("a.body : \u0027\u0027") < 0, '防冲掉：不再用空串兜底旧正文')
 

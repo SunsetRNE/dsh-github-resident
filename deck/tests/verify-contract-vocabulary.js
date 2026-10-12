@@ -33,10 +33,11 @@
 //
 // 反证（每次运行都跑）：拿一份合成出来的常量清单喂同一个判据，两种死法各验一次，必须判红；
 // 另外正向验一次「只被测试读的名字」与「值在生产代码里的名字」不许误判。
-const fs = require('fs')
-const path = require('path')
-const { pathToFileURL } = require('url')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const __filename = fileURLToPath(import.meta.url)
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

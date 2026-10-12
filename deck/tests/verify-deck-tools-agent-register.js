@@ -12,10 +12,10 @@
 //
 // 本文件不联网、不读 DSH 安装目录、不依赖档案里装没装包：
 // 工具定义用桩，工具表用桩，defineTool 用桩；真定义只读“形状”（名字与参数），不执行。
-const path = require('path')
-const fs = require('fs')
-const { pathToFileURL } = require('url')
-
+import path from 'node:path'
+import fs from 'node:fs'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

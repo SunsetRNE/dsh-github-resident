@@ -10,8 +10,10 @@
 // 直接跑：node tests/diag-panel-open-latency.js [owner/repo]
 //   不带参数用本仓库（FeatherHunter/dsh-mattpocock-skills-deck），即用户在开发的那个工作区。
 
-const { execFileSync } = require('child_process')
-
+import { execFileSync } from 'node:child_process'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const REPO = process.argv[2] || 'FeatherHunter/dsh-mattpocock-skills-deck'
 const CWD = __dirname
 
@@ -92,4 +94,4 @@ function report(r) {
   console.log('        慢的是「一页一页串起来问」这个动作的次数，不是读了多少字节。')
 })()
 
-module.exports = {}
+export default {}

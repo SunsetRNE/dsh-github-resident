@@ -1,12 +1,11 @@
 // verify-916-ghauth-unknown-banner.js — #916 查不到≠没登录：pending 出中性横幅+重查，fail 才出登录指引
 // 只测外部行为、不测 DOM：bannerChain 沙箱求值（顺序真源用真的 guide-steps.js），喂假链快照断言横幅与按钮去向。
 // 用法: node tests/verify-916-ghauth-unknown-banner.js
-const fs = require('fs')
-const path = require('path')
-const { pathToFileURL } = require('url')
-// 按文本求值走共用入口，理由与用法见 tests/lib/eval-probe.js 文件头。
-const { compileFn } = require('./lib/eval-probe.js')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+import { compileFn } from './lib/eval-probe.js'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const root = path.resolve(__dirname, '..')
 let failed = false
 const ok = (cond, msg) => { if (cond) console.log('  PASS ' + msg); else { failed = true; console.log('  FAIL ' + msg) } }

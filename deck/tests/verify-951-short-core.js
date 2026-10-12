@@ -14,9 +14,10 @@
 // 落点：发评论 IssueDetailComments.js、改标签 labels/LabelColorDialog.js、存设置 SettingsPage.js、
 //   复制链接 ListTabRow.js、拉列表 ListTab.js（加载态已有转圈）与刷新按钮（Dock 头部按 #195
 //   故意可重按，只给转圈不给禁用；ChecksTab 那颗给转圈加禁用）。
-const path = require('path')
-const fs = require('fs')
-
+import path from 'node:path'
+import fs from 'node:fs'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

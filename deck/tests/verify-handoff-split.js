@@ -12,10 +12,9 @@
 //   e) 新 i18n 键 nav.handoffGreyTitle / toast.handoffGrey（zh/en）齐备；无被取代的历史 toast 键残留。
 //   f) issue #12 BUG4 主路径：probeHandoffReady 在 handoffFile 已设时调 handoffResolve（带 name=handoffFile）；
 //      handoffFile=null 时退到 handoffLatest；预填的 file = handoffFile（即使 handoffLatest 会返回别的）。
-const fs = require('fs')
-const assert = require('assert')
-const { compileFn } = require('./lib/eval-probe.js')
-
+import fs from 'node:fs'
+import assert from 'node:assert'
+import { compileFn } from './lib/eval-probe.js'
 const files = process.argv.slice(2).length ? process.argv.slice(2) : ['client.js', 'package/lib/client.js']
 
 // ---- Part A：静态契约 ----

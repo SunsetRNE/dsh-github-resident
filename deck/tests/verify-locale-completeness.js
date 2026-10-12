@@ -7,8 +7,11 @@
  * C. client 层字符串级中文残留以「基线清单」封顶（2026-08-29 实测登记；只许缩小不许增大，
  *    清单外文件出现字符串级中文即红；kernel/locale.js 与 kernel/prompts.js 为双语定义本体，不入清单）。
  */
-const fs = require('fs')
-const path = require('path')
+import fs from 'node:fs'
+import path from 'node:path'
+import { pathToFileURL } from 'node:url'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const root = path.resolve(__dirname, '..')
 
 let failed = false
@@ -175,7 +178,6 @@ const LOCALE_STRUCT_FILES = [
   'src/client/kernel/locale-skilldesc.js', // #879 技能描述 27 条中英词条（单独一份片段）
 ]
 ;(async function structuralCheck() {
-  const { pathToFileURL } = require('url')
   const problems = []
   for (const rel of LOCALE_STRUCT_FILES) {
     let mod

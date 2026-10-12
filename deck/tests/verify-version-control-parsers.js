@@ -5,10 +5,10 @@
 // 六组解析器各自：实采干净仓库能解出手写脏仓库中文重命名能解出、冲突不丢、游离与零提交
 // 不误判、上游被删单独成态、旧版降级有路、截断半截显式失败（不装作成功）。
 // 最后带一层断言装置自检：把样本改坏（字段数、行首字符、哈希），同一套解析必须显式失败。
-const fs = require('fs')
-const path = require('path')
-const { pathToFileURL } = require('url')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

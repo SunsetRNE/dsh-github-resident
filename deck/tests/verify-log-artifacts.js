@@ -4,9 +4,10 @@
 // 断言文字：新增电话名在开发产物与打包产物同时存在，只改一处即红。
 // 做法：客户端事件在两个客户端产物里逐个点名；宿主事件在打包镜像里逐个点名
 // 且镜像不比真源旧；构建脚本的日志接线逐项锁死。
-const fs = require('fs')
-const path = require('path')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

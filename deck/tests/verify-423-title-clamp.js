@@ -1,5 +1,5 @@
-const fs = require("fs");
-const { JSDOM } = require("jsdom");
+import fs from 'node:fs'
+import { JSDOM } from 'jsdom'
 const styleSrc = fs.readFileSync("src/client/kernel/styles.js", "utf8");
 function pull(needle) {
   const line = styleSrc.split(String.fromCharCode(10)).find(l => l.includes(needle));

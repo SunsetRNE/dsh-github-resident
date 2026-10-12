@@ -12,11 +12,13 @@
 //   2. 仓库没就绪时连那张布局小卡也不开：卡只有在那条黄条下面才有位置，而仓库没就绪时按顺序还轮不到黄条，
 //      先弹卡会让用户选完布局才发现什么都没注入（#655 收尾时修过的同一类毛病）。
 // 用法: node tests/verify-655-setup-layout.js
-const fs = require('fs')
-const path = require('path')
-// 按文本求值走共用入口，理由与用法见 tests/lib/eval-probe.js 文件头。
-const { compileFn } = require('./lib/eval-probe.js')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import { compileFn } from './lib/eval-probe.js'
+import { pathToFileURL } from 'node:url'
+import * as nodeUrl from 'node:url'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const root = path.resolve(__dirname, '..')
 let failed = false
 let total = 0
@@ -68,9 +70,8 @@ function loadPrompts(localeDict, guide, cachedLayout) {
 }
 
 // —— 真词表：直接 import 四个片段，按 kernel/locale.js 合并器同一逻辑拼出来（与 verify-setup-describe 同口径）——
-const fUrl = (f) => require('url').pathToFileURL(path.join(root, f)).href
+const fUrl = (f) => nodeUrl.pathToFileURL(path.join(root, f)).href
 async function loadLocale() {
-  const { pathToFileURL } = require('url')
   const url = (f) => pathToFileURL(path.join(root, f)).href
   const P = await import(url('src/client/kernel/locale-panel.js'))
   const F = await import(url('src/client/kernel/locale-flow.js'))
@@ -84,7 +85,6 @@ async function loadLocale() {
   }
 }
 async function loadGuide() {
-  const { pathToFileURL } = require('url')
   return import(pathToFileURL(path.join(root, 'src/shared/tracker/guide-steps.js')).href)
 }
 

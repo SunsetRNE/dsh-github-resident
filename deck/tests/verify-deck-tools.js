@@ -11,11 +11,11 @@
 //
 // 另外两条静态扫描（票面「加固补充」要求）：src/host/tools/** 与 src/shared/deck-tools/** 里
 // 不许出现后端 id 的等值比较（`=== 'github'` 这种），否则工具就在自己判后端了。
-const path = require('path')
-const fs = require('fs')
-const os = require('os')
-const { pathToFileURL } = require('url')
-
+import path from 'node:path'
+import fs from 'node:fs'
+import os from 'node:os'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

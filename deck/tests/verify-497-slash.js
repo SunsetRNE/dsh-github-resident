@@ -4,10 +4,10 @@
 // darwin 沿用 open、linux 沿用 xdg-open。五方职责：pickerShell 只表达意图（开目录/开文件），
 // “用哪个程序、拼什么参数”由各 OS 底座的可见打开配方拥有，通用层单点调起；调用方不出现按系统分发的分支。
 // 本门禁在平台层核对三端实际参数，在调用方核对零系统分支。
-const fs = require('fs')
-const path = require('path')
-const { pathToFileURL } = require('url')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

@@ -7,9 +7,9 @@
 //   D) 跨次调用仍是整批替换：先写 [A,B] 再写 [A] → 终态只剩 A（守住 #895-⑥）。
 //   E) 整图建骨架双边成环仍拒第二条（守住 #895-⑥）。
 // 用法：在插件根目录执行 node tests/verify-898-block-merge.js，可独立运行。
-const path = require('path')
-const { pathToFileURL } = require('url')
-
+import path from 'node:path'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

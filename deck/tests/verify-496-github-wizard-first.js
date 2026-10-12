@@ -1,6 +1,6 @@
 // verify-496-github-wizard-first.js — #496 第一票：全新工作区选 GitHub 先见建仓向导（GitHub 房 + 初始化模板文案，不动通用链与 Markdown）
 // 用法: node tests/verify-496-github-wizard-first.js
-const fs = require('fs')
+import fs from 'node:fs'
 let failed = false
 const check = (ok, msg) => { console.log((ok ? '  PASS ' : '  FAIL ') + msg); if (!ok) failed = true }
 const gh = fs.readFileSync('src/host/tracker/backends/github/index.js', 'utf8')

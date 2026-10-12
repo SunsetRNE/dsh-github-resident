@@ -31,13 +31,13 @@
 // 同一条 git.exec / git.exec.fail 日志、同一个报闸。门禁里的「真子进程适配器」只是照 DSH subprocess 服务
 // 的形状把子进程跑起来（测试专用；插件代码里没有 child_process）。
 
-const fs = require('fs')
-const os = require('os')
-const path = require('path')
-const http = require('http')
-const cp = require('child_process')
-const { pathToFileURL } = require('url')
-
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import http from 'node:http'
+import cp from 'node:child_process'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

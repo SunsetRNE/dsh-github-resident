@@ -15,10 +15,9 @@
 // 忠实性注意：真实代码中 MAP_EXECUTE_PROMPT / COMPLETE_PROMPT / BODY_FORMAT 是
 // 模块加载时 promptText(...) 捕获一次的常量别名（语言切换不重算），故 en 用例须
 // 以 en 为初始语言重新构建环境，而非中途切换。
-const fs = require('fs')
-const assert = require('assert')
-const { compileFn } = require('./lib/eval-probe.js')
-
+import fs from 'node:fs'
+import assert from 'node:assert'
+import { compileFn } from './lib/eval-probe.js'
 const files = process.argv.slice(2).length ? process.argv.slice(2) : ['client.js', 'package/lib/client.js']
 
 // ---- 解析 PROMPTS 注册表（与 verify-prompts.js 同构）----

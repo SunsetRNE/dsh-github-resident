@@ -1,9 +1,10 @@
 // verify-784-effortId.js —— #784 回归：七个 deck 工具的 effortId 逐项核对
 // 用法：在插件根目录执行 node tests/verify-784-effortId.js，可独立运行。
-const path = require('path')
-const fs = require('fs')
-const os = require('os')
-const { pathToFileURL } = require('url')
+import path from 'node:path'
+import fs from 'node:fs'
+import os from 'node:os'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 const imp = (rel) => import(pathToFileURL(path.join(ROOT, rel)).href)
 let failed = false

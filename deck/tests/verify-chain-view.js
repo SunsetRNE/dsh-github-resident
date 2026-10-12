@@ -32,12 +32,12 @@
 //
 // 反证（人工做过三次，见回报）：把一句中文写死在界面里、把「读不到」改成显示空列表、
 //   把 absent 改回「整句独占一行」的旧画法 —— 都被本门禁打红。
-const fs = require('fs')
-const path = require('path')
-const os = require('os')
-const { pathToFileURL } = require('url')
-const { compileFn } = require('./lib/eval-probe.js')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import os from 'node:os'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+import { compileFn } from './lib/eval-probe.js'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 const problems = []

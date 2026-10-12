@@ -19,10 +19,9 @@
  * 期望：112/112 PASS 且 EXIT 0；单机注入可判全矩阵；有 token 自动走 live 真链
  * 参考：docs/architecture/matrix.md §3
  */
-const fs = require('fs')
-const path = require('path')
-const nodePath = require('node:path')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import nodePath from 'node:path'
 let total = 0, passed = 0, failed = false
 function check(ok, msg) {
   total++; if (ok) passed++; else failed = true

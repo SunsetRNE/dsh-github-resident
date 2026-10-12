@@ -11,9 +11,9 @@
 //      不算失败（连续失败次数保持 0）、不重试；
 //   ⑤ 二级限流（Retry-After）也算降档信号：主桶没用完也降档；
 //   ⑥ 反证：调用方报假数（发 3 条报 1 条）必须被当场对出来，账仍然按真发数记。
-const path = require('path')
-const { pathToFileURL } = require('url')
-
+import path from 'node:path'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

@@ -10,9 +10,10 @@
 // 外加两条本图铁律：覆盖层实现不占布局（新增规则不动宽高边距）；
 // 落点扩到全部瞬间控件（过滤药丸与列表行之外：详情顶栏、版本页签、
 // 悬浮行、状态栏段、设置页按钮、图标小按钮）。
-const path = require('path')
-const fs = require('fs')
-
+import path from 'node:path'
+import fs from 'node:fs'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

@@ -4,9 +4,8 @@
  * 口径：向 IssueDetail.js #763 看齐 —— 单行不换行、五串字逐字折叠、
  * 新会话与主动作同色实心、补齐复制与外链两颗图标。
  */
-const { readFileSync, existsSync } = require('node:fs')
-const { resolve } = require('node:path')
-
+import { readFileSync, existsSync } from 'node:fs'
+import { resolve } from 'node:path'
 let passed = 0, failed = 0
 function ok(msg) { passed++; console.log('  PASS ' + msg) }
 function bad(msg) { failed++; console.log('  FAIL ' + msg) }

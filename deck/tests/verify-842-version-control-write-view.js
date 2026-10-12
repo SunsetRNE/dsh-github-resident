@@ -7,11 +7,12 @@
 //   词条读真字典（locale-panel / locale-flow / locale-vcwrite），断言落在模型与真渲染出来的 DOM 上。
 //
 // A–M 组；M 组是性能（竞态 / 工作区污染 / 缓存上限 / 同键在途不重复发），每项正反两面。
-const fs = require('fs')
-const path = require('path')
-const { pathToFileURL } = require('url')
-const { compileFn } = require('./lib/eval-probe.js')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+import { compileFn } from './lib/eval-probe.js'
+import { renderToStaticMarkup } from 'react-dom/server'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0
@@ -256,7 +257,6 @@ function renderTab(React, DswsCtx, TipStub, IcStub, seedReads, patch) {
     return patch ? patch(out) : out
   }, React, DswsCtx, TipStub, IcStub, seedReads, [], trZh)
   try {
-    const { renderToStaticMarkup } = require('react-dom/server')
     return { html: renderToStaticMarkup(React.createElement(seeded.VersionControlTab, { st: { cwd: 'D:/w/repo' } })), view: seeded, err: '' }
   } catch (e) { return { html: '', view: seeded, err: String((e && e.message) || e) } }
 }

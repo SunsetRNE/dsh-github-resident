@@ -18,15 +18,16 @@
 //   D 反证：把 A、C 里量到的东西做坏（给黄条整条挂上收起 / 把带字的写法塞回那三处收起），对应的断言必须当场变红。
 //
 // 用法：node tests/verify-669-collapsed-recoverable.js
-const fs = require('fs')
-const path = require('path')
-const { chromium } = require('playwright')
-const { JSDOM } = require('jsdom')
-const React = require('react')
-const ReactDOMClient = require('react-dom/client')
-const { act } = require('react')
-const { evalInWindow } = require('./lib/eval-probe.js')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import { chromium } from 'playwright'
+import { JSDOM } from 'jsdom'
+import React from 'react'
+import ReactDOMClient from 'react-dom/client'
+import { act } from 'react'
+import { evalInWindow } from './lib/eval-probe.js'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 const files = process.argv.slice(2).length ? process.argv.slice(2) : ['client.js', 'package/lib/client.js']
 

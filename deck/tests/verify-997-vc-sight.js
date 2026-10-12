@@ -11,10 +11,11 @@
 //      失败重试环的来源）；叶子不新增任何定时器（#709 的不变量）。
 // 反证（仓库既有纪律：每道门禁必须带一条）：把判定、接线、级联重判、词条各改坏一处，同一套断言必须
 //   当场变红；而且反证自己也要自证「真的改到了源码」（改不中就等于没证）。
-const fs = require('fs')
-const path = require('path')
-const { compileFn } = require('./lib/eval-probe.js')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import { compileFn } from './lib/eval-probe.js'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

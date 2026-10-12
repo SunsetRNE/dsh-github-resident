@@ -8,9 +8,10 @@
 //      禁止范围只收在命令构造路径，不扩到整棵源码树：以后若要在失败链路上按报错
 //      地址认出镜像源错误（#645 评审结论），分类逻辑里写镜像源名字是合法的，不能被本门禁拦住。
 // 用法：node tests/verify-update-mirror-hint.js（在仓库根目录）
-const fs = require('fs')
-const path = require('path')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 const OFFICIAL = 'https://registry.npmjs.org/'
 let failed = false

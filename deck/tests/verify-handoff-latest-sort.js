@@ -26,11 +26,9 @@
 //
 // 注：「1 case 旧文件」由主路径（client 端 handoffFile → host.handoffResolve(name)）独立保障，
 //     本测试只覆盖 sort 加固的子路径契约。
-const fs = require('fs')
-const assert = require('assert')
-// 本文件选 compileFn 手法：这段只是把真源里切出来的两个助手函数文本当函数体造函数，没有外层变量要显式传。
-const { compileFn } = require('./lib/eval-probe.js')
-
+import fs from 'node:fs'
+import assert from 'node:assert'
+import { compileFn } from './lib/eval-probe.js'
 const files = process.argv.slice(2).length ? process.argv.slice(2) : ['host.js', 'package/lib/index.js']
 
 // ---- Part A：静态契约 ----

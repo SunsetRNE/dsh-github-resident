@@ -15,11 +15,11 @@
 //
 // 三个后端都是**真后端模块**：GitHub / GitLab 用脚本化的 gh / glab（它们自己按真实命令形状回 JSON，
 // 每执行一次就是一条真实出站请求，照生产里传输层的做法报给闸）；本地 Markdown 用真实临时工作区，票就是文件。
-const path = require('path')
-const fs = require('fs')
-const os = require('os')
-const { pathToFileURL } = require('url')
-
+import path from 'node:path'
+import fs from 'node:fs'
+import os from 'node:os'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0
@@ -242,4 +242,5 @@ function makeScriptedGlab(sink) {
   }
   return { run: run, issues: issues, row: row, mk: mk, find: find }
 }
-module.exports = { makeScriptedGh: makeScriptedGh, makeScriptedGlab: makeScriptedGlab }
+export { makeScriptedGh, makeScriptedGlab }
+export default { makeScriptedGh: makeScriptedGh, makeScriptedGlab: makeScriptedGlab }

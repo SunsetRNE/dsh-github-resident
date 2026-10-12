@@ -5,11 +5,12 @@
 //   D2 文件存在时只听文件的（手改立刻反映，不被缓存挡住的一期：每次直读文件）
 //   D3 空目录不起命令（统一判定不读文件不问注册表；工具壳直接说还没就绪；注册表不起外部命令）
 //   D4 多命中不再自动写文件（verify-957 P1 已覆盖，此处覆盖工具壳多命中诚实拒绝）
-const path = require('path');
-const fs = require('fs');
-const os = require('os');
-const { pathToFileURL } = require('url');
+import path from 'node:path'
+import fs from 'node:fs'
+import os from 'node:os'
+import { pathToFileURL, fileURLToPath } from 'node:url'
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..');
 let failed = false;
 let total = 0;

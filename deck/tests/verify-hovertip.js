@@ -7,8 +7,8 @@
 //   4) 时序与状态：delay {show:0, hide:160} 单 timer，清 timer 再计时，受控仅回调不双写
 //   5) 内容：content 优先于 children，支持 string|VNode|()=>VNode，resolveContent 惰性
 //   6) 双源一致 + 两处迁移消费
-const fs = require('fs')
-const path = require('path')
+import fs from 'node:fs'
+import path from 'node:path'
 let failed = false
 const ok = (cond, msg) => {
   if (cond) console.log('  PASS ' + msg)

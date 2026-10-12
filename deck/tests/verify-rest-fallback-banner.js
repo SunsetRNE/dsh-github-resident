@@ -13,9 +13,11 @@
  *   二、界面接线：ListTab 用的是这个纯函数，并且**不给宿主的标记赋值**（那条静态规矩在 verify-visible-truth 里，这里再钉一遍）；
  *   三、词条与产物：两个语言都有那句新话，且构建产物里带着它（产物不重建就是没生效）。
  */
-const fs = require('fs')
-const path = require('path')
-const { compileFn } = require('./lib/eval-probe.js')
+import fs from 'node:fs'
+import path from 'node:path'
+import { compileFn } from './lib/eval-probe.js'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.join(__dirname, '..')
 let failed = false
 const check = function (cond, msg) {

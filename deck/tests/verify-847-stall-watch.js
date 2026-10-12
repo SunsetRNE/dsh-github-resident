@@ -11,13 +11,13 @@
 // 另加：看门狗的采样来源（收集器 total/bytes）与返回值形状（stalled 与 #839 的 stalled 同形）各钉一条，
 // 以及两条反证（改坏判据 → 当场变红）。
 
-const fs = require('fs')
-const os = require('os')
-const path = require('path')
-const http = require('http')
-const cp = require('child_process')
-const { pathToFileURL } = require('url')
-
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import http from 'node:http'
+import cp from 'node:child_process'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

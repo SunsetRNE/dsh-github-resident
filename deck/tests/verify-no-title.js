@@ -6,8 +6,8 @@
 //   忽略 // 与 /* 注释行。数据对象字面量里的 title 字段不算残留（#845 收窄：块模型 { title: … } 与
 //   items.push({…title:…}) 曾被旧判据误算成 9 处必卡、把合并门禁卡住；收窄后真残留只剩两处回退按钮的
 //   title: tr('list.back')，按 2 处 WARN 处置，不阻断）。
-const fs = require('fs')
-const path = require('path')
+import fs from 'node:fs'
+import path from 'node:path'
 let failed = false
 let warned = false
 const check = (ok, level, msg) => {

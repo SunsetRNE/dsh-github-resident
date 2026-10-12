@@ -4,10 +4,10 @@
 // 守三件事：判定上脏树拉取是 warn（不是 block），真正的安全由命令行的只快进兜底；
 // 界面上禁用与警告的理由一定有常驻文字（data-vc-action-hint），确认框里有警告行（data-vc-confirm-warn）；
 // 同一份首屏下落后时推送仍是 block（顶部笔数与按钮状态一致）。每项带反证。
-const fs = require('fs')
-const path = require('path')
-const { pathToFileURL } = require('url')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

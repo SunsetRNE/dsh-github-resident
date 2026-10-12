@@ -2,10 +2,10 @@
 // 用法：node tests/verify-log-store.js（在插件根目录）。
 // 覆盖 5 项：关闭时零调用、串行写盘不丢行、按天命名、失败只计数、双产物含 5 个电话名。
 // 外加 3 项底座自检：文件不超 350 行、防抖值 1000 毫秒、级别判断在 log 函数第一行。
-const fs = require('fs')
-const path = require('path')
-const { pathToFileURL } = require('url')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

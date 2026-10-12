@@ -17,10 +17,9 @@
 //       先运行 node scripts/build.mjs ；已注册进 npm run verify（与既有 node tests/verify-*.js 同法）
 // 参考：#129 #113 D1/D4/D5/D7 #131可测性三前提 #156-158 #160/#162 #164/#166 #168/#170 #173真实化方法论
 
-const fs = require('fs')
-const path = require('path')
-const nodePath = require('node:path')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import nodePath from 'node:path'
 let failed = false
 let total = 0
 let passed = 0

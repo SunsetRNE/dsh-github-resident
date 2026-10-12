@@ -18,11 +18,12 @@
  *
  * 用法：node tests/verify-client-no-undef.js
  */
-const fs = require('fs')
-const os = require('os')
-const path = require('path')
-const ts = require('typescript-ast')
-
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import ts from 'typescript-ast'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 const FILES = process.argv.slice(2).length ? process.argv.slice(2) : ['client.js', 'package/lib/client.js', 'host.js', 'package/lib/index.js']
 

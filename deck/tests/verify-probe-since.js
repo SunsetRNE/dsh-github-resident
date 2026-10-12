@@ -10,7 +10,7 @@
 //   3) host 侧 `case 'probe'` 不再用 `labels=wayfinder:map`（旧漏检逻辑）
 //   4) host 侧 `buildSnapshot` 末尾初始化 `lastProbeAtByRepo[rk] = new Date().toISOString()`
 //   5) client 侧 `PROBE_MS = 60000`（不再 5min），双源逐字一致
-const fs = require('fs')
+import fs from 'node:fs'
 let failed = false
 let passed = 0
 const check = function (ok, msg) { console.log((ok ? '  PASS ' : '  FAIL ') + msg); if (ok) passed++; else failed = true }

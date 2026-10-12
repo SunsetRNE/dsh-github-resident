@@ -14,14 +14,13 @@
 //   —— 离线门禁没法逐个复核历史提交，也不该在浅克隆里失效。
 //
 // 用法：node tests/verify-log-exec-606.js（在插件根目录，不需要构建产物）。
-const path = require('path')
-const os = require('os')
-const nodeFs = require('fs')
-const { execFileSync } = require('child_process')
-const { pathToFileURL } = require('url')
-// 本文件按文本求值统一走共用入口 compileFn：把 router.js 里计时与记日志那三段真代码配上假记录器（理由与用法见 tests/lib/eval-probe.js 文件头）。
-const { compileFn } = require('./lib/eval-probe.js')
-
+import path from 'node:path'
+import os from 'node:os'
+import nodeFs from 'node:fs'
+import { execFileSync } from 'node:child_process'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+import { compileFn } from './lib/eval-probe.js'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 let failed = false
 let total = 0
 const check = (ok, msg) => { total += 1; console.log((ok ? '  PASS ' : '  FAIL ') + msg); if (!ok) failed = true }

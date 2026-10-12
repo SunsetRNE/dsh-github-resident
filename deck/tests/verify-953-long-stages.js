@@ -20,9 +20,10 @@
 //     不是方图标按钮），所以进度环只留映射规则，生产里不给任何图标套环。
 //   - 版本页失败就地结果加重试（#842 契约）与弹窗失败内联条（#420/#426 契约）
 //     都保留，不搬去横幅座位；本批不新增横幅调用。
-const path = require('path')
-const fs = require('fs')
-
+import path from 'node:path'
+import fs from 'node:fs'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

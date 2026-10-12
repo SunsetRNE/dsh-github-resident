@@ -1,5 +1,5 @@
 // gen-fixture-423.js — 由真源 styles.js 提取 .dsws-tt-wrap 规则，生成浏览器复现页 tests/fixtures/423-clamp-repro.html
-const fs = require('fs');
+import fs from 'node:fs'
 const styleSrc = fs.readFileSync('src/client/kernel/styles.js', 'utf8');
 function pull(needle) {
   const line = styleSrc.split(String.fromCharCode(10)).find(l => l.includes(needle));

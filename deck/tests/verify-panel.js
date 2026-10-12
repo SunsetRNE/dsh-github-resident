@@ -1,13 +1,13 @@
 // verify-panel.js — dsh-waystation 面板数据源与分组验证（ticket #346）
 // 可复现版：性质断言 + 现场 gh 动态比对（不绑死认领/地图数等现场状态）。
 // 用法: node tests/verify-panel.js <仓库根目录>
-const fsx = require('fs')
+import fsx from 'node:fs'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const fsp = fsx.promises
-const path = require('path')
-const { spawn } = require('child_process')
-// 按文本求值走共用入口，理由与用法见 tests/lib/eval-probe.js 文件头。
-const { compileFn } = require('./lib/eval-probe.js')
-
+import path from 'node:path'
+import { spawn } from 'node:child_process'
+import { compileFn } from './lib/eval-probe.js'
 const REPO_CWD = process.argv[2] || process.cwd()
 const HOST_JS = path.join(__dirname, '..', 'host.js')
 

@@ -6,11 +6,11 @@
 //   I2 双斜杠同仓：连续斜杠与尾斜杠不同的写法归一后同仓（注册表只做系统无关洗，宿主出口做全量归一）。
 //   I3 缺席归一即失败：归一出口在场却算不出规范根时，工具如实失败，不拿原始目录凑一把钥匙。
 //   I4 无许可写工作区必拒且文案诚实：缺许可与真不可写分两档，前者说清没有拿到写许可，后者说清带上了许可仍被拒；探针无许可时判灰说量不出。
-const path = require('path')
-const fs = require('fs')
-const os = require('os')
-const { pathToFileURL } = require('url')
-
+import path from 'node:path'
+import fs from 'node:fs'
+import os from 'node:os'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

@@ -14,10 +14,10 @@
 // （src/shared/refresh/attention.js，源码 refresh-core/src/attention.ts）里。两处都真跑，不读文本。
 // 反证口径：这个脚本自己可以被指向一份「故意做坏」的纯函数副本（环境变量 DSH_ATTENTION_VARIANT），
 // 那种情况下必须出现 FAIL。见下面 loadPure()。
-const fs = require('fs')
-const path = require('path')
-const { pathToFileURL } = require('url')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

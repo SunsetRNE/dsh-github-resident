@@ -83,7 +83,7 @@ const ctx = {
 // 合并后客户端只有一份：仓库根 dist/client.js（tools/merge/build-merge-entries.ts 把 deck 产物与
 // 根 client.js 装进同一个 load）。本冒烟因此改成验合并产物，并顺带断言 Resident 的两个设置页也在；
 // 只改取源与断言，不改任何被测行为。合并身份真源见 tools/merge/merge-identity.ts。
-const MERGED_PACKAGE_NAME = '@local/dsh-github-resident-v2'
+const MERGED_PACKAGE_NAME = '@sunsetrne/dsh-github-resident-v2'
 let loaded = null
 window.__ModuleLoader__ = { load(spec) { loaded = spec; return spec } }
 const code = readFileSync('../dist/client.js', 'utf8')

@@ -12,9 +12,9 @@
 //
 // 反证（每次运行都跑）：给一个 MAX_PAGES 被改小的变体，最坏那一笔必须跟着变小（说明上界真的在起作用）；
 // 给一个「实测特别大」的仓库，最坏那一笔必须跟着变大（说明上界被突破时不会假装没这回事）。
-const path = require('path')
-const { pathToFileURL } = require('url')
-
+import path from 'node:path'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

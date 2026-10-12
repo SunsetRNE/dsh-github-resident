@@ -11,9 +11,12 @@
  *
  * 退出码 0 = 全通过；1 = 失败（CI/verify 链会卡住）
  */
-const { readFileSync, existsSync } = require('node:fs')
-const path = require('node:path')
-
+import { readFileSync, existsSync } from 'node:fs'
+import path from 'node:path'
+import { readdirSync as _readdirSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 const SRC_HOST = path.join(ROOT, 'src/host/index.js')
 const SRC_CLIENT = path.join(ROOT, 'src/client/index.js')
@@ -122,8 +125,6 @@ const BUNDLED_VERSION = 'v1.3.1'
 if (!existsSync(BUNDLED_DIR)) {
   console.log('[note] package/bundled-skills 不存在，跳过 bundled 一致性校验（早期分支容忍）')
 } else {
-  const { readdirSync: _readdirSync } = require('node:fs')
-  // a) 27 目录数与集合双向差集 0（真源 = MATT_SKILL_PROBE_NAMES）
   let bundledNames = []
   try {
     bundledNames = _readdirSync(BUNDLED_DIR, { withFileTypes: true }).filter(d => d.isDirectory()).map(d => d.name).sort()
@@ -193,7 +194,6 @@ if (!existsSync(BUNDLED_DIR)) {
   }
   // d) 上游新 tag 探测（离线跳过，仅 warn）
   try {
-    const { spawnSync } = require('node:child_process')
     const ls = spawnSync('git', ['ls-remote', '--tags', 'https://github.com/mattpocock/skills'], { encoding: 'utf8', timeout: 5000 })
     if (ls.status === 0 && ls.stdout) {
       const tags = [...ls.stdout.matchAll(/refs\/tags\/(v[\\d.]+)\^?\{\}/g)].map(m => m[1])

@@ -1,4 +1,4 @@
-const fs = require('fs');
+import fs from 'node:fs'
 for (const f of ['client.js', 'package/lib/client.js']) {
   const src = fs.readFileSync(f, 'utf8');
   const re = /\b([A-Za-z0-9_$]+)r\('[a-z]/g;

@@ -17,9 +17,9 @@
 //   ⑥ 没接这一格的地方（没给时刻 / 没给窗口起点）行为与从前完全一样：一律推迟；
 //   ⑦ 人的动作与「读额度」这两档不受影响（它们的判定排在连续失败前面）；
 //   ⑧ 工作区视图如实带出「窗口起点」（面板与门禁读的就是它）。
-const path = require('path')
-const { pathToFileURL } = require('url')
-
+import path from 'node:path'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

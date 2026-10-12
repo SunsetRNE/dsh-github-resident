@@ -1,7 +1,7 @@
 // verify-success-failure-contract.js — #419/#425 成功路径契约 + #420/#426 失败路径契约（一份契约门）
 // 用法: node tests/verify-success-failure-contract.js
 // 断言形态：用户可观察状态 / 宿主返回形状 / 关键交互能力（继承 verify-no-repo-redcard / verify-deck-slots 先例）
-const fs = require('fs');
+import fs from 'node:fs'
 const host = fs.readFileSync('host.js', 'utf8');
 const pkgHost = fs.readFileSync('package/lib/index.js', 'utf8');
 const pubSrc = fs.readFileSync('src/host/publishFlow.js', 'utf8'); // #450 H6：发布/推送体已搬入 publishFlow.js（注册仍在 host），体断言跟随

@@ -7,11 +7,12 @@
 //   S4 多命中：工具壳与改色诚实拒绝；统一判定把 multiHit 名单独出（调用方凭它拒绝，不自己挑）
 //   S5 已知分歧（改调要收掉的）：纯记忆工作区（无文件无声明）今天改色电话答 conflict，其余三路答记忆——
 //      四路改调同一出口后，本条必须改成四路同答记忆。改调前本条按今天行为断言，改调后改断言。
-const path = require('path');
-const fs = require('fs');
-const os = require('os');
-const { pathToFileURL } = require('url');
+import path from 'node:path'
+import fs from 'node:fs'
+import os from 'node:os'
+import { pathToFileURL, fileURLToPath } from 'node:url'
 
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..');
 let failed = false;
 let total = 0;

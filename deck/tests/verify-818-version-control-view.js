@@ -16,12 +16,14 @@
 //   vcTimeKind 与核心 describeTime 同一条 7 天分界。
 // 反证（规格与仓库既有纪律都要求）：把被守的东西改坏，同一套断言必须当场变红，本文件带五处源码改动
 //   加两条字典与渲染级的反证（词条位置那条真机缺陷就在这里被钉住）。
-const fs = require('fs')
-const path = require('path')
-const { pathToFileURL } = require('url')
-// 本文件选 compileFn 手法：这段把六个叶子拼成的界面闭包当函数体造函数，依赖本来就一项项按参数名传。
-const { compileFn } = require('./lib/eval-probe.js')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+import { compileFn } from './lib/eval-probe.js'
+import React from 'react'
+import { renderToStaticMarkup } from 'react-dom/server'
+import * as JsdomMod from 'jsdom'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0
@@ -603,8 +605,6 @@ async function main() {
   const compSrc = stripComments(read('src/client/views/versionControl/VersionControlTab.js'))
   const kindsMissing = VIEW.VC_BLOCK_ORDER.filter((k) => compSrc.indexOf("b.kind === '" + k + "'") < 0)
   check(kindsMissing.length === 0, 'G3 块模型会产出的每一种块，界面那一边都有画它的分支（缺的：' + (kindsMissing.join('、') || '无') + '）')
-  const React = require('react')
-  const { renderToStaticMarkup } = require('react-dom/server')
   const DswsCtx = React.createContext(null)
   const TipStub = function (props) { return props && props.children ? props.children : null }
   const IcStub = function () { return null }
@@ -683,7 +683,7 @@ async function main() {
   const aiBtn = VIEW.vcAiButtonNode(React.createElement, { ai: { kind: 'conflict' }, tr: tZh, onOpen: function () {} })
   check(!!aiBtn && VIEW.vcAiButtonNode(React.createElement, { ai: null, tr: tZh, onOpen: function () {} }) === null, 'AI6 按钮节点：有描述就画、没描述就不画')
   const aiHtml = (function () { const rv = buildView(function (s) { return s.replace('React.useState(function () { return vcCacheSeedOf(cwd) || vcNewReads() })', 'React.useState(function () { return seedReads })') }, [], React, DswsCtx, TipStub, IcStub, aiReads); try { return renderToStaticMarkup(React.createElement(rv.VersionControlTab, { st: { cwd: 'D:/w/repo' } })) } catch (e) { return '' } })()
-  const aiDoc = new (require('jsdom').JSDOM)('<div id="m">' + aiHtml + '</div>').window.document
+  const aiDoc = new (JsdomMod.JSDOM)('<div id="m">' + aiHtml + '</div>').window.document
   const aiKinds = Array.prototype.map.call(aiDoc.querySelectorAll('[data-vc-ai]'), function (el) { return el.getAttribute('data-vc-ai') }).join(',')
   check(aiKinds.indexOf('conflict') >= 0 && aiKinds.indexOf('midop') >= 0, 'AI7 真渲染：冲突、进行中两处有按钮（实得 ' + aiKinds + '）')
   const aiTreeView = buildView(function (s) { return s.replace('React.useState(function () { return vcCacheSeedOf(cwd) || vcNewReads() })', 'React.useState(function () { return seedReads })').replace("view: vcRememberedView()", "view: 'worktrees'") }, [], React, DswsCtx, TipStub, IcStub, aiReads)

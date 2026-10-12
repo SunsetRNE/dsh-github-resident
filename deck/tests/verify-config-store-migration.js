@@ -5,9 +5,9 @@
 //   M3 写新删老：写成功后老文件被删掉；删不掉只警告，不影响主流程。
 //   M4 版本过高：读成功标只读，写明确拒绝；两个文件都没有时回 missing（界面引导去选）。
 // 用法：node tests/verify-config-store-migration.js（在仓库根目录）
-const path = require('path')
-const { pathToFileURL } = require('url')
-
+import path from 'node:path'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

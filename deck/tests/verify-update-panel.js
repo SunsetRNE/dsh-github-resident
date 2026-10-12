@@ -13,11 +13,11 @@
 //   6) 更新日志文件：包根 CHANGELOG.md 存在且形状合法，并随包发布（面板日志章自动展示的前提，
 //      缺文件时只给中性提示，不挡安装）；包清单依赖跟踪最新，版本头与锁文件一致。
 // 用法：node tests/verify-update-panel.js（在仓库根目录）
-const fs = require('fs')
-const os = require('os')
-const path = require('path')
-const { pathToFileURL } = require('url')
-
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 const check = (ok, msg) => { console.log((ok ? '  PASS ' : '  FAIL ') + msg); if (!ok) failed = true }
@@ -60,11 +60,11 @@ async function main() {
   // 合并后的目标包（要查/要装的那个包）必须是合并包自己；落到更新包自带的旧 Deck 默认值，
   // 失败方式就是「合并包去 npm 上检查/安装旧 Deck」。pluginId 与目标包名是两件事：前者去 scope，后者带 scope。
   const mergedNameMatch = /MERGED_PACKAGE_NAME = '([^']+)'/.exec(sharedIdentitySrc)
-  check(mergedNameMatch && mergedNameMatch[1] === '@local/dsh-github-resident-v2', '共享真源的 MERGED_PACKAGE_NAME 是合并包（实际 ' + (mergedNameMatch && mergedNameMatch[1]) + '）')
+  check(mergedNameMatch && mergedNameMatch[1] === '@sunsetrne/dsh-github-resident-v2', '共享真源的 MERGED_PACKAGE_NAME 是合并包（实际 ' + (mergedNameMatch && mergedNameMatch[1]) + '）')
   check(updateHostSrc.includes("from '../shared/plugin-identity.js'"), '宿主从共享真源取身份（不再自己写第二份）')
   check(updateHostSrc.includes('targetPackageName: MERGED_PACKAGE_NAME'), '宿主建更新能力时显式传 targetPackageName = 合并包名（不落到更新包的旧 Deck 默认值）')
   check(!/targetPackageName\s*:\s*'dsh-mattpocock-skills-deck'/.test(updateHostSrc), '宿主的读/装路径不把旧 Deck 当目标包')
-  check(updateHostSrc.includes('UPDATE_LOCAL_PRIVATE = true'), '宿主记下「本包是本地 private」这一事实（面板据此如实说明，不伪称 npm 可更新）')
+  check(updateHostSrc.includes('UPDATE_LOCAL_PRIVATE = false'), '宿主记下「本包自 v1.7.1 起可 npm 更新」这一事实（面板据此如实说明，不再伪称只能源码重装）')
 
   // ---- 3) 日志只复用常驻事件 ----
   const phoneEvents = [...updateSrc.matchAll(/(?:fire|log)\s*\(\s*'(info|warn|debug|error)'\s*,\s*'([^']+)'/g)].map((m) => m[2])
@@ -90,7 +90,7 @@ async function main() {
   const bundleSrc = read('scripts/generated/updateEntryPanel.bundle.js')
   check(bundleSrc.includes('mountUpdateEntry'), '绑定包里有入口件挂载函数')
   check(leafSrc.includes('mountUpdateEntry'), '挂载点调用包的入口件（不自拼面板）')
-  check(!leafSrc.includes("pluginId: '@local/dsh-github-resident-v2'"), '挂载点不把含 scope 的包名当 pluginId（更新包 assertPluginId 会在加载期拒绝它）')
+  check(!leafSrc.includes("pluginId: '@sunsetrne/dsh-github-resident-v2'"), '挂载点不把含 scope 的包名当 pluginId（更新包 assertPluginId 会在加载期拒绝它）')
   check(leafSrc.includes("prefix: 'wf'"), '挂载点传电话名前缀 wf（与宿主侧一致）')
   check(!leafSrc.includes('wf.updateStatus') && !leafSrc.includes('wf.updateCheck') && !leafSrc.includes('wf.updateInstall'), '挂载点不写电话名字面量（电话名由包从前缀算）')
   check(!leafSrc.includes('setInterval') && !leafSrc.includes('UPD_POLL'), '挂载点不自己起定时器（轮询间隔走包默认）')
@@ -138,7 +138,7 @@ async function main() {
   // 合并后，宿主显式把 npm 目标包名设成合并包自己（不是旧 Deck）。更新包按 targetName 校验回包
   // （name 必须等于 targetName，tarball 路径必须是 /<targetName>/-/<targetName>-<version>.tgz），
   // 所以夹具的回包也要用合并包名——否则这里测的就不是合并后的真实语义。
-  const MERGED_PACKAGE = '@local/dsh-github-resident-v2'
+  const MERGED_PACKAGE = '@sunsetrne/dsh-github-resident-v2'
   const releaseBody = (version) => JSON.stringify({
     name: MERGED_PACKAGE,
     version,

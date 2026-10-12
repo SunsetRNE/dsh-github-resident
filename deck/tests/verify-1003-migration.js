@@ -7,10 +7,11 @@
 //   M4 空目录 → 选择按未知回，不建文件不起命令（handleBind 空输入直接拒绝，不拿进程目录冒充）
 // 日志沿用既有事件（host.call / host.call.fail），不新增事件，字段与白名单一致；
 // 附录与计数由后完成方统一收口，这里只断行为不断条数。
-const path = require('path');
-const fs = require('fs');
-const os = require('os');
-const { pathToFileURL } = require('url');
+import path from 'node:path'
+import fs from 'node:fs'
+import os from 'node:os'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..');
 let failed = false;
 let total = 0;

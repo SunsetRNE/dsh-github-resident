@@ -13,10 +13,10 @@
 // 手写夹具不等于活体调用，形状对不齐的风险由 tests/verify-deck-tools.js 那侧兜。
 //
 // 用法：node tests/verify-deck-render-detail.js（在插件根目录）
-const path = require('path')
-const fs = require('fs')
-const { pathToFileURL } = require('url')
-
+import path from 'node:path'
+import fs from 'node:fs'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

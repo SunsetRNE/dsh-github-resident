@@ -8,11 +8,11 @@
 //   W2 探测顺序：内存绑定 > 工作区文件 > 主锚；未知 id 的层跳过。
 //   W3 工具顺序：内存 > 本机记忆H > 文件 > 自动识别；口子缺席照旧走自动识别（旧接线兼容）。
 //   W4 落盘形状：版本 2 的 YAML，字段齐全（布局缺席整段省略），不带路径与令牌字样，拼装可往返。
-const path = require('path')
-const fs = require('fs')
-const os = require('os')
-const { pathToFileURL } = require('url')
-
+import path from 'node:path'
+import fs from 'node:fs'
+import os from 'node:os'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

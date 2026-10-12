@@ -13,9 +13,11 @@
 //   头 8 字节 = [uint32 恒为 4][uint32 头部 pickle 的总长]
 //   头部 pickle = [uint32 负载长][uint32 JSON 长][JSON]
 //   文件数据从 8 + 头部 pickle 长 起算，条目的 offset 相对这个基准。
-const fs = require('fs');
-const path = require('path');
+import fs from 'node:fs'
+import path from 'node:path'
 
+import { pathToFileURL } from 'node:url'
+const isMainEntry = !!process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href
 /** 读出归档头部 JSON（目录树），失败时抛错。 */
 function readAsarHeader(asarPath) {
   const fd = fs.openSync(asarPath, 'r');
@@ -54,7 +56,7 @@ function extractAsarEntry(asarPath, entryPath, outPath) {
   }
 }
 
-if (require.main === module) {
+if (isMainEntry) {
   const [, , asarPath, entryPath, outPath] = process.argv;
   if (!asarPath || !entryPath || !outPath) {
     console.error('用法: node scripts/asar-extract.js <app.asar> <归档内路径> <输出文件>');
@@ -64,4 +66,5 @@ if (require.main === module) {
   console.log('抽出 ' + entryPath + ' → ' + outPath + '（' + (size / 1024).toFixed(1) + ' KB）');
 }
 
-module.exports = { extractAsarEntry, readAsarHeader };
+export { extractAsarEntry, readAsarHeader }
+export default { extractAsarEntry, readAsarHeader }

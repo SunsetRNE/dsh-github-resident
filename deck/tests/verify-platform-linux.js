@@ -30,12 +30,13 @@
  *
  * 运行：node tests/verify-platform-linux.js
  */
-const assert = require('node:assert/strict')
-const nodePath = require('node:path')
-const nodeOs = require('node:os')
-const fs = require('node:fs')
-const path = require('node:path')
-
+import assert from 'node:assert/strict'
+import nodePath from 'node:path'
+import nodeOs from 'node:os'
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 async function main() {
   const { createPlatform } = await import('../src/host/platform/index.js')
   const { default: linuxAdapter } = await import('../src/host/platform/linux/index.js')

@@ -3,9 +3,10 @@
 // 为什么单开这一个文件：既有字段门禁只查不多记，删掉耗时不会红；既有外层门禁只查调试级，
 // 常驻信息的放行没有人锁。这个文件只锁三件事，不碰既有断言：四处常驻名单一致、
 // 建成行与成功调用行必须带耗时、开关关着时常驻放行而按需拦掉。
-const fs = require('fs')
-const path = require('path')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

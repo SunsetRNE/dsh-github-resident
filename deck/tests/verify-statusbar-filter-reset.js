@@ -14,9 +14,8 @@
 //  3) 源码段 seg('search' ... triage) 的 handler 必须含 s.lblFilters = ['needs-triage']
 //  4) 回归：byLabel 在 lblFilters=[] 时不过滤，['bug'] 仅保留含 bug 的票，['needs-triage'] 匹配空标签票（isTriageLike）
 //  5) 功能：模拟 BUG -> 可接 的切换，验证可接后列表为全量可接而非 BUG 交集；BUG -> 诊断 不与 BUG 交集；手动多选后切可接/诊断 被清空或覆写
-const fs = require('fs')
-const path = require('path')
-
+import fs from 'node:fs'
+import path from 'node:path'
 const files = process.argv.slice(2).length ? process.argv.slice(2) : ['client.js', 'package/lib/client.js']
 let failed = false
 const check = (ok, msg) => { console.log((ok ? '  PASS ' : '  FAIL ') + msg); if (!ok) failed = true }

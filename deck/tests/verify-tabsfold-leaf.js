@@ -9,10 +9,9 @@
 //       4) 叶子 === _pkg 产物（package/lib/client.js）
 //       5) 文本逐字断言：产物内 tabsLevelDecide 文本 === src/client/index.js 内联
 //       6) 双源镜像特征（文本镜像断言，T5 #98 统一删除）
-const fs = require('fs')
-const path = require('path')
-// 按文本求值走共用入口，理由与用法见 tests/lib/eval-probe.js 文件头。
-const { evalWithScope } = require('./lib/eval-probe.js')
+import fs from 'node:fs'
+import path from 'node:path'
+import { evalWithScope } from './lib/eval-probe.js'
 let failed = false
 const check = (ok, msg) => { console.log((ok ? '  PASS ' : '  FAIL ') + msg); if (!ok) failed = true }
 

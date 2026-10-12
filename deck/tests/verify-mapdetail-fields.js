@@ -4,7 +4,7 @@
 // MapDetail 直接读 m.decisions.length 等抛 Cannot read properties of undefined (reading 'length')。
 // 双防守：①组装层（tracker/snapshot.js）恒填 EMPTY 数组/字符串；②客户端（MapDetail.js）按缺失兜底。
 // 运行：node tests/verify-mapdetail-fields.js
-const fs = require('fs')
+import fs from 'node:fs'
 let failed = false
 const check = (ok, msg) => { console.log((ok ? '  PASS ' : '  FAIL ') + msg); if (!ok) failed = true }
 const read = (p) => { try { return fs.readFileSync(p, 'utf8') } catch (e) { return '' } }

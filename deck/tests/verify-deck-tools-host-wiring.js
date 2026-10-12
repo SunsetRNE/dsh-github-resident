@@ -19,11 +19,11 @@
 //
 // 末尾一条内存夹具是为了让 ① 不空转：把「宿主层里的文件读宿主层的工具文件」这件事喂给本文件
 // 同一套判据，它必须判违规。
-const path = require('path')
-const fs = require('fs')
-const os = require('os')
-const { pathToFileURL } = require('url')
-
+import path from 'node:path'
+import fs from 'node:fs'
+import os from 'node:os'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

@@ -1,13 +1,13 @@
 // verify-detail-levels.js — 分层 MapDetail 数据层验证（T1 #442）
 // 断言：wf.snapshot 每个 map 的 stats.levels 结构正确 + 每张票带 level + DAG 分层语义自洽
 // 用法: node tests/verify-detail-levels.js <仓库根目录>
-const fsx = require('fs')
+import fsx from 'node:fs'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const fsp = fsx.promises
-const path = require('path')
-const { spawn } = require('child_process')
-// 本文件按文本求值统一走共用入口 compileFn：把 host 产物文本配假 harness/ctx 造成插件（理由与用法见 tests/lib/eval-probe.js 文件头）。
-const { compileFn } = require('./lib/eval-probe.js')
-
+import path from 'node:path'
+import { spawn } from 'node:child_process'
+import { compileFn } from './lib/eval-probe.js'
 const REPO_CWD = process.argv[2] || process.cwd()
 const HOST_JS = path.join(__dirname, '..', 'host.js')
 

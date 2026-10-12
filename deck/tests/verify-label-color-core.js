@@ -6,11 +6,11 @@
 // 写在 docs/adr/20260913-builtin-ts-shape.md 第 2.8 节，本门禁负责把它们钉死：
 // 少一条，「每一条还没配色的标签都被算成改过了、一保存就白发一批请求」这种错就会溜过去。
 // 用法：node tests/verify-label-color-core.js（在仓库根目录）
-const path = require('path')
-const fs = require('fs')
-const { pathToFileURL } = require('url')
-const { compileFn } = require('./lib/eval-probe.js')
-
+import path from 'node:path'
+import fs from 'node:fs'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+import { compileFn } from './lib/eval-probe.js'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

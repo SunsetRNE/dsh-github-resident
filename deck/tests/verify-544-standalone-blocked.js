@@ -2,16 +2,18 @@
 // 验收：541/542/543 出现阻塞徽章（与地图子票同样式）；顶部“阻塞”计数为 3、“可接”相应减少；
 // “阻塞”筛选能筛出这三张；原有地图的分层与计数一字不差；异常输入不崩。
 // 用法: node tests/verify-544-standalone-blocked.js
-const assert = require('assert')
-const fs = require('fs')
-const path = require('path')
-
+import assert from 'node:assert'
+import fs from 'node:fs'
+import path from 'node:path'
+import * as nodeUrl from 'node:url'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 async function loadDerived() {
   const src = fs.readFileSync(path.join(__dirname, '..', 'src', 'client', 'kernel', 'store-derived.js'), 'utf8')
   const tmp = path.join(__dirname, 'tmp-544-verify-derived.mjs')
   // effort 维度：store-derived 在面板闭包里用共享的身份函数（idOf / idOfParts / effortOf），
   // 单独取出求值时要把同一份原文显式导入，否则 ReferenceError（跑的是真函数，不改行为）。
-  const constantsHref = require('url').pathToFileURL(path.join(__dirname, '..', 'src', 'shared', 'tracker', 'constants.js')).href
+  const constantsHref = nodeUrl.pathToFileURL(path.join(__dirname, '..', 'src', 'shared', 'tracker', 'constants.js')).href
   const identityImport = "import { idOf, idOfParts, effortOf, refKeyOf } from " + JSON.stringify(constantsHref) + "\n"
   fs.writeFileSync(tmp, identityImport + src, 'utf8')
   try {

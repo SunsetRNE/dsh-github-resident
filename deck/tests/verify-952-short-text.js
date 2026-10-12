@@ -9,10 +9,10 @@
 //   5. 减少动态下换字与图标保留，闪跳弹一律降级。
 // 外加本图铁律：覆盖层实现不占布局（留死宽度只许出现在换字类与圆点区两个固定位）；
 // 不引入新颜色与原型占位红；映射判断口的备用词（dots/breath）有归宿。
-const path = require('path')
-const fs = require('fs')
-const { pathToFileURL } = require('url')
-
+import path from 'node:path'
+import fs from 'node:fs'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

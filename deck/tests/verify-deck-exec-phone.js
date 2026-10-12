@@ -5,10 +5,10 @@
 // 跑的还是宿主那同一张表、同一份闸、同一个账，不另起一本账。
 // 本门禁盯住：入参不对不抛、表不在诚实说、执行只回三态那一份、
 // 记账数不外露、日志只落既有事件、入口只增这一处动态接线。
-const path = require('path')
-const fs = require('fs')
-const { pathToFileURL } = require('url')
-
+import path from 'node:path'
+import fs from 'node:fs'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

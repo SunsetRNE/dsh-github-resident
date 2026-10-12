@@ -9,9 +9,10 @@
 //   四、反馈闭环：清空确认框（标题＋说明＋取消＋确认清空）与导出成功 toast 含路径展示、
 //      导出／打开／清空三路失败各有错误态；
 //   五、只许新增自监控事件与复用已计数事件：#499 起菜单失败分支可记 log.export.fail；#498 复用已计数事件（host.call、host.call.fail）不算新增；其余点分事件名仍不许加。
-const fs = require('fs')
-const path = require('path')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

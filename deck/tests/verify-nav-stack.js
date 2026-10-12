@@ -6,9 +6,8 @@
 //      非法输入直接返回/旧对象无栈兼容/弹栈不碰展开与缓存/镜像同步（含弹空栈不写回旧镜像）
 //   4) 接线：Dock 渲染优先级读栈顶；双产物含新函数
 // 用法: node tests/verify-nav-stack.js（在插件根目录）
-const fs = require('fs')
-// 按文本求值走共用入口，理由与用法见 tests/lib/eval-probe.js 文件头。
-const { compileFn } = require('./lib/eval-probe.js')
+import fs from 'node:fs'
+import { compileFn } from './lib/eval-probe.js'
 let failed = false
 const check = (ok, msg) => { console.log((ok ? '  PASS ' : '  FAIL ') + msg); if (!ok) failed = true }
 

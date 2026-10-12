@@ -17,10 +17,9 @@
  * 期望：58/58 PASS（双闸8 + I2 10 + 3 OS 各 13-14）且 EXIT 0；单机注入即可跑通三端
  * 参考：docs/architecture/matrix.md §2
  */
-const fs = require('fs')
-const path = require('path')
-const nodePath = require('node:path')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import nodePath from 'node:path'
 let total = 0, passed = 0, failed = false
 function check(ok, msg) {
   total++; if (ok) passed++; else failed = true

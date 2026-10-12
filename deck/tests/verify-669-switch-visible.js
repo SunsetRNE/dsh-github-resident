@@ -23,16 +23,16 @@
  *
  * 用法：node tests/verify-669-switch-visible.js
  */
-const fs = require('fs')
-const path = require('path')
-const { JSDOM } = require('jsdom')
-const React = require('react')
-const ReactDOMClient = require('react-dom/client')
-const { act } = require('react')
-const { chromium } = require('playwright')
-// 本文件三处手法不同：窗口里跑产物走 evalInWindow，取真源里一行函数表达式走 evalWithScope，拼闭包造模块走 compileFn。
-const { compileFn, evalWithScope, evalInWindow } = require('./lib/eval-probe.js')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import { JSDOM } from 'jsdom'
+import React from 'react'
+import ReactDOMClient from 'react-dom/client'
+import { act } from 'react'
+import { chromium } from 'playwright'
+import { compileFn, evalWithScope, evalInWindow } from './lib/eval-probe.js'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8')
 let passed = 0

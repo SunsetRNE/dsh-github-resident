@@ -14,7 +14,7 @@
 //   3) fetchMapsDetail 的 GraphQL RATE_LIMIT → 自动降级 REST（fetchMapsDetailREST 存在 + 同构组装）
 //   4) client startAutoProbe：probe 60s + focus 限流 60s + changed 后 await shared force 刷新 → 全 store 内存广播（R2-fix-5，双源）
 //   5) buildSnapshot **不**推进 lastProbeAtByRepo 基线（R2-fix-6：build 无权动基线，防吞同窗口编辑）；基线仅由 probe changed 滑动
-const fs = require('fs')
+import fs from 'node:fs'
 const files = ['host.js', 'package/lib/index.js', 'client.js', 'package/lib/client.js']
 let failed = false
 let passed = 0

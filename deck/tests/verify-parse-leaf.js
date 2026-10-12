@@ -9,10 +9,9 @@
 //       4) 叶子 === _pkg 产物（package/lib/index.js）
 //       5) 文本逐字断言：产物内函数文本 === src/host/index.js 内联（构建为文本组合，函数体逐字保留）
 //       6) 双源镜像特征（文本镜像断言，T5 #98 统一删除）
-const fs = require('fs')
-const path = require('path')
-// 本文件按文本求值统一走共用入口 evalWithScope：切出的五个函数都写在同一个立即执行体里，被求值的表达式不引用外部变量，所以作用域传空对象（理由与用法见 tests/lib/eval-probe.js 文件头）。
-const { evalWithScope } = require('./lib/eval-probe.js')
+import fs from 'node:fs'
+import path from 'node:path'
+import { evalWithScope } from './lib/eval-probe.js'
 let failed = false
 const check = (ok, msg) => { console.log((ok ? '  PASS ' : '  FAIL ') + msg); if (!ok) failed = true }
 

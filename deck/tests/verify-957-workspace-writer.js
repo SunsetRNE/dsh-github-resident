@@ -4,11 +4,11 @@
 // 盯两块（写器，不含读链；读链见 verify-947-workspace-file.js）：
 //   B 首绑落盘：人选 backendId 落盘（来源 user），显式无后端不写，文件已在不覆盖，写失败不回滚绑定但如实回。
 //   P 双命中保护：无文件且双命中含 GitHub 时自动存一份（来源 auto）并照此走；单命中不写，无 GitHub 照旧报错，有待定不写，文件已在不覆盖，写失败诚实返回空。
-const path = require('path')
-const fs = require('fs')
-const os = require('os')
-const { pathToFileURL } = require('url')
-
+import path from 'node:path'
+import fs from 'node:fs'
+import os from 'node:os'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

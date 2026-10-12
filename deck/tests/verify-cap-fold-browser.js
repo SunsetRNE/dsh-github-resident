@@ -177,10 +177,11 @@ window.__MEASURE__ = function () {
     return { w: Math.round(r.width), h: Math.round(r.height), left: Math.round(r.left), right: Math.round(r.right), display: cs.display, visible: r.width > 0 && r.height > 0 && cs.display !== 'none' && cs.visibility !== 'hidden' }
   }
   const capRect = cap.getBoundingClientRect()
-  const labels = Array.from(cap.querySelectorAll('[data-fold-priority]')).map(function (el) {
+  const bar = cap.querySelector('.dsws-barcell') || cap   // 版面上那一条（幻影行只量尺子，不算版面）
+  const labels = Array.from(bar.querySelectorAll('[data-fold-priority]')).map(function (el) {
     return { p: String(el.getAttribute('data-fold-priority') || ''), text: String(el.textContent || ''), folded: el.classList.contains('dsws-folded'), box: vis(el) }
   })
-  const nums = Array.from(cap.querySelectorAll('.dsws-num')).map(function (el) {
+  const nums = Array.from(bar.querySelectorAll('.dsws-num')).map(function (el) {
     const r = el.getBoundingClientRect()
     return {
       text: String(el.textContent || ''),
@@ -188,7 +189,7 @@ window.__MEASURE__ = function () {
       insideCapsule: r.left >= capRect.left - 1 && r.right <= capRect.right + 1,
     }
   })
-  const word = cap.querySelector('.dsws-capsule-word')
+  const word = bar.querySelector('.dsws-capsule-word')
   const icon = word ? word.querySelector('svg') : null
   const words = labels.filter(function (l) { return l.text.trim() !== '' && !l.folded }).map(function (l) { return l.p })
   return {
@@ -248,7 +249,7 @@ window.__TIER0__ = function (texts) {
 window.__FULL_TEXTS__ = function () {
   const cap = document.querySelector('.dsws-capsule')
   const out = {}
-  Array.from(cap.querySelectorAll('[data-fold-priority]')).forEach(function (el) {
+  Array.from((cap.querySelector('.dsws-barcell') || cap).querySelectorAll('[data-fold-priority]')).forEach(function (el) {
     const p = String(el.getAttribute('data-fold-priority') || '')
     if (!el.classList.contains('dsws-folded')) out[p] = String(el.textContent || '')
   })
@@ -281,6 +282,13 @@ const origin = 'http://127.0.0.1:' + server.address().port + '/'
 // 真渲染通道：容器没有 /dev/shm、playwright 默认那一版 revision 也不在缓存里，
 // 统一走 lib/chromium-channel.js（要换浏览器设 DSH_TEST_CHROMIUM）。
 const { launchChromium, describeChannel } = await import('./lib/chromium-channel.js')
+// 品牌那一段的真源：从页面上现取（合并包是「GitHub 常驻」，上游 Deck 是 "MattSkills"）。
+//   2026-10-13：合并后这三条断言里写死的 "MattSkills" 会把真机上没错的版式判红 —— 也就是门禁自己过期了。
+const brandWordOf = async (pg) => await pg.evaluate(() => {
+  const bar = document.querySelector('.dsws-barcell')
+  const el = bar && bar.querySelector('[data-fold-priority="1"]')
+  return el ? String(el.textContent || '') : ''
+})
 console.log(describeChannel())
 const browser = await launchChromium()
 // 四枚计数器的数字：可接 / BUG / 诊断 / 环境（顺序与状态栏那四段一致，环境排最后、最后才让）。
@@ -340,21 +348,34 @@ try {
   {
     await page.evaluate(() => window.__SET_COLUMN__(1600))
     const wide = await page.evaluate(() => window.__MEASURE__())
+    const word = await brandWordOf(page)
     const brand = wide.labels.filter((l) => l.p === '1')[0] || null
     const box = brand && brand.box
-    check(!!brand && brand.folded !== true && String(brand.text) === 'MattSkills' && !!box && box.w > 0.5 && box.h > 0,
+    check(!!brand && brand.folded !== true && String(brand.text) === word && word.length > 0 && !!box && box.w > 0.5 && box.h > 0,
       'I1b 列宽 1600（放得下）：品牌那串字整串看得见（矩形与文本都非空；实测 ' + JSON.stringify({ text: brand ? brand.text : null, w: box ? box.w : null, h: box ? box.h : null, folded: brand ? brand.folded : null }) + '）')
   }
   // I1b：中档（列宽 1200，胶囊可用宽 750）—— 这时各段字放不下，让位的必须是品牌，而且它是**一格一格**让的：
   //   它少字（还可能被收掉末尾），而后面那几段一段都不许动。这条量的是「宽度不够时它第一个让位」。
+  // 2026-10-13：这一段原来写死列宽 1200（那时品牌是上游 Deck 的 "MattSkills"，字号/字宽都不一样）。
+  //   合并包换成「GitHub 常驻」之后，写死的宽度落在「整段放得下」或「连别的段也一起让」两侧，
+  //   门禁在按旧字号量新字串。改成**扫一档出来**：宽度从窄到宽走一遍，取第一次出现
+  //   「品牌那串字还在、但被截短了，而且别的段一段都没动」的那一档 —— 维护者那句话
+  //   「宽度不够时它第一个让位」说的正是这一档，跟具体字串/字号无关。
   {
-    await page.evaluate(() => window.__SET_COLUMN__(1200))
-    const mid = await page.evaluate(() => window.__MEASURE__())
-    const brand = mid.labels.filter((l) => l.p === '1')[0] || null
-    const others = mid.labels.filter((l) => l.p !== '1' && l.p !== '2' && String(l.text).trim() === '' && ['3', '4', '5', '6', '7', '8', '9', '10', '11', '12'].indexOf(l.p) >= 0).map((l) => l.p)
-    const brandText = String(brand ? brand.text : '')
-    check(!!brand && brandText.length > 0 && brandText.length < 'MattSkills'.length && brandText === 'MattSkills'.slice(0, brandText.length) && others.length === 0,
-      'I1b 列宽 1200（各段放不下）：让位的是品牌，而且是它自己一格一格让（其余各段一字未动；实测品牌 ' + JSON.stringify(brandText) + '、被写空的其它段 ' + JSON.stringify(others) + '）')
+    const word2 = await brandWordOf(page)
+    let hit = null
+    let tried = []
+    for (let col = 360; col <= 1100; col += 20) {
+      await page.evaluate((c) => window.__SET_COLUMN__(c), col)
+      const m = await page.evaluate(() => window.__MEASURE__())
+      const b = m.labels.filter((l) => l.p === '1')[0] || null
+      const bt = String(b ? b.text : '')
+      const others = m.labels.filter((l) => l.p !== '1' && l.p !== '2' && String(l.text).trim() === '' && ['3','4','5','6','7','8','9','10','11','12'].indexOf(l.p) >= 0).map((l) => l.p)
+      if (bt.length > 0 && bt.length < word2.length && bt === word2.slice(0, bt.length) && others.length === 0) { hit = { col: col, brand: bt }; break }
+      tried.push(col + ':' + (bt || '空') + '/其它空' + others.length)
+    }
+    check(!!hit,
+      'I1b 「宽度不够时品牌第一个让位、而且只有它让」在某一档成立（实测 ' + (hit ? ('列宽 ' + hit.col + ' → 品牌 ' + JSON.stringify(hit.brand)) : ('整段扫描没有这一档；取样 ' + JSON.stringify(tried.slice(0, 6)))) + '）')
   }
   // I1b：收到**极窄**（列宽 320，胶囊可用宽 318）——这时可让的字全让完了，版面上只剩图标与数字。
   //   这条量的是维护者那句话的最后半句「直到只剩图标」：可让的字一段不剩（环境计数排第 5，先于时间让，
@@ -405,7 +426,8 @@ try {
     const wideBrand = wideNow.labels.filter((l) => l.p === '1')[0] || null
     check(Number(wideNow.tier) === 0 && wideNow.folded === 0,
       'W1 列宽 1600：第 0 档放得下时机器就停在第 0 档、一段都不收（实测 档' + wideNow.tier + '、收 ' + wideNow.folded + '/' + wideNow.labelCount + '）')
-    check(!!wideBrand && wideBrand.folded !== true && String(wideBrand.text).trim() === 'MattSkills' && !!wideBrand.box && wideBrand.box.w > 0,
+    const wordW = await brandWordOf(page)
+    check(!!wideBrand && wideBrand.folded !== true && String(wideBrand.text).trim() === wordW && wordW.length > 0 && !!wideBrand.box && wideBrand.box.w > 0,
       'W1 列宽 1600：品牌那串字整串可见（矩形与文本都非空；实测 ' + JSON.stringify(wideBrand ? { text: wideBrand.text, w: wideBrand.box && wideBrand.box.w, folded: wideBrand.folded } : null) + '）')
   }
 

@@ -6,8 +6,10 @@
 //   3) 选项行是地图图标加需求（Ic map + tr nav.takeableNew），紫色三件套（字 #c084fc / 亮图标 #d8b4fe / 淡紫底 rgba(192,132,252,.15)）
 //   4) 点选项走与面板加需求同一条链路（openTextInNewSession + newWayfinderText + newSessionTitleNew requirement），点数字本身仍是筛可接
 //   5) 互斥：打开可接关 BUG 与技能，打开 BUG 与技能关可接；store 有 takeMenuOpen/Hover/Pos 默认关闭；StatusMenus 有定位打开关闭三件并被重定位监听
-const fs = require('fs')
-const path = require('path')
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const root = path.resolve(__dirname, '..')
 const files = process.argv.slice(2)
 const srcTargets = ['src/client/statusbar/StatusBar.js', 'src/client/statusbar/StatusMenus.js', 'src/client/kernel/store-snapshot.js', 'src/client/kernel/locale-panel.js', 'src/client/floating/SkillFloatList.js']

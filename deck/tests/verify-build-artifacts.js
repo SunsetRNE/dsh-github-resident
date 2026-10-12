@@ -7,9 +7,9 @@
 // 解释给新手：
 //   - 产物 = 机器炒好的菜（client.js 等），菜谱 = src/
 //   - 手改盘子里的菜，下次机器一炒就没了，所以加检查员看盘子上有没有“机器做的”标签
-const fs = require('fs')
-const path = require('path')
-const { execSync } = require('child_process')
+import fs from 'node:fs'
+import path from 'node:path'
+import { execSync } from 'node:child_process'
 let failed = false
 const check = (ok, msg) => { console.log((ok ? '  PASS ' : '  FAIL ') + msg); if (!ok) failed = true }
 
@@ -86,7 +86,7 @@ try {
 }
 // 4) 方案 C 原样复制 L2 门禁（#136/#172）：glob 双向差集 + sha256 + 入口冒烟 + import 卫生
 console.log('\n方案C L2：原样复制校验（glob 差集 + sha256 + 入口 + import 卫生）')
-const crypto = require('crypto')
+import crypto from 'node:crypto'
 function collect(dir, base = dir) {
   const out = []
   if (!fs.existsSync(dir)) return out

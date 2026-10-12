@@ -14,11 +14,10 @@
  *
  * 用法：node tests/repro-666-mark-never-rendered.js
  */
-const fs = require('fs')
-const path = require('path')
-const { execFileSync } = require('child_process')
-const { renderMark, ROOT } = require('./lib/render-subws-mark.js')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import { execFileSync } from 'node:child_process'
+import { renderMark, ROOT } from './lib/render-subws-mark.js'
 const MARK_REL = 'src/client/views/SubworkspaceMark.js'
 const FIX_COMMIT = '9665735'
 const ROOT_DIR = 'D:\\ilife'

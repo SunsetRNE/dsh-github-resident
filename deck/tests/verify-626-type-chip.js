@@ -15,9 +15,11 @@
 //   D. 双产物：client.js 与 package/lib/client.js 都带上了新词条
 //
 // 用法: node tests/verify-626-type-chip.js（在插件根目录；无需 gh / 网络）
-const fs = require('fs')
-const path = require('path')
-const { compileFn } = require('./lib/eval-probe.js')
+import fs from 'node:fs'
+import path from 'node:path'
+import { compileFn } from './lib/eval-probe.js'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const root = path.resolve(__dirname, '..')
 
 let failed = false

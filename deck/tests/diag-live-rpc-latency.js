@@ -12,8 +12,7 @@
 //
 // 只读：只请求快照与探测，不写任何数据。
 
-const { chromium } = require('playwright')
-
+import { chromium } from 'playwright'
 const AUTH_URL = process.env.DSH_AUTH_URL
 if (!AUTH_URL) { console.error('缺少 DSH_AUTH_URL'); process.exit(1) }
 const ROUNDS = Number(process.argv[2] || 3)

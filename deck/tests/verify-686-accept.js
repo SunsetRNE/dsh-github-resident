@@ -8,9 +8,10 @@
 //   五、常驻日志点只有两个短枚举（落点、字段、双产物、附录对照表）；
 //   六、总纲里没有具体跟踪器命令（开口只属于各后端自己的科目）。
 // 用法: node tests/verify-686-accept.js
-const fs = require('fs')
-const path = require('path')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

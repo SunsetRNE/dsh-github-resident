@@ -10,9 +10,12 @@
 //   被测试引用：summarizeLatencies / summarizeInflight / rankForceSources / summarizeReuse 四个纯函数，只算数，不碰磁盘与网络。
 //   被人直接跑：node scripts/measure-967-outbound.js，在本机跑一轮合成量测并打印表格，不起真实外部进程。
 
-const fs = require('fs');
-const path = require('path');
+import fs from 'node:fs'
+import path from 'node:path'
 
+import { fileURLToPath, pathToFileURL } from 'node:url'
+const isMainEntry = !!process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 // 耗时分桶的边界（毫秒）。桶名写给人看的大白话，与测试里的字面量一致。
 // 30 秒是宿主起外部小命令的默认超时（src/host/tracker/backends/github/client.js 的 TIMEOUT_MS），
 // 超过它即撞墙，单独一桶；12 秒是读操作建议上限的参考线，单独分界。
@@ -158,9 +161,10 @@ async function runOnce() {
   return { hits, rank, latencySummary, inflightSummary, peak, cappedPeak, reuse };
 }
 
-module.exports = { summarizeLatencies, summarizeInflight, rankForceSources, summarizeReuse, bucketOf, runOnce };
+export { summarizeLatencies, summarizeInflight, rankForceSources, summarizeReuse, bucketOf, runOnce }
+export default { summarizeLatencies, summarizeInflight, rankForceSources, summarizeReuse, bucketOf, runOnce }
 
-if (require.main === module) {
+if (isMainEntry) {
   runOnce().then((r) => {
     console.log('967 只读量测（一轮合成，不起真实外部进程）');
     console.log('强制重查来源共 ' + r.hits.length + ' 处，排行：');

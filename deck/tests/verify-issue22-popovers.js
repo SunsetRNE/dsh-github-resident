@@ -3,7 +3,7 @@
 //
 // 行为 seam：BUG 新增菜单与技能列表必须是 body-level overlay；
 // 布局 wrapper 继续保留横向裁剪职责，但不得再承载向上展开的弹层。
-const fs = require('fs')
+import fs from 'node:fs'
 const files = process.argv.slice(2)
 const targets = files.length ? files : ['client.js', 'package/lib/client.js']
 let failed = false

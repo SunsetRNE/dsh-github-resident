@@ -14,13 +14,12 @@
  *
  * 用法: node tests/verify-783-chain-effort.js（在插件根目录）
  */
-const fs = require('fs')
-const path = require('path')
-const os = require('os')
-const { pathToFileURL } = require('url')
-// 本文件按文本求值统一走共用入口 compileFn：真源文本配假零件造成模块（理由与用法见 tests/lib/eval-probe.js 文件头）。
-const { compileFn } = require('./lib/eval-probe.js')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import os from 'node:os'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+import { compileFn } from './lib/eval-probe.js'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 const url = (rel) => pathToFileURL(path.join(ROOT, rel)).href
 

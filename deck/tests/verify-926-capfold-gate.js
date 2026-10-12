@@ -11,12 +11,9 @@
  *
  * 运行：node tests/verify-926-capfold-gate.js（只读源码，不开浏览器）
  */
-const { readFileSync, existsSync } = require('node:fs')
-const { resolve } = require('node:path')
-// 按文本求值走共用入口，理由与用法见 tests/lib/eval-probe.js 文件头。
-// （本文件是主干 #926 波次新合入的门禁，自带两处旧写法；#824 波次顺手按同一手法转掉，行为不变。若 #926 那边还在改这份文件，合入时以他们为准。）
-const { compileFn } = require('./lib/eval-probe.js')
-
+import { readFileSync, existsSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { compileFn } from './lib/eval-probe.js'
 let passed = 0, failed = 0
 const ok = (msg) => { passed++; console.log('  PASS ' + msg) }
 const bad = (msg) => { failed++; console.log('  FAIL ' + msg) }

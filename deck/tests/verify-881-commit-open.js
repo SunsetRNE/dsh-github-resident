@@ -4,8 +4,9 @@
 // 守的是这一次修的最小可用：已经在提交历史里点某一条，原地展开详情；
 //   人手动点页签才离开详情。写法照 verify-842 的 M5/M6 那一组，只多模拟 React
 //   把同一拍里的两次 setUi 按序执行（对象与函数两种形态都按序落）。
-const path = require('path')
-const { pathToFileURL } = require('url')
+import path from 'node:path'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

@@ -16,12 +16,12 @@
  *   9) 差分钉住：脚本的校正结果逐字等于 src/shared/parser.js 的 normalizeBody（真源）；
  *  10) 本门禁已接进 npm run verify 链。
  */
-const fs = require('fs')
-const path = require('path')
-const os = require('os')
-const { spawnSync } = require('child_process')
-const { pathToFileURL } = require('url')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import os from 'node:os'
+import { spawnSync } from 'node:child_process'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.join(__dirname, '..')
 const SCRIPT = path.join(ROOT, 'scripts', 'fix-issue-body.mjs')
 const SCRIPT_NAME = 'scripts/fix-issue-body.mjs'

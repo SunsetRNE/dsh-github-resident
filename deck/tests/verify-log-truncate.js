@@ -4,9 +4,10 @@
 // 直接拼接或直接转整行对象即红；渲染函数体内出现日志用对象转文本即红。
 // 做法：锁死截断小函数的形状与全部调用点的字数；标题只许散列；
 // 渲染目录的日志调用点名白名单，白名单外的日志调用与调用行上的对象转文本都算失败。
-const fs = require('fs')
-const path = require('path')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

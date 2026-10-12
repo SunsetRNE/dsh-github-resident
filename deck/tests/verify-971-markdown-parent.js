@@ -8,11 +8,11 @@
 //   ② 逐张读回的父子列与文件顶注释一致，地图自身为空；
 //   ③ 按地图筛选与快照子票数等于实际子票数，不再为零；
 //   ④ 单根布局（地图为 00）回归通过；跨目录或不存在的父仍如实失败。
-const path = require('path')
-const fs = require('fs')
-const os = require('os')
-const { pathToFileURL } = require('url')
-
+import path from 'node:path'
+import fs from 'node:fs'
+import os from 'node:os'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

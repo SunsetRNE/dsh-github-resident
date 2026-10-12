@@ -3,11 +3,10 @@
 // 依赖：DSH GUI 已在 http://127.0.0.1:59519 运行；本机 git/playwright/chrome 已安装。
 // 用法：node tests/verify-t2-repokey-ui.js [outDir]
 
-const { chromium } = require('playwright')
-const fsx = require('fs')
+import { chromium } from 'playwright'
+import fsx from 'node:fs'
 const fsp = fsx.promises
-const path = require('path')
-
+import path from 'node:path'
 const DSH = process.env.DSH_URL || 'http://127.0.0.1:59519/'
 const TARGET_WS_NAME = 'dsh-im'
 const OUT = process.argv[2] || path.join(process.cwd(), '.dsh-mattskillsdeck-cache', 'shots-t2')

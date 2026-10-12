@@ -12,10 +12,12 @@
  * 设计：纯 Node 单测 + 轻量文件探针（临时 HOME 隔离，绝不触碰真实 HOME），日志全含 [bundled] 证据供 CI 检索。
  * 用法：node tests/verify-bundled-trio-matrix.js
  */
-const { readFileSync, existsSync, readdirSync, statSync, mkdtempSync, rmSync, writeFileSync, mkdirSync } = require('node:fs');
-const path = require('node:path');
-const os = require('node:os');
+import { readFileSync, existsSync, readdirSync, statSync, mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs'
+import path from 'node:path'
+import os from 'node:os'
 
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..');
 const BUNDLED_CANDIDATES = [
   path.join(ROOT, 'package/bundled-skills'),

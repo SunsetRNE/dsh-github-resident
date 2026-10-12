@@ -3,9 +3,10 @@
 // 断言文字：命中只记具名正则名；出现未知规则名、命中记原文、未命中扩写表达式即红。
 // 做法：规则名只许截断三档（留前多少字）；掩码事件只带字段名、规则名、是否命中，
 // 不带原文；截断小函数里不写 pattern 匹配（只计数）；全仓不许自造规则名字面量。
-const fs = require('fs')
-const path = require('path')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

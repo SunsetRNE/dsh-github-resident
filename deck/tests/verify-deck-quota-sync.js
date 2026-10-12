@@ -7,9 +7,9 @@
 // 同步接上：差读数时经闸打一次免费的 `gh api rate_limit`，不差不打。
 // 本门禁盯住：解析只认全格、差才打、失败永不抛、并发只打一次、
 // 壳动手前保一次且缺席时跳过（老桩照样过）。
-const path = require('path')
-const { pathToFileURL } = require('url')
-
+import path from 'node:path'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

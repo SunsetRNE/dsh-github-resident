@@ -6,10 +6,11 @@
 //   P3 核产物随包发布：package/package.json 的 files 白名单含 shared（产物能进包）。
 //   P4 宿主适配器可加载：src/host/configStore.js 能 import，六个冻结函数都在。
 // 用法：node tests/verify-config-store-package.js（在仓库根目录）
-const fs = require('fs')
-const path = require('path')
-const { pathToFileURL } = require('url')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+import * as YamlMod from 'yaml'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 const check = (ok, msg, detail) => {
@@ -35,7 +36,7 @@ async function main() {
   // —— P2：装好的包里能解析 ——
   try {
     const yaml = await import(pathToFileURL(path.join(ROOT, 'node_modules', 'yaml', 'index.js')).href).catch(() => null)
-    const mod = yaml || require('yaml')
+    const mod = yaml || YamlMod
     const parsed = mod.parse('version: 2\nbackendId: github\n')
     check(parsed && parsed.backendId === 'github', '装好的 yaml 能解析', JSON.stringify(parsed))
   } catch (e) {

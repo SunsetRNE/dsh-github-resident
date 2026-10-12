@@ -3,18 +3,21 @@
 // 清单里的 id 全部能在检查目录里找到（不新造名字）；宿主真的按清单排；界面不自己再排一份；
 // 清单顺序就是维护者定下来的那一条（改顺序必须改清单，改别处一律红）。
 // 用法: node tests/verify-668-guide-steps-single-source.js
-const assert = require('assert')
-const fs = require('fs')
-const path = require('path')
-
+import assert from 'node:assert'
+import fs from 'node:fs'
+import path from 'node:path'
+import * as nodeUrl from 'node:url'
+import * as nodeUrl2 from 'node:url'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.join(__dirname, '..')
 const read = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8')
 let passed = 0
 const ok = (name) => { passed++; console.log('  PASS', name) }
 
 async function main() {
-  const guide = await import(require('url').pathToFileURL(path.join(ROOT, 'src', 'shared', 'tracker', 'guide-steps.js')).href)
-  const catalog = await import(require('url').pathToFileURL(path.join(ROOT, 'src', 'shared', 'tracker', 'check-catalog-dirs.js')).href)
+  const guide = await import(nodeUrl.pathToFileURL(path.join(ROOT, 'src', 'shared', 'tracker', 'guide-steps.js')).href)
+  const catalog = await import(nodeUrl2.pathToFileURL(path.join(ROOT, 'src', 'shared', 'tracker', 'check-catalog-dirs.js')).href)
 
   const ORDER = ['selection:backendSelected', 'gh:installed', 'gh:authed', 'gh:remote', 'tracker:initialized', 'skill:wayfinder']
   const idOf = (arr) => arr.map((s) => String(s.id))

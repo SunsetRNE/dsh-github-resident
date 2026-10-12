@@ -20,10 +20,13 @@
  * 依赖：playwright（含 chromium，本机已装 headless shell）+ esbuild（开发依赖）。
  */
 'use strict'
-const fs = require('fs')
-const path = require('path')
-const { createServer } = require('http')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import { createServer } from 'node:http'
+import * as esbuild from 'esbuild'
+import { chromium } from 'playwright'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0
@@ -157,7 +160,6 @@ window.__ready = true
 }
 
 async function pageFor(browser, closureSrc, dict, css) {
-  const esbuild = require('esbuild')
   const bundled = await esbuild.build({ stdin: { contents: entryOf(closureSrc, dict), resolveDir: ROOT, sourcefile: 'probe-997.js', loader: 'js' }, bundle: true, format: 'iife', platform: 'browser', target: 'chrome120', write: false, logLevel: 'error' })
   const probeJs = bundled.outputFiles[0].text
   const html = '<!doctype html><html><head><meta charset="utf-8"><style>' + css +
@@ -246,7 +248,6 @@ async function run(browser, build) {
   const css = String(stylesMod.STYLE_TEXT || '') + String(stylesVcMod.VC_STYLE_TEXT || '')
 
   const closure = VC_FILES.map((f) => strip(read(f))).join('\n')
-  const { chromium } = require('playwright')
   const browser = await chromium.launch({ headless: true })
   try {
     await run(browser, { closure, dict, css })

@@ -10,10 +10,10 @@
 //
 // 三张对账表住在共享层 src/shared/feedback-map.js（FB_ICON_SIZES / FB_DURATIONS /
 // FB_FAIL_RED_PATHS）——门禁与票面都从那三个常量取，避免两处各写一份、改一处忘一处。
-const path = require('path')
-const fs = require('fs')
-const { pathToFileURL } = require('url')
-
+import path from 'node:path'
+import fs from 'node:fs'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

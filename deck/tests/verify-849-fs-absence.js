@@ -1,6 +1,9 @@
 // verify-849-fs-absence.js —— 「文件不存在」判据的三处统一（#849）与它的反证。
 // 语义：明确没有（ENOENT / ENOTDIR / FS_NOT_FOUND）→ 走缺失分支；其它错误 → 仍如实报「读不到」。
-const fs = require('fs'); const path = require('path'); const { pathToFileURL } = require('url');
+import fs from 'node:fs'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
+ import path from 'node:path'
+import { pathToFileURL, fileURLToPath } from 'node:url'
 const ROOT = path.resolve(__dirname, '..');
 let failed = false; let total = 0;
 const check = (ok, msg) => { total += 1; if (!ok) failed = true; console.log((ok ? '  PASS ' : '  FAIL ') + msg) };

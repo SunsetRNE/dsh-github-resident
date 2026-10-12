@@ -4,9 +4,10 @@
 // 单包 128KB 或 100 条先到先截；通道失败处理为丢弃并计数；
 // 出现背压等待或无界缓冲即红。
 // 做法：锁死客户端通道字面与失败语义；全仓扫描等待与无界写法，出现即红。
-const fs = require('fs')
-const path = require('path')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

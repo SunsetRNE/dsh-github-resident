@@ -10,10 +10,11 @@
 //   gateSyntax 对不含 export 的文件走 vm.Script 脚本语境，本门禁按票面要求对全员走 ESM），
 //   失败即红。根 package.json 不加 type module（ tests 下几十个 require 脚本会连锁炸掉，否决）。
 // 用法：node tests/verify-strict-module-syntax.js（在插件根目录）
-const fs = require('fs')
-const path = require('path')
-const esbuild = require('esbuild')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import * as esbuild from 'esbuild'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 const SRC = path.join(ROOT, 'src')
 

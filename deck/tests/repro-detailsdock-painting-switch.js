@@ -2,9 +2,8 @@
 // 对应用户反馈：点中文补丁工作区的绘画→再点回当前工作区的某些绘画，右面板仍是中文仓库旧内容，仅新绘画才恢复
 // 用法: node tests/repro-detailsdock-painting-switch.js
 
-const fs = require('fs')
-const vm = require('vm')
-
+import fs from 'node:fs'
+import vm from 'node:vm'
 console.log('=== 复现：DetailsDock 切绘画串台 ===')
 
 // 1) 静态检查：DetailsDock 是否已跟随 session 变化

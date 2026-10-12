@@ -8,9 +8,10 @@
 // 第 ② 类是这套门禁里唯一有价值的部分：只查文件里有没有某些字串，是把文档抄一遍，不是守它。
 //
 // 反证（每次运行都跑）：把一份「缺了 I4 的假 ADR 文本」喂同一个判据，必须判红。
-const fs = require('fs')
-const path = require('path')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

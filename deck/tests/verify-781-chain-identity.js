@@ -18,11 +18,11 @@
  * 用法: node tests/verify-781-chain-identity.js（在插件根目录）
  * 退出码：0 = 通过；1 = 有违规。
  */
-const fs = require('fs')
-const path = require('path')
-const os = require('os')
-const { pathToFileURL } = require('url')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import os from 'node:os'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 const url = (rel) => pathToFileURL(path.join(ROOT, rel)).href
 

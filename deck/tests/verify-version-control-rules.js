@@ -6,9 +6,9 @@
 // 理由只能是 REASONS 表里的取值。最后带断言装置自检：把规则改坏（永远放行），同一套断言必须判红。
 // #819 复审 P2-8 补三条方向：合并/变基进行中推送拦住（推的是动手前那次提交）、落后远端推送拦住
 // （推上去会被拒，与拉取同一条边界）、游离头上提交至少提醒（提交完只剩 reflog 能找回来）。
-const path = require('path')
-const { pathToFileURL } = require('url')
-
+import path from 'node:path'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

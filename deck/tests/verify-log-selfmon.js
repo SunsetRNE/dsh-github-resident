@@ -3,12 +3,11 @@
 // 断言文字：46～50 五个事件逐个有点名、级别全为错误与告警、字段全在附录 1.6 白名单内、
 // 告警行无外层是否开启判断；看门狗超时字面为 5000 毫秒；落盘失败行带防繁殖守卫。
 // 做法：前半静态扫描源码字面，后半运行时复现四类故障（分发抛错只做静态，因完整分发上下文需真机）。
-const fs = require('fs')
-const path = require('path')
-const { pathToFileURL } = require('url')
-// 按文本求值走共用入口，理由与用法见 tests/lib/eval-probe.js 文件头。
-const { compileFn } = require('./lib/eval-probe.js')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+import { compileFn } from './lib/eval-probe.js'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

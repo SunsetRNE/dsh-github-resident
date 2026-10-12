@@ -6,8 +6,8 @@
 //   4) 构建产物（_dev client.js / _pkg package/lib/client.js）已注入 ctx 模块声明（一源两物）
 //   5) 产物新鲜度门禁（缺失/过期 → FAIL，提示先构建；与 verify-tabsfold-leaf 同口径）
 // 用法: node tests/verify-ctx.js（在插件根目录；先运行 node scripts/build.mjs 生成产物）
-const fs = require('fs')
-const path = require('path')
+import fs from 'node:fs'
+import path from 'node:path'
 let failed = false
 const check = (ok, msg) => { console.log((ok ? '  PASS ' : '  FAIL ') + msg); if (!ok) failed = true }
 

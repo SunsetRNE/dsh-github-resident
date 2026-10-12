@@ -1,9 +1,8 @@
 // verify-markdown.js — dsh-waystation v1.5 T17：markdown 白名单渲染契约校验
 // 用法: node tests/verify-markdown.js（在插件根目录）
 // 覆盖：源码存在性 + 行为级渲染（用 stub h() 执行真实渲染器，验证输出结构与防注入边界）
-const fs = require('fs')
-// 按文本求值走共用入口，理由与用法见 tests/lib/eval-probe.js 文件头。
-const { compileFn } = require('./lib/eval-probe.js')
+import fs from 'node:fs'
+import { compileFn } from './lib/eval-probe.js'
 const cli = fs.readFileSync('client.js', 'utf8')
 const pcli = fs.readFileSync('package/lib/client.js', 'utf8')
 let failed = false

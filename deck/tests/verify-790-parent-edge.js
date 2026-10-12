@@ -5,9 +5,9 @@
 //   C) 裸接口拒收票面号时如实失败，不静默成功
 //   D) deck_map_link：写成功但读回没挂上 → failed，且顶层带失败摘要（不再“建成 0 条、无话”）
 //   E) deck_issue_create：票建成、边没挂上 → partial +“没挂上”，不再报“建好了（父票 X）”
-const path = require('path')
-const { pathToFileURL } = require('url')
-
+import path from 'node:path'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

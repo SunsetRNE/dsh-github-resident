@@ -10,9 +10,9 @@
 //   ⑤ 红线：deck.counts 是整仓口径，增量路径不许本地重算 —— 保持旧值并把 deck.partial 置真；
 //   ⑥ 旧版本快照（没有本机制那块状态的老快照）被读到时整池重建一次，不许静默当新结构用。
 // 假传输层照 tests/verify-gate-accounting.js 那份口径：真发出去的每一条都报给闸，argv 原样记下来给断言用。
-const path = require('path')
-const { pathToFileURL } = require('url')
-
+import path from 'node:path'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

@@ -4,9 +4,9 @@
 //   G2) 原生旗回“重复” + 重读仍不是目标父 → ok:false 且带原话（不吞后端错误）
 //   G3) deck 写成功但读票失败 → 逐条 failed 且证据里带“读票没成功”与后端原话（不再只说 parent 为空）
 //   G4) 正文兜底与正常挂边仍 ok（回归对照）
-const path = require('path')
-const { pathToFileURL } = require('url')
-
+import path from 'node:path'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

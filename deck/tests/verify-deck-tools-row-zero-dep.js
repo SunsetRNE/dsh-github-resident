@@ -8,10 +8,11 @@
 // 所以行模块只许交纯数据对象，不许引用框架包；
 // 发布清单里也不许再带工具包依赖，工具行挂载必须在。
 // 本文件不联网、不读 DSH 安装目录：只看仓库里的文本与形状。
-const path = require('path')
-const fs = require('fs')
-const { pathToFileURL } = require('url')
-
+import path from 'node:path'
+import fs from 'node:fs'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+import crypto from 'node:crypto'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0
@@ -87,7 +88,6 @@ async function main() {
 
   // 4. 发包镜像与源一致（构建会整树复制，手改发包即红）
   try {
-    const crypto = require('crypto')
     const sha = (rel) => crypto.createHash('sha256').update(fs.readFileSync(path.join(ROOT, rel))).digest('hex')
     check(sha('src/host/platform/deckToolsRow.js') === sha('package/lib/platform/deckToolsRow.js'), '发包行模块与源同字节（构建已同步）')
   } catch (e) {

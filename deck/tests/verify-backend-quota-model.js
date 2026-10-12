@@ -12,10 +12,10 @@
 // 断言的是**行为**：同一笔花费喂给三个后端，返回值必须按各自的口径不同——不是只比对一张常量表。
 // 反证（每次运行都跑）：把一笔点数花费喂给 GitLab，它必须记 0 点并明说「这个后端不按点数计费」；
 // 把同一笔喂给 GitHub，点数必须原样传出去（说明上面那条不是因为「反正都记 0」而通过）。
-const fs = require('fs')
-const path = require('path')
-const { pathToFileURL } = require('url')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

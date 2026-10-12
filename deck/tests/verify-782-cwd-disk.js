@@ -11,10 +11,10 @@
 //   （D、E 组）；把日志点拆掉，本文件必须变红（F 组与计数门禁）。
 //
 // 用法：node tests/verify-782-cwd-disk.js（插件根目录，可独立运行）
-const fs = require('fs')
-const path = require('path')
-const { pathToFileURL } = require('url')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 let total = 0

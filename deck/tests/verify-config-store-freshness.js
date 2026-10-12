@@ -10,11 +10,11 @@
 //   5) 插口空壳产物里还留着模块标识 PORTS_SOURCE（类型被擦掉之后唯一能追溯来源的东西）。
 //   6) 单元数钉死四个：多一个少一个都说明有人绕过清单手加文件。
 // 用法：node tests/verify-config-store-freshness.js（在仓库根目录）
-const fs = require('fs')
-const path = require('path')
-const { spawnSync } = require('child_process')
-const { pathToFileURL } = require('url')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import { spawnSync } from 'node:child_process'
+import { pathToFileURL, fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
 const check = (ok, msg) => { console.log((ok ? '  PASS ' : '  FAIL ') + msg); if (!ok) failed = true }

@@ -42,13 +42,14 @@
 //   kind=rule  该条确实还写着具体跟踪器命令、属第二批范围 → 跳过判定（登记在案的债）
 //   kind=scope 该条不属首批范围 → 门禁仍然判它，只是登记「不属首批」，所以 scope 不是放行口子
 // 受保护清单 PROTECTED 里的条目（本票收敛过的）绝不许进豁免表 —— 这是防「换一条豁免整体放行」的变异自检。
-const fs = require('fs')
-const os = require('os')
-const path = require('path')
-const childProcess = require('child_process')
-// 按文本求值走共用入口，理由与用法见 tests/lib/eval-probe.js 文件头。
-const { compileFn } = require('./lib/eval-probe.js')
-
+import fs from 'node:fs'
+import os from 'node:os'
+import path from 'node:path'
+import childProcess from 'node:child_process'
+import { compileFn } from './lib/eval-probe.js'
+import cryptoPkg from 'node:crypto'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.join(__dirname, '..')
 const SELF = path.join(__dirname, 'verify-prompts.js')
 const EXEMPT_FILE = path.join(__dirname, 'prompt-gate-exempt.json')
@@ -1491,7 +1492,7 @@ const runL2Injection = function () {
 // 只给三个文件上锁：豁免登记表、L2 payload 夹具、门禁自身。改任意一个都必须同步改这里的摘要，
 // 否则门禁红 —— 这是「把 14 条 payload 全换成同一条 trivial 载荷仍然全绿」那条路的封堵点。
 // 摘要按「行尾统一成 LF」计算，避免 Windows 检出成 CRLF 后误红。
-const crypto = require('crypto')
+import crypto from 'node:crypto'
 const LOCK_BEGIN = '// ---- LOCK-BEGIN ----'
 const LOCK_END = '// ---- LOCK-END ----'
 const sha256Of = function (buf) { return crypto.createHash('sha256').update(buf).digest('hex') }
@@ -1532,10 +1533,12 @@ const selfDigest = function () {
 // #879：逐面归零门禁退役（上游技能文档一字不动，人定案），本文件两处注释同步改说法，自摘要跟着重算。
 // #900：tpl.fix 阶段闸门整节删除，只在读现状留一句兜底，版本底线 7 → 11 并补内容断言，自摘要跟着重算。
 // #989：mapExecute 恢复纯寻路版 v12 文字（五节单票推进），断言同步回到五节版，自摘要跟着重算。
+// 2026-10-13（票「deck 门禁链 ESM/CJS 欠账」）：本文件改 ESM 写法（本仓 package.json 是 type:module，
+//   原来的 require/__dirname 一加载就 ReferenceError）。只有方言改动、断言一条没动，自摘要跟着重算。
 const LOCK = {
   'tests/prompt-gate-exempt.json': 'c661ccd0fbfd46aa99790c073d0ccea89ebf5787a9113462c092b17c72a2a2d9',
   'tests/prompt-gate-payloads.json': '489d9dc9feff4c1ce1b2b4fa4ed6090d802f8b54e77de4cd303bb8b9c88f66f5',
-  'tests/verify-prompts.js': 'cfcf6f07ec1850698baea7e4e64deea6fe10d515bffb667927c654cf0b5dc765',
+  'tests/verify-prompts.js': '32557b8ca4d75a29880db5a3982c41f25d144498a21510229800d4e8599a3030',
 }
 // ---- LOCK-END ----
 
@@ -1790,7 +1793,6 @@ if (reg) {
         fail('#603 发布包脚本集合 [' + b.join(',') + '] ≠ [' + SHIPPED_EXPECT.join(',') + ']（提示词不再引用脚本，但这两条脚本要留在包里当可选工具，不许顺手删）')
       }
       // 生成物与源逐文件 sha256 一致（package/scripts 是 gitignore 生成态，过期即红；缺文件先跑构建）
-      const cryptoPkg = require('crypto')
       const sha = function (p) { return cryptoPkg.createHash('sha256').update(fs.readFileSync(p)).digest('hex') }
       const pkgDir = path.join(ROOT, 'package/scripts')
       let onDisk = []

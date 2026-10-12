@@ -20,10 +20,11 @@
 //   按回车走「否」那条路不受影响，向导只是不再把「没人应答」当成「人按了否」。
 //
 // 用法：node tests/verify-wizard-exit-609.js（在插件根目录，不需要构建产物，需要 Git Bash 的 bash）
-const fs = require('fs')
-const path = require('path')
-const { spawnSync } = require('child_process')
-
+import fs from 'node:fs'
+import path from 'node:path'
+import { spawnSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
+const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 const WIZARD_REL = 'scripts/wizard-release.sh'
 const WORK_REL = 'test/wizard-609-work'

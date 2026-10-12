@@ -1,9 +1,7 @@
 // verify-blocked-filter.js — v1.3.3 bug #6 阻塞筛选逻辑验证
 // 复刻 client.js ListTab 的 blocked 过滤分支：
 //   stateFilter==='blocked' → 仅保留 open 且 blockOf 命中的 issue
-const assert = require('assert')
-
-// ---- 复刻 blockOf 构建（与 client.js 同构）----
+import assert from 'node:assert'
 function buildBlockOf(snapshot) {
   const blockOf = {}
   ;(snapshot && snapshot.maps || []).forEach(function (m) {
