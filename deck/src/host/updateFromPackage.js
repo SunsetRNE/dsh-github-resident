@@ -23,7 +23,9 @@ import {
   __resetSharedUpdateReaderForTests as resetPackageReader,
 } from 'dsh-plugin-update'
 import { readFile, writeFile } from 'node:fs/promises'
-import { dirname, join } from 'node:path'
+import { existsSync, readdirSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 // 本插件在更新包里的三个注册参数：插件标识（必填）、电话名前缀与版本通道。
@@ -52,6 +54,20 @@ export const UPDATE_PHONE_PREFIX = 'wf'
 export const UPDATE_RELEASE_CHANNEL = 'prerelease'
 // 本地 private 包的事实（面板文案与失败路径要如实说，不许伪称 npm 可更新）：
 // 本包不发 npm，`private: true`，更新只能走源码/重新安装。
+//
+// —— 这句话用户在哪里看得到（2026-10-12 查实，票 #10）——
+// 见得到，而且早在合并期就落了地：更新区块里有一条固定说明
+// （合并产物的仓库登记库页「更新入口唯一落点 + 行为说明」，以及配置页的去向说明
+// `src/client/kernel/locale-flow.js` 的 `cfg.updateInRegistry`），门禁
+// `tests/merge/build/merged-render.test.mjs` 第 3 节直接断言渲染出的 DOM 里有这两句。
+// 所以这**不是漏接线**（早先误判过一次，原因是只按本常量名 grep、没按文案 grep）。
+//
+// —— 仍然存在的两处不理想（都不是「用户看不到」）——
+//   1) 客户端那两处是**各自手写**的文案，没有复用本常量，措辞与这里不完全一致（三份同义文本）；
+//   2) 更新包那个更新面板是上游**生成物**（`deck/scripts/generated/updateEntryPanel.bundle.js`，
+//      由派生脚本产出、手改即被覆盖），它的 `source-install` 一档写的是「按包名@版本号重新安装」——
+//      对本地 private 包不可执行。这一档只能改上游；本仓侧无法覆写它（挂载点 `mountUpdatePanel`
+//      只收回调、不收文案）。
 export const UPDATE_LOCAL_PRIVATE = true
 export const UPDATE_LOCAL_PRIVATE_HINT =
   '本包为本地 private 包（' + MERGED_PACKAGE_NAME + '）：更新走源码重新安装，不通过 npm 安装。'
@@ -75,6 +91,47 @@ export const DEFAULT_PREFIX = __pkgDefaults.prefix
 export function __updateTargetsLegacyDeck(config) {
   const name = config && typeof config === 'object' ? config.targetPackageName : undefined
   return name === LEGACY_DECK_PACKAGE_NAME
+}
+
+/**
+ * 找出本插件**正跑在哪一个使用范围**（profile 目录）。
+ *
+ * 为什么必须由宿主明说，而不能让更新包自己推：更新包在调用方没给使用范围目录时，
+ * 会从目标包所在目录里找 `/node_modules/<包名>` 这个**路径字面量**倒推。
+ * 而本机是把工作区 **link** 进 profile 的开发态装法（profile 里声明 `link:`），
+ * 解析器一路 realpath 落到源码工作区，那条路径里根本没有 node_modules 这一段，
+ * 推断必然返回「找不到」，更新面板随即报 `unknown-profile`（票 #10，真机复现）。
+ * 链接式安装永远命中不了那个标记，所以推断这条路对本包**天生走不通**，只能显式给。
+ *
+ * 两条来源，先信环境变量（宿主自己报的，最准）：
+ * 1) `DSH_PROFILE_DIR` —— 运行环境里已有（本机实测值 `/root/.dsh/profiles/web`）；
+ * 2) 扫家目录下各 profile 的 node_modules —— 与 bootstrap 找 bundled-skills 同一口径。
+ * 第 2 条按「那个目录里是不是真装着本包」认，不按目录名认，因此多份副本也不会认错。
+ *
+ * 两条都拿不到就回 null：调用方保持原样，让更新包照旧诚实失败，**不猜、不伪称成功**。
+ * 导出只为让门禁能直接钉住这段判断（见 tests/merge/host/update-target.test.mjs）。
+ */
+export function __detectProfileDir(env = process.env, home = homedir()) {
+  const explicit = env && typeof env.DSH_PROFILE_DIR === 'string' ? env.DSH_PROFILE_DIR.trim() : ''
+  if (explicit) return resolve(explicit)
+  if (typeof home !== 'string' || !home) return null
+  const profilesDir = join(home, '.dsh', 'profiles')
+  let entries = []
+  try {
+    entries = readdirSync(profilesDir, { withFileTypes: true })
+  } catch {
+    return null
+  }
+  for (const entry of entries) {
+    if (!entry || typeof entry.isDirectory !== 'function' || !entry.isDirectory()) continue
+    const dir = join(profilesDir, entry.name)
+    try {
+      if (existsSync(join(dir, 'node_modules', MERGED_PACKAGE_NAME, 'package.json'))) return dir
+    } catch {
+      // 这一个目录问不动就换下一个，不因此整体失败
+    }
+  }
+  return null
 }
 
 let phones = null
@@ -195,13 +252,20 @@ export async function __syncInstalledManifest({ moduleDir, targetVersion, io, lo
  */
 export function createUpdatePhoneHandlers(deps = {}) {
   const ctx = deps.ctx ?? null
-  const key = `${ctx ? 'ctx' : 'noctx'}\0${deps.logCtx ? 'log' : 'nolog'}`
+  const callerOverrides = deps.readerOverrides ?? {}
+  // 调用方自己给了使用范围目录就一个字都不动（门禁与隔离用例靠这个口注入夹具）；
+  // 没给才由宿主补上探测结果，免得生产路径退回到「推断」那条对本包走不通的路（票 #10）。
+  const callerGaveProfileDir = Object.prototype.hasOwnProperty.call(callerOverrides, 'profileDir')
+  const detectedProfileDir = callerGaveProfileDir ? null : __detectProfileDir()
+  const key = `${ctx ? 'ctx' : 'noctx'}\0${deps.logCtx ? 'log' : 'nolog'}\0${
+    callerGaveProfileDir ? 'callerProfile' : detectedProfileDir ? `detected:${detectedProfileDir}` : 'noProfile'
+  }`
   if (phones && phonesKey === key) return phones
   const holder = createHostUpdate(
     {
       ctx,
       logCtx: deps.logCtx ?? null,
-      readerOverrides: deps.readerOverrides ?? {},
+      readerOverrides: detectedProfileDir ? { ...callerOverrides, profileDir: detectedProfileDir } : callerOverrides,
     },
     {
       pluginId: UPDATE_PLUGIN_ID,
