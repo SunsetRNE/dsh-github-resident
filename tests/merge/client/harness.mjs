@@ -27,7 +27,9 @@ export function readRepoFile(rel) {
 
 /** 与 deck/scripts/build.mjs 的 client-pkg 壳同形；options 只用于负例。 */
 export function makeDeckSource(options = {}) {
-  const id = options.id || 'dsh-mattpocock-skills-deck'
+  // 身份融合（2026-10-12）：deck 产物自己的身份就是合并身份（见 merge-identity.ts 的 MERGED_IDENTITY）。
+  // 负例可用 options.id 传别的值（例如旧 Deck 名），正例必须与真产物同形。
+  const id = options.id || 'dsh-github-resident-v2'
   const withDock = options.dock !== false
   const withEmbed = options.embed !== false
   const extraLoad = options.extraLoad
@@ -36,7 +38,7 @@ export function makeDeckSource(options = {}) {
   const dockBlock = withDock
     ? `
       slots.inject('conversation.input.dock', function () {
-        return slots.register({ name: 'conversation.input.dock', id: 'dsh-mattpocock-skills-deck', order: 40 }, function StatusBar() { return h('div', { className: 'dsws-capsule' }, API) })
+        return slots.register({ name: 'conversation.input.dock', id: 'dsh-github-resident-v2', order: 40 }, function StatusBar() { return h('div', { className: 'dsws-capsule' }, API) })
       })`
     : '\n      // 负例夹具：故意不注册 dock'
   const embedReturn = withEmbed
@@ -53,10 +55,11 @@ window.__ModuleLoader__.load({
     // 与 Resident 半边同名的顶层声明：两半必须各自独立作用域，否则加载期就是 SyntaxError
     const React = require('react')
     const h = React.createElement
-    // deck/scripts/build.mjs 的 pkg 壳会把 __DSW_VERSION__ 注入成按 deck/package/package.json 算出的
-    // 'v<上游版本>'；合并装配必须把它改写成根 package.json 的版本（client-factory.rewriteVersionLiteral）。
+    // 版本与仓库地址：身份融合后 deck 构建自己就读主包 package.json（scripts/build.mjs 的 dswVersion /
+    // dswRepoUrl），所以夹具给的就是**已经正确**的值；合并装配层（client-factory）此时只核对、不改写（幂等）。
     // 夹具少了这一行，装配层就会按设计拒绝产出——那是夹具过期，不是装配坏了。
-    const DSW_VERSION = 'v1.8.0-rc.7'
+    const DSW_VERSION = 'v1.7.0'
+    const DSW_REPO_URL = 'https://github.com/SunsetRNE/dsh-github-resident'
     const API = 'deck-fixture-api'
     const FIX_SECTIONS = function DeckFixtureSections() { return h('div', { className: 'deck-fixture-sections' }) }
     const FIX_UPDATE = function DeckFixtureUpdate() { return h('span', { className: 'deck-fixture-update' }) }
@@ -67,7 +70,7 @@ window.__ModuleLoader__.load({
       globalThis.__DECK_FIXTURE__.applied = true
       globalThis.__DECK_FIXTURE__.embed = true${dockBlock}
       slots.inject('sidebar.right.pane.tab', function () {
-        return slots.register({ name: 'sidebar.right.pane.tab', key: 'dsh-mattpocock-skills-deck/deck:map' }, function DeckSidebarTab() { return h('div') })
+        return slots.register({ name: 'sidebar.right.pane.tab', key: 'dsh-github-resident-v2/deck:map' }, function DeckSidebarTab() { return h('div') })
       })
       slots.inject('settings.plugins.tab', function () {
         return slots.register({ name: 'settings.plugins.tab', id: 'dsws-settings', order: 40 }, function SettingsTab() { return h('div') })

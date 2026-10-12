@@ -114,7 +114,8 @@ check(slotNames.includes('settings.plugins.tab'), `settings 插槽已注册（${
 check(slotNames.includes('sidebar.right.pane.tab'), `右侧边栏内容体插槽已注册（${slotNames}）`)
 check(slotNames.includes('sidebar.right.pane.tab.title'), `右侧边栏标题栏插槽已注册（${slotNames}）`)
 check(!slotNames.includes('shell.overlay'), `不再注册页内浮窗挂载点（${slotNames}）`)
-check(nativeTypes.length === 1 && nativeTypes[0].kind === 'dsh-mattpocock-skills-deck:deck-map' && nativeTypes[0].priority === 'builtin',
+// 身份融合后右栏类型 kind 用合并身份（老会话里的旧 kind 由客户端身份迁移读旧写新）。
+check(nativeTypes.length === 1 && nativeTypes[0].kind === 'dsh-github-resident-v2:deck-map' && nativeTypes[0].priority === 'builtin',
   `本插件自己注册了 1 个原生标签类型（builtin 档，实际 ${JSON.stringify(nativeTypes.map(t => [t.kind, t.priority]))}）`)
 
 // ---- 样式注入已在 smoke-client 验证，这里复核 ----
@@ -149,7 +150,7 @@ async function renderAndCheck(Comp, props, expects, label) {
 // 取出已注册的组件映射
 const byId = Object.fromEntries(registrations.map(r => [r.meta && r.meta.id, r.comp]))
 const byName = Object.fromEntries(registrations.map(r => [r.meta && r.meta.name, r.comp]))
-const StatusBarComp = byName['conversation.input.dock'] || byId['dsh-mattpocock-skills-deck']
+const StatusBarComp = byName['conversation.input.dock'] || byId['dsh-github-resident-v2']
 // #646：面板内容体由右侧边栏那两格承载（按槽位名取组件即可，keyed 注册也是这个 name）
 const PanelBodyComp = byName['sidebar.right.pane.tab']
 const PanelTitleComp = byName['sidebar.right.pane.tab.title']

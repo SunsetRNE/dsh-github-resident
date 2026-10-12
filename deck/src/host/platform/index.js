@@ -108,7 +108,21 @@ export async function composePlatform(ctx, osName, adapter, opts) {
   // 2026-08-29 统一（research 实锤「三底座 DSH_GH_PATH 不一致」）：gh 的 DSH_GH_PATH 兜底【单点下沉到通用层】——
   //   PATH 解析失败（返回 null / 抛错）时，读取 env.DSH_GH_PATH + fs.lstat 校验存在才返回；三个 OS 底座行为由此一致。
   //   各 OS 适配器不重复实现（linux 原自带兜底 2026-08-29 移除，见 linux/index.js）；host resolveGh / ghClient 均经本包装获益。
+  // 2026-10-12 gh 解析点归一（合并宿主注入）：合并装配层把 **Resident 那一份**的 gh 解析器经
+  //   `opts.ghResolver` 注入进来。它在时，`gh` 这一个名字**只认它**的答案（系统 gh → 插件自带缓存
+  //   → 自动落地），本层不再自己猜；它认不到时返回 null，交给调用方诚实报告"没找到 gh"。
+  //   为什么不让它继续退回 PATH：Resident 自带的那份 gh 不在 PATH 上（本机实测），退回 PATH 只会
+  //   让"两半各自认一个 gh"的老毛病换个地方复发 —— 一个插件只有一个"gh 在哪"的答案。
+  //   没注入时（单独运行 Deck 半边、源码态、门禁夹具）行为与从前逐字一致：PATH → DSH_GH_PATH。
+  const injectedGh = (opts && typeof opts.ghResolver === 'function') ? opts.ghResolver : null
   const resolveExecutable = async (name) => {
+    if (name === 'gh' && injectedGh) {
+      try {
+        const p = await injectedGh()
+        if (p) return p
+      } catch { /* 注入的解析器出错 → 如实当作没找到，不回退到第二套解析 */ }
+      return null
+    }
     let direct = null
     try {
       direct = await spec.resolveExecutable(name)

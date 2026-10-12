@@ -56,7 +56,7 @@ export const injectSetupDecision = function (st, backendId, opts) {
   //   消费方（旧建仓卡 NoRepoCard 与建仓向导成功那两处）本票不碰（#662 的「不做什么」点名不动 NoRepoCard）。
   //   要不要连这套补发机制一起退役，属另一次清理，已记在 #664 的落地记录里。
   try { st.pendingSetupAfterPublish = false; st.pendingSetupCwd = '' } catch (e) {}
-  try { console.log('[MattSkillsDeck] setup-inject applied kind=' + kind) } catch (e) {}
+  try { console.log('[GitHub 常驻] setup-inject applied kind=' + kind) } catch (e) {}
   try { if (isEnabled('debug')) log('debug', 'inject.decision', { prompt: 'setupRun', kind: kind, layout: String(usedLayout) }) } catch (eL) {}
   if (dec && dec.text && !(opts && opts.injectNow === false)) { try { inject(st, dec.text) } catch (e) {} }
   return kind

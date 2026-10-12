@@ -26,7 +26,7 @@ const bad = function (name) { failed = true; console.log('  FAIL', name) }
 const RE_F1 = /(===|==)\s*['"](github|gitlab|markdown)['"]|['"](github|gitlab|markdown)['"]\s*(===|==)/
 const RE_F2 = /https:\/\/github\.com|https:\/\/gitlab\.com/
 const RE_F3 = /\{\s*id:\s*'(github|markdown|gitlab)'\s*,\s*label:/
-const RE_LICENSED = /MATT_REPO|mattpocock\/skills|skills@latest|installSkills|PREVIEW_VALUES|dsh-mattpocock-skills-deck|FeatherHunter\/dsh-/ // #231 清尾后仅剩可留项：技能仓库常量/安装指引文案/演示预览值；#repo-link 登记本插件自身仓库主页 URL（构建注入产物）；#520 登记作者其他插件静态链接前缀
+const RE_LICENSED = /MATT_REPO|mattpocock\/skills|skills@latest|installSkills|PREVIEW_VALUES|dsh-mattpocock-skills-deck|FeatherHunter\/dsh-|SunsetRNE\/dsh-github-resident/ // #231 清尾后仅剩可留项：技能仓库常量/安装指引文案/演示预览值；#repo-link 登记本插件自身仓库主页 URL（构建注入产物，2026-10-12 身份融合后指向主包仓库 SunsetRNE/dsh-github-resident）；#520 登记作者其他插件静态链接前缀
 function stripComments(buf) { return buf.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '') }
 
 function scanLabel(rel, buf) {

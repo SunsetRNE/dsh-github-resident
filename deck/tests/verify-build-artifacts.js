@@ -205,9 +205,10 @@ function sha256(file) { return crypto.createHash('sha256').update(fs.readFileSyn
   // #1012（2026-10-11）：新增 src/shared/config-store/ 下 2 个产物（ports 空壳 / config-store 解析校验拼装，
   // 纯函数、文件之间零相对引用；客户端不拼接，宿主适配器调它），总数 75→77。
   // #1012（2026-10-11 续）：单体 config-store.js 按文件粒度拆成 workspace / settings / labels 三个单元
-  // （各 ≤350 行，见 verify-file-granularity），总数 77→79（减一加三）。
-  check(srcSharedFiles.length === 79, `src/shared 79 文件（实得 ${srcSharedFiles.length}）`)
-  check(pkgSharedFiles.length === 79, `package/shared 79 文件（实得 ${pkgSharedFiles.length}）`)
+  // （各 ≤350 行，见 verify-file-granularity），总数 77→79→80：2026-10-12 身份融合加了
+  //   src/shared/plugin-identity.js（合并包宿主侧身份真源，见 tools/merge/merge-identity.ts）。
+  check(srcSharedFiles.length === 80, `src/shared 80 文件（实得 ${srcSharedFiles.length}）`)
+  check(pkgSharedFiles.length === 80, `package/shared 80 文件（实得 ${pkgSharedFiles.length}）`)
 }
 // 4c) import 卫生：显式 .js（相对 import 必须带 .js 扩展，避免 Node ESM 裸 specifier）
 {

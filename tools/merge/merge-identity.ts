@@ -48,6 +48,32 @@ export const MERGED_VERSION: string = (() => {
 /** 客户端展示用的版本字面量，与 deck 构建注入的 `'v<version>'` 同形（去 v 前缀显示在设置页）。 */
 export const MERGED_VERSION_LITERAL = `'v${MERGED_VERSION}'`
 
+/**
+ * 合并包自己的仓库地址（**单一真源 = 根 package.json 的 repository.url**）。
+ *
+ * 为什么要有它：Deck 半边原来的 `DSW_REPO_URL` 由 deck 自己的构建从 *deck/package/package.json* 注入，
+ * 指向的是**上游 Deck 仓库**。合并后界面上那几个"点版本号开门"的链接会把人带去另一个插件的主页，
+ * 与 Resident 侧的仓库登记库页并列出现时尤其容易误读成"版本认的不是主插件"。这里定死一次，
+ * deck 构建（合并模式下）与合并改写层都读它，两处不许各写一份 URL 字面量。
+ */
+export const MERGED_REPO_URL: string = (() => {
+  try {
+    const raw = JSON.parse(readFileSync(resolve(IDENTITY_REPO_ROOT, 'package.json'), 'utf8')) as {
+      repository?: { url?: unknown } | string
+    }
+    const field = raw.repository
+    const url = typeof field === 'string' ? field : (field && typeof field.url === 'string' ? field.url : '')
+    const cleaned = url.trim().replace(/^git\+/, '').replace(/\.git$/, '')
+    if (!/^https?:\/\//.test(cleaned)) throw new Error('根 package.json 的 repository.url 不是 http(s)：' + JSON.stringify(url))
+    return cleaned
+  } catch (e) {
+    throw new Error('[merge-identity] 无法从根 package.json 读取合并包仓库地址：' + String((e as Error)?.message || e))
+  }
+})()
+
+/** 客户端展示用的仓库地址字面量（注入形态，含引号）。 */
+export const MERGED_REPO_URL_LITERAL = `'${MERGED_REPO_URL}'`
+
 /** deck 快照在合并包里的相对根（构建脚本据此定位 deck 的 src / package / scripts）。 */
 export const DECK_SUBDIR = 'deck'
 
@@ -73,6 +99,57 @@ export const MODULE_LOADER_MARKER = 'window.__ModuleLoader__.load('
 
 /** deck 的 `/tools` 行模块在 deck 快照里的相对路径（包 exports["./tools"] 指向构建产物）。 */
 export const DECK_TOOLS_ROW_SOURCE = `${DECK_SUBDIR}/src/host/platform/deckToolsRow.js`
+
+/**
+ * 合并后的**运行时身份串**（槽位 id、右栏 tab kind/id、样式表 data-plugin、控制台前缀、日志命名空间）。
+ *
+ * 为什么与包名分开写：包名是 npm 身份（`@local/dsh-github-resident-v2`），身份串是**界面与状态里的名字**。
+ * 两者过去都借用了上游 Deck 的名字（`dsh-mattpocock-skills-deck`），于是合并后界面上到处是"另一个插件"
+ * 的痕迹 —— 这正是"彻底融为一个插件"要收掉的东西。
+ *
+ * ⚠️ 它与**持久化状态**有关，改动必须带迁移，不许直接换字面量：
+ *   - dock 槽位 id 进 DSH 的会话槽位视图；
+ *   - 右栏 tab 的 `kind` / `contentId` 进 `dsh.sidebar-right.v1.<sessionId>` 的 `layout.tabs[]`。
+ * 客户端启动时会跑一次身份迁移（见 `deck/src/client/kernel/identityMigration.js`），
+ * 把旧串改写成这个值，因此**老会话的右栏那一格不会丢**。
+ *
+ * 取值来源 = 根 package.json 的 `dsh.identity.merge`：deck 构建（scripts/build.mjs）读同一个字段，
+ * 于是"构建期注入的身份"与"合并改写层认定的身份"不可能各说各话。
+ */
+export const MERGED_IDENTITY: string = (() => {
+  try {
+    const raw = JSON.parse(readFileSync(resolve(IDENTITY_REPO_ROOT, 'package.json'), 'utf8')) as {
+      dsh?: { identity?: { merge?: unknown } }
+    }
+    const v = raw?.dsh?.identity?.merge
+    if (typeof v !== 'string' || !/^[a-z0-9][a-z0-9._-]*$/i.test(v)) {
+      throw new Error('dsh.identity.merge 形状不合法：' + JSON.stringify(v))
+    }
+    return v
+  } catch (e) {
+    throw new Error('[merge-identity] 无法从根 package.json 读取 dsh.identity.merge：' + String((e as Error)?.message || e))
+  }
+})()
+
+/**
+ * 被融掉的旧 Deck 运行时身份串（**只读**，只用于两件事：状态迁移与漂移守卫）。
+ * 任何新代码都不许再拿它当"本插件的名字"用 —— 那是身份回退。
+ * 取值来源 = 根 package.json 的 `dsh.identity.legacy`（同上，与 deck 构建同源）。
+ */
+export const LEGACY_DECK_IDENTITY: string = (() => {
+  try {
+    const raw = JSON.parse(readFileSync(resolve(IDENTITY_REPO_ROOT, 'package.json'), 'utf8')) as {
+      dsh?: { identity?: { legacy?: unknown } }
+    }
+    const v = raw?.dsh?.identity?.legacy
+    if (typeof v !== 'string' || !/^[a-z0-9][a-z0-9._-]*$/i.test(v)) {
+      throw new Error('dsh.identity.legacy 形状不合法：' + JSON.stringify(v))
+    }
+    return v
+  } catch (e) {
+    throw new Error('[merge-identity] 无法从根 package.json 读取 dsh.identity.legacy：' + String((e as Error)?.message || e))
+  }
+})()
 
 /** 合并后客户端脚本的落地路径（相对仓库根）。 */
 export const MERGED_CLIENT_OUT = 'dist/client.js'

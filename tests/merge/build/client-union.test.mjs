@@ -20,6 +20,7 @@ import vm from 'node:vm'
 import { JSDOM } from 'jsdom'
 import {
   MERGED_CLIENT_INJECT,
+  MERGED_IDENTITY,
   MERGED_PACKAGE_NAME,
   MODULE_LOADER_MARKER,
 } from '../../../tools/merge/merge-identity.ts'
@@ -148,8 +149,9 @@ const bySection = (name) => firstApply.filter((r) => r.name === name)
 const dock = bySection('conversation.input.dock')
 check('conversation.input.dock 恰好 1 条（一个 client 只有一个占用者）', dock.length === 1, String(dock.length))
 check(
-  'dock 注册身份/顺序保持不变（id=dsh-mattpocock-skills-deck, order=40）',
-  !!dock[0] && dock[0].id === 'dsh-mattpocock-skills-deck' && dock[0].order === 40,
+  // 2026-10-12 身份融合：槽位 id 换成合并身份（有意的契约变更），order 40 不变。
+  'dock 注册身份/顺序：合并身份 + order 40',
+  !!dock[0] && dock[0].id === MERGED_IDENTITY && dock[0].order === 40,
   JSON.stringify(dock[0]),
 )
 
@@ -182,8 +184,9 @@ const rightbar = bySection('sidebar.right.pane.tab')
 const rightbarTitle = bySection('sidebar.right.pane.tab.title')
 check('右栏 keyed 槽两条都在（tab + title）', rightbar.length === 1 && rightbarTitle.length === 1)
 check(
-  '右栏 tab 类型 key 仍是 dsh-mattpocock-skills-deck/deck:map（改它等于让用户既有布局失效）',
-  rightbar[0] && rightbar[0].key === 'dsh-mattpocock-skills-deck/deck:map',
+  // 身份融合后 key 用合并身份；**老会话不丢**由客户端身份迁移（identityMigration）负责读旧写新。
+  '右栏 tab 类型 key = 合并身份 + /deck:map',
+  rightbar[0] && rightbar[0].key === MERGED_IDENTITY + '/deck:map',
   JSON.stringify(rightbar[0] && rightbar[0].key),
 )
 

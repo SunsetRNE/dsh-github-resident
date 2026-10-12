@@ -180,10 +180,10 @@
           }
         } catch (e) {}
         const blocked = setupBlockedByGuide(st, sel)
-        try { console.log('[MattSkillsDeck] setup-inject decision blocked=' + (blocked ? '1' : '0') + ' layout=' + (readSetupLayout(st) || 'unset')) } catch (e) {}
+        try { console.log('[GitHub 常驻] setup-inject decision blocked=' + (blocked ? '1' : '0') + ' layout=' + (readSetupLayout(st) || 'unset')) } catch (e) {}
         if (blocked) return { kind: 'blocked', text: '', layout: decLayout }
       } catch (e) {
-        try { console.warn('[MattSkillsDeck] setup-inject decision fallback: ' + String((e && e.message) || e).slice(0, 120)) } catch (_) {}
+        try { console.warn('[GitHub 常驻] setup-inject decision fallback: ' + String((e && e.message) || e).slice(0, 120)) } catch (_) {}
       }
       return { kind: 'setup', text: setupText(), layout: decLayout }
     }
@@ -212,7 +212,7 @@
           st.pendingSetupAfterPublish = false; st.pendingSetupCwd = ''
           const kind = (typeof injectSetupDecision === 'function') ? injectSetupDecision(st, undefined, undefined) : ''
           if (kind === 'setup') {
-            try { console.log('[MattSkillsDeck] setup-inject reissued after repo ready (once)') } catch (e) {}
+            try { console.log('[GitHub 常驻] setup-inject reissued after repo ready (once)') } catch (e) {}
             return true
           }
         }

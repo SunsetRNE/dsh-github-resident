@@ -13,7 +13,7 @@ import test from 'node:test'
 import assert from 'node:assert/strict'
 
 import { rewriteDeckClient } from '../../../tools/merge/rewrite-deck-client.ts'
-import { MERGED_CLIENT_INJECT, MERGED_PACKAGE_NAME, MERGED_VERSION, MERGED_VERSION_LITERAL, MODULE_LOADER_MARKER } from '../../../tools/merge/merge-identity.ts'
+import { MERGED_CLIENT_INJECT, MERGED_PACKAGE_NAME, MERGED_REPO_URL_LITERAL, MERGED_VERSION, MERGED_VERSION_LITERAL, MODULE_LOADER_MARKER } from '../../../tools/merge/merge-identity.ts'
 import { captureHalf } from '../../../tools/merge/client-factory.ts'
 import {
   findInTree,
@@ -32,12 +32,14 @@ function composeResidentHalf() {
   return { result, spec, mod }
 }
 
-test('合并产物只有一个 load，模块 id 是合并包名，dock 槽位 id 逐字保留', () => {
+test('合并产物只有一个 load，模块 id 是合并包名，dock 槽位 id 用合并身份且 order 40 不变', () => {
   const { result, spec } = composeResidentHalf()
   assert.equal(result.text.split(MODULE_LOADER_MARKER).length - 1, 1)
   assert.equal(spec.id, MERGED_PACKAGE_NAME)
   assert.equal(result.moduleId, MERGED_PACKAGE_NAME)
-  assert.ok(result.text.includes("id: 'dsh-mattpocock-skills-deck', order: 40"))
+  // 2026-10-12 身份融合：槽位 id 从旧 Deck 名换成合并身份（MERGED_IDENTITY），order 40 不动。
+  // 这是**有意的契约变更**，不是漂移：旧身份只许出现在客户端身份迁移那一行常量里（见 merge-identity.ts）。
+  assert.ok(result.text.includes("id: 'dsh-github-resident-v2', order: 40"))
   assert.ok(!result.text.includes(`${MODULE_LOADER_MARKER}{\n  id: 'dsh-mattpocock-skills-deck',`))
   assert.equal(result.idReplaced, true)
   assert.equal(result.injectReplaced, true)
@@ -45,13 +47,26 @@ test('合并产物只有一个 load，模块 id 是合并包名，dock 槽位 id
   assert.equal(result.bytesAfter, Buffer.byteLength(result.text, 'utf8'))
 })
 
-test('版本号改写：产出里是根 package.json 的版本，不留 Deck 上游字面量', () => {
-  const result = rewriteDeckClient(makeDeckSource(), readResidentSource())
-  const upstream = "const DSW_VERSION = 'v1.8.0-rc.7'"
-  assert.ok(makeDeckSource().includes(upstream), '夹具必须带 Deck 上游版本锚点')
-  assert.ok(result.text.includes('const DSW_VERSION = ' + MERGED_VERSION_LITERAL), '产出里是合并包版本 ' + MERGED_VERSION)
-  assert.ok(!result.text.includes(upstream), '产出里不留 Deck 上游版本字面量')
-  assert.equal(result.version, MERGED_VERSION)
+test('版本 / 仓库地址：产出里是主包自己的值，不留 Deck 上游字面量（两种来源都覆盖）', () => {
+  // 情形一（幂等）：身份融合后 deck 构建自己就读主包 package.json，夹具给的就是正确值 —— 装配层只核对。
+  const ok = rewriteDeckClient(makeDeckSource(), readResidentSource())
+  assert.ok(ok.text.includes('DSW_VERSION = ' + MERGED_VERSION_LITERAL), '产出里是合并包版本 ' + MERGED_VERSION)
+  assert.ok(ok.text.includes('DSW_REPO_URL = ' + MERGED_REPO_URL_LITERAL), '产出里是主包仓库地址')
+  assert.equal(ok.version, MERGED_VERSION)
+
+  // 情形二（改写）：deck 半边仍带着**上游**版本与上游仓库地址时，装配层必须把它们换成主包的值。
+  // 这条路径保留着，是为了防"哪天 deck 构建回退到读自己那份 package.json"时静默通过。
+  const upstreamVersion = "const DSW_VERSION = 'v1.8.0-rc.7'"
+  const upstreamRepo = "const DSW_REPO_URL = 'https://github.com/FeatherHunter/dsh-mattpocock-skills-deck'"
+  const legacy = makeDeckSource()
+    .split("const DSW_VERSION = 'v1.7.0'").join(upstreamVersion)
+    .split("const DSW_REPO_URL = 'https://github.com/SunsetRNE/dsh-github-resident'").join(upstreamRepo)
+  assert.ok(legacy.includes(upstreamVersion) && legacy.includes(upstreamRepo), '对照夹具必须带上游版本与上游仓库地址')
+  const fixed = rewriteDeckClient(legacy, readResidentSource())
+  assert.ok(fixed.text.includes('DSW_VERSION = ' + MERGED_VERSION_LITERAL), '上游版本被换成合并包版本')
+  assert.ok(fixed.text.includes('DSW_REPO_URL = ' + MERGED_REPO_URL_LITERAL), '上游仓库地址被换成主包仓库')
+  assert.ok(!fixed.text.includes(upstreamVersion), '产出里不留 Deck 上游版本字面量')
+  assert.ok(!fixed.text.includes(upstreamRepo), '产出里不留 Deck 上游仓库地址字面量')
 })
 
 test('inject 是两半并集，且顺序逐项等于 MERGED_CLIENT_INJECT', () => {
@@ -75,7 +90,7 @@ test('apply 之后：Deck 先注册、Resident 两个设置页随后；不再有
 
   const dock = registrations.find((r) => r.spec.name === 'conversation.input.dock')
   assert.ok(dock, 'dock 注册必须存在（功能栏保留）')
-  assert.deepEqual(dock.spec, { name: 'conversation.input.dock', id: 'dsh-mattpocock-skills-deck', order: 40 })
+  assert.deepEqual(dock.spec, { name: 'conversation.input.dock', id: 'dsh-github-resident-v2', order: 40 })
 
   const tab = registrations.find((r) => r.spec.name === 'settings.plugins.tab')
   assert.deepEqual(tab.spec, { name: 'settings.plugins.tab', id: 'dsws-settings', order: 40 })

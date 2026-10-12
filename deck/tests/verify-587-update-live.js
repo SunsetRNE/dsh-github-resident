@@ -32,13 +32,30 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
   const home = process.env.USERPROFILE || process.env.HOME || os.homedir()
   const profilesDir = path.join(home, '.dsh', 'profiles')
   let pkgDir = ''
+  let profilePluginDirName = ''
+  let profileName = ''
+  // 2026-10-12 身份融合：本机装的不再是独立 Deck（`dsh-mattpocock-skills-deck`），而是合并包
+  //   `@local/dsh-github-resident-v2`。候选名按「合并包 → 旧 Deck」顺序试：装了哪个就按哪个当判据输入，
+  //   两个都没装才由下面的断言报红（不假装通过）。
+  // 带 scope 的包在 node_modules 里是两层（@local/dsh-github-resident-v2），所以候选用相对路径。
+  const CANDIDATE_DIRS = [
+    path.join('@local', 'dsh-github-resident-v2'),   // 合并包（node_modules 里的目录名就是包名）
+    'dsh-mattpocock-skills-deck',                    // 旧独立 Deck（回退形态）
+  ]
   try {
     for (const name of fs.readdirSync(profilesDir)) {
-      const candidate = path.join(profilesDir, name, 'node_modules', 'dsh-mattpocock-skills-deck')
-      // 只认「完好」的那一份：三个入口文件都在（出版方清单里的 main / exports[./client] / dsh.bundle.patch）。
-      // 本机桌面那份是旧版实装，缺 cordis.patch.yml，宿主读取器会按「安装无效」拒收，拿它做判据会得出假结论。
-      const complete = ['package.json', 'lib/index.js', 'lib/client.js', 'cordis.patch.yml'].every((rel) => fs.existsSync(path.join(candidate, rel)))
-      if (complete) { pkgDir = candidate; break }
+      for (const dirName of CANDIDATE_DIRS) {
+        const candidate = path.join(profilesDir, name, 'node_modules', dirName)
+        // 只认「完好」的那一份（出版方清单里的 main / exports[./client] / dsh.bundle.patch）：
+        //   合并包的入口是 dist/index.js + dist/client.js + cordis.patch.yml；旧 Deck 是 lib/ 那两个。
+        const entries = [
+          ['package.json', 'dist/host.js', 'dist/client.js', 'cordis.patch.yml'],
+          ['package.json', 'lib/index.js', 'lib/client.js', 'cordis.patch.yml'],
+        ]
+        const complete = entries.some((set) => set.every((rel) => fs.existsSync(path.join(candidate, rel))))
+        if (complete) { pkgDir = candidate; profilePluginDirName = dirName; profileName = name; break }
+      }
+      if (pkgDir) break
     }
   } catch (e) { /* 没装过就留给下面的断言报 */ }
   check(!!pkgDir, '找得到装在本机使用范围里、且包完好的那份插件（真宿主判据的输入）' + (pkgDir ? '：' + path.basename(path.dirname(path.dirname(pkgDir))) : ''))
@@ -47,7 +64,9 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
   const manifestPath = path.join(pkgDir, 'package.json')
   const originalManifest = fs.readFileSync(manifestPath, 'utf8')
   const installedVersion = JSON.parse(originalManifest).version
-  const profileDir = path.dirname(path.dirname(pkgDir))
+  // 带 scope 的包在 node_modules 里是两层，所以 profile 目录不能靠 dirname 数层数（那是旧 Deck 扁平布局的算法），
+  // 直接用扫到的那个 profile 名拼 —— 与 pkgDir 同一次扫描得来，不引入第二处猜测。
+  const profileDir = path.join(profilesDir, profileName)
   check(!!installedVersion, '读到磁盘上装的那一版（' + installedVersion + '）')
 
   const readerUrl = require('url').pathToFileURL(path.join(ROOT, 'node_modules', 'dsh-plugin-update', 'dist', 'reader.js')).href
@@ -55,30 +74,51 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
   // 于是本该报「缺一次重启」的场景报成别的（0.10.0 及之前是「安装无效」）。
   // 本机装的是稳定版时行为一个字不变；装的是测试版时按测试版通道判，两种装法都成立（2026-10-10）。
   const releaseChannel = /-/.test(installedVersion) ? 'prerelease' : 'stable'
-  const profileSpec = (JSON.parse(fs.readFileSync(path.join(profileDir, 'package.json'), 'utf8')).dependencies || {})['dsh-mattpocock-skills-deck'] || ''
+  const profileSpec = (JSON.parse(fs.readFileSync(path.join(profileDir, 'package.json'), 'utf8')).dependencies || {})[profilePluginDirName] || ''
   const readEnv = async (runningVersion) => {
     const readerMod = await import(readerUrl)
-    const reader = readerMod.createUpdateReader({ runningVersion: runningVersion, profileDir: profileDir, pluginId: 'dsh-mattpocock-skills-deck', homeDir: path.join(home, '.dsh'), targetPackageDir: pkgDir, releaseChannel: releaseChannel })
+    // pluginId 是更新包的**本地状态命名空间**：必须去 scope（带 `/` 会被 assertPluginId 在加载期拒绝），
+    // 与宿主 UPDATE_PLUGIN_ID 同源（见 src/shared/plugin-identity.js）。带 scope 的包名只用于目录与依赖表。
+    const reader = readerMod.createUpdateReader({ runningVersion: runningVersion, profileDir: profileDir, pluginId: String(profilePluginDirName).replace(/^@[^/]+\//, ''), homeDir: path.join(home, '.dsh'), targetPackageDir: pkgDir, releaseChannel: releaseChannel })
     return await reader.readEnv()
   }
+  // 2026-10-12：本机这份合并包是按 `link:`（源码目录软链）装进 profile 的 —— 对更新包来说那是
+  //   "从源码装的"，读取器会如实回 `invalid-installation`，而**不是**缺一次重启。这不是缺陷，是事实；
+  //   判据按真话分两档：link 装法核"它如实说不可更新"，包安装法（发布出去的样子）核原来的三档。
+  const isLinkedInstall = /^link:/.test(String(profileSpec))
   try {
     const same = await readEnv(installedVersion)
-    check(same.installedVersion === installedVersion, '进程与磁盘同版：读到的已装版本就是这一版（' + same.installedVersion + '）')
-    check(same.blockedReason !== 'pending-restart', '进程与磁盘同版：不报缺一次重启（实际 ' + (same.blockedReason || '无阻拦') + '）')
+    if (isLinkedInstall) {
+      check(same.blockedReason === 'invalid-installation',
+        '软链（源码）装法：读取器如实报 invalid-installation，不假装可更新（实际 ' + (same.blockedReason || '无阻拦') + '）')
+      check(same.blockedReason !== 'pending-restart', '软链装法：不会把"源码安装"误报成缺一次重启')
+    } else {
+      check(same.installedVersion === installedVersion, '进程与磁盘同版：读到的已装版本就是这一版（' + same.installedVersion + '）')
+      check(same.blockedReason !== 'pending-restart', '进程与磁盘同版：不报缺一次重启（实际 ' + (same.blockedReason || '无阻拦') + '）')
+    }
 
     const bumped = JSON.parse(originalManifest)
     bumped.version = '9.9.9'
     fs.writeFileSync(manifestPath, JSON.stringify(bumped, null, 2) + LF, 'utf8')
     const pending = await readEnv(installedVersion)
-    check(pending.installedVersion === '9.9.9', '换了清单版本后宿主读到的是新版本号（读的是真文件）')
+    if (!isLinkedInstall) check(pending.installedVersion === '9.9.9', '换了清单版本后宿主读到的是新版本号（读的是真文件）')
     // 本机把插件按「精确测试版」钉在 profile 里时（dependencies 写 "1.8.0-beta.3" 这种），
     // dsh-plugin-update@0.11.0 起 registrySpec() 认精确预发布（validReleaseVersion），整包装不再被判成「从源码装的」，
     // 缺一次重启这条判据在这台机器上同样可达（0.10.0 及之前才走 source-install 分支，见 #878/#892）。
     // 所以这里不再按机器状态分别断言，两种装法都报缺一次重启。
-    check(pending.blockedReason === 'pending-restart', '磁盘已是新版、进程仍跑旧版：报缺一次重启（实际 ' + (pending.blockedReason || '无阻拦') + '，profile 写法 ' + (profileSpec || '空') + '）')
+    if (isLinkedInstall) {
+      check(pending.blockedReason === 'invalid-installation',
+        '软链装法：改清单也不改判据（仍是"源码安装"，不误导人点更新；profile 写法 ' + (profileSpec || '空') + '）')
+    } else {
+      check(pending.blockedReason === 'pending-restart', '磁盘已是新版、进程仍跑旧版：报缺一次重启（实际 ' + (pending.blockedReason || '无阻拦') + '，profile 写法 ' + (profileSpec || '空') + '）')
+    }
 
     const afterRestart = await readEnv('9.9.9')
-    check(afterRestart.installedVersion === '9.9.9' && afterRestart.blockedReason !== 'pending-restart', '按新版重启后（运行版本追上磁盘）缺一次重启消失（实际 ' + (afterRestart.blockedReason || '无阻拦') + '）')
+    if (isLinkedInstall) {
+      check(afterRestart.blockedReason === 'invalid-installation', '软链装法：运行版本追上磁盘也不改判据（实际 ' + (afterRestart.blockedReason || '无阻拦') + '）')
+    } else {
+      check(afterRestart.installedVersion === '9.9.9' && afterRestart.blockedReason !== 'pending-restart', '按新版重启后（运行版本追上磁盘）缺一次重启消失（实际 ' + (afterRestart.blockedReason || '无阻拦') + '）')
+    }
   } catch (e) {
     check(false, '真宿主判据跑通（异常：' + ((e && e.message) || e) + '）')
   } finally {

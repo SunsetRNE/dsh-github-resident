@@ -55,8 +55,9 @@ import {
   MERGED_VERSION_LITERAL,
   MODULE_LOADER_MARKER,
   RESIDENT_CLIENT_SRC,
+  MERGED_REPO_URL_LITERAL,
 } from './merge-identity.ts'
-import { DOCK_SLOT_ANCHOR, rewriteDeckClient } from './rewrite-deck-client.ts'
+import { DOCK_SLOT_ANCHOR, DOCK_SLOT_ANCHOR_ALTS, rewriteDeckClient } from './rewrite-deck-client.ts'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = resolve(HERE, '..', '..')
@@ -337,7 +338,12 @@ function checkGenerated(
   }
   const text = readFileSync(path, 'utf8')
   for (const needle of mustContain) {
-    if (!text.includes(needle)) fail(`${label} 缺少特征：${JSON.stringify(needle)}`)
+    // 槽位锚点有两种合法形态（字面量 / 运行时身份常量派生），命中任一即算过：
+    // 门禁要拦的是"注册被打偏、order 被改"，不是"必须写成字面量"。
+    const alts = needle === DOCK_SLOT_ANCHOR ? DOCK_SLOT_ANCHOR_ALTS : [needle]
+    if (!alts.some((alt) => text.includes(alt))) {
+      fail(`${label} 缺少特征：${JSON.stringify(needle)}${alts.length > 1 ? '（合法形态：' + alts.join(' / ') + '）' : ''}`)
+    }
   }
   if (expected !== null && text !== expected) {
     fail(`${label} 与本次重算结果逐字不一致（先运行 npm run build:entries）`)
@@ -380,7 +386,9 @@ async function main(): Promise<void> {
     checkGenerated(
       join(REPO_ROOT, MERGED_CLIENT_OUT),
       clientSource,
-      [MODULE_LOADER_MARKER, MERGED_PACKAGE_NAME, DOCK_SLOT_ANCHOR, `const DSW_VERSION = ${MERGED_VERSION_LITERAL}`],
+      // 特征按身份融合后的新形态写：槽位 id 由运行时身份常量派生（见 client-factory 的
+      // DOCK_SLOT_ANCHOR_ALTS），版本号与仓库地址都要是主包自己的值。
+      [MODULE_LOADER_MARKER, MERGED_PACKAGE_NAME, DOCK_SLOT_ANCHOR, `DSW_VERSION = ${MERGED_VERSION_LITERAL}`, `DSW_REPO_URL = ${MERGED_REPO_URL_LITERAL}`],
       MERGED_CLIENT_OUT,
     )
     syncBundledSkills('check')

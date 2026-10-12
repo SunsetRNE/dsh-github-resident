@@ -56,7 +56,9 @@ console.log('== R1 只留一条路：本插件自己注册的类型 ==')
 for (const rel of SET_ROUTER) {
   const t = texts[rel]
   if (!t) continue
-  check(t.includes("DECK_NATIVE_TAB_KIND = 'dsh-mattpocock-skills-deck:deck-map'"), rel + ' 面板类型名仍是本插件自己那条')
+  // 2026-10-12 身份融合：kind / id 由身份常量 DSW_IDENTITY 派生（构建期注入合并身份），
+  // 断言改成钉"派生关系"，而不是钉一个写死的旧名字。
+  check(t.includes("DECK_NATIVE_TAB_KIND = DSW_IDENTITY + ':deck-map'"), rel + ' 面板类型名由身份常量派生（kind）')
   check(t.includes('DECK_NATIVE_TYPE_ID'), rel + ' 类型 id 有自己的常量')
   const code = stripComments(t)
   check(!code.includes("ctx.get('betterSidebar')"), rel + ' 代码里不再取 better-sidebar 的服务')
@@ -202,9 +204,9 @@ console.log('== 运行时断言：拿桩上下文跑一遍 apply，看真的注�
   check(injectSeat !== null && injectSeat.deps.includes('sidebarRightTabs'), 'apply 里用 ctx.inject 等了 sidebarRightTabs')
   check(registeredTypes.length === 1, '只注册了 1 个原生 tab 类型（实际 ' + registeredTypes.length + '）')
   const def = registeredTypes[0] || {}
-  check(def.kind === 'dsh-mattpocock-skills-deck:deck-map', '类型的 kind 是本插件自己那条（实际 ' + JSON.stringify(def.kind) + '）')
+  check(def.kind === 'dsh-github-resident-v2:deck-map', '类型的 kind = 合并身份 + 面板名（实际 ' + JSON.stringify(def.kind) + '）')
   check(def.priority === 'builtin', '类型的档位 = builtin（实际 ' + JSON.stringify(def.priority) + '）')
-  check(def.id === 'dsh-mattpocock-skills-deck/deck:map', '类型 id = 包名 + 面板名（实际 ' + JSON.stringify(def.id) + '）')
+  check(def.id === 'dsh-github-resident-v2/deck:map', '类型 id = 合并身份 + 面板名（实际 ' + JSON.stringify(def.id) + '）')
   check(typeof def.title === 'function', '类型带标题函数')
   check(Array.isArray(def.guide) && def.guide.length === 1 && def.guide[0].order === 60, '带一条引导页入口（order 60）—— 引导页里因此只有一枚')
   check(Array.isArray(def.guide) && typeof def.guide[0].title === 'function' && typeof def.guide[0].icon === 'function', '引导页入口自带标题与图标函数')
@@ -214,7 +216,7 @@ console.log('== 运行时断言：拿桩上下文跑一遍 apply，看真的注�
   check(names.includes('sidebar.right.pane.tab.title'), '注册了标签标题栏槽位')
   check(!names.includes('shell.overlay'), '没有把面板挂到 shell.overlay（页内浮窗仍是退役状态）')
   const body = registrations.find((r) => r.meta.name === 'sidebar.right.pane.tab')
-  check(!!body && body.meta.key === 'dsh-mattpocock-skills-deck/deck:map', '内容体按我们自己的类型 id 分格')
+  check(!!body && body.meta.key === 'dsh-github-resident-v2/deck:map', '内容体按我们自己的类型 id 分格')
   check(!!body && typeof body.meta.inject === 'function' && body.meta.inject('sid-1').sessionId === 'sid-1', '内容体从槽位拿到 sessionId')
   check(sidebarRightCalls.length === 0, 'apply 阶段不打开面板（打开只由用户操作触发）')
 

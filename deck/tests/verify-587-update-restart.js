@@ -46,8 +46,13 @@ async function main() {
   for (const rel of ['src/client/views/useUpdatePanel.js', 'src/client/views/UpdateDialog.js', 'src/client/views/UpdateRestartBanner.js']) {
     check(!exists(rel), '自有实现已删：' + rel)
   }
+  // #876 之后唯一挂载点在 panelAssembly 的 mergeEmbed 出口（`h(UpdateEntryHost, null)`），本页只剩一句去向说明。
+  // 2026-10-12 身份融合核查时发现这条断言读错了文件（PAGE 里那一处只在注释里，strip 之后必然为空），
+  // 于是它成了一条永远红的门禁；改成读真正挂载它的那一份，判据（"挂的就是包的入口件、不自定义摆法"）不变。
   const pageSrc = strip(read(PAGE))
-  check(pageSrc.includes('UpdateEntryHost'), '配置页挂载入口件（标题行按钮走包的默认摆法）')
+  const mountSrc = strip(read('src/client/panelAssembly.js'))
+  check(mountSrc.includes('h(UpdateEntryHost, null)'), '唯一挂载点挂的是包的入口件（标题行按钮走包的默认摆法）')
+  check(!pageSrc.includes('mountUpdateEntry'), '配置页自己不再直接挂入口件（不出现第二处挂载）')
   check(!pageSrc.includes('upd.banner') && !pageSrc.includes('upd.dialog'), '配置页不再另画常驻横幅与浮层弹窗（收在入口件打开的面板里）')
   check(!pageSrc.includes('useUpdatePanel') && !pageSrc.includes('UpdateDialog') && !pageSrc.includes('UpdateRestartBanner'), '配置页不再引用旧面板三件')
   const bundle = read(BUNDLE)

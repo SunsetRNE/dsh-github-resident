@@ -1,5 +1,5 @@
 /**
- * dsh-mattpocock-skills-deck · Client 半（UX v25 · 2026-08-14 T2a 配置页骨架）
+ * GitHub 常驻（GitHub Resident）· Deck 半（UX v25 · 2026-08-14 T2a 配置页骨架；2026-10-12 身份融合）
  *
  * v27 变更（#95 · 阶段 2 步骤 1 Ctx 接线）：src/client/kernel/ctx.js（createCx + DswsCtx，
  *   G3 冻结 8 字段 #91）经构建注入 apply 闭包顶部；插槽组件注册处包 DswsCtx.Provider（withCx）。
@@ -11,12 +11,12 @@
  *   状态栏胶囊允许换行（窄栏不再截断）。
  *
  * v25 变更（map #364）：
- *   T2a：配置页骨架（settings.plugins.tab「MattSkillsDeck」+ 持久化 + 广播）；
+ *   T2a：配置页骨架（settings.plugins.tab「GitHub 常驻」+ 持久化 + 广播）；
  *   T2b：动作模板编辑器 + 占位符保护；
  *   T3（#366）：dsws locale 命名空间 zh/en 字典，全控件文字双语跟随 harness 语言（GitHub 数据不翻译）。
  *
  * v25 变更（map #364 · T2a）：
- *   50. 配置页骨架：settings.plugins.tab「MattSkillsDeck」注册（设置 → 插件可见）；
+ *   50. 配置页骨架：settings.plugins.tab「GitHub 常驻」注册（设置 → 插件可见）；
  *       三组既有配置迁入（面板默认高度三档 / 开始模板 / 外观）；
  *       配置持久化 dsws.cfg + dsws.templates（旧 dsws.startCfg 自动迁移）；
  *       保存后广播同步所有会话 store（修复外观/尺寸不持久化隐性 bug）；
@@ -54,29 +54,31 @@ export default {
     if (slots === undefined) return
     // ==== leaf:hostShim (spliced by build) ====
     // ==== kernel:portal (spliced by build) ====
-    // v1.3.3：面板版本号（tabs 行最右侧显示，便于核对已更新）
-    const DSW_VERSION = __DSW_VERSION__
-    // #repo-link：版本号可点，新窗打开插件仓库主页；URL 构建期从 package/package.json 的 repository 字段
-    // 注入（客户端源码零 URL 字面量，过硬编码门禁 F2；产物字面量已在门禁 RE_LICENSED 登记）。
-    const DSW_REPO_URL = __DSW_REPO_URL__
+    // 身份融合（2026-10-12）：下面三个都由 scripts/build.mjs 按主包 package.json 注入（独立构建时回落
+    // deck 自己的 package.json）。DSW_IDENTITY = 界面与状态里的身份串（dock 槽位 / 右栏 tab / 设置页 slug）；
+    // DSW_VERSION 与 DSW_REPO_URL 是**构建期兜底值**，真实值由 panelAssembly 的 probePluginIdentity()
+    // 启动时向宿主取（已装目录 package.json）——所以它们是 let。（#repo-link：版本号可点开主包仓库主页。）
+    const DSW_IDENTITY = '__DSW_IDENTITY__'
+    let DSW_VERSION = __DSW_VERSION__
+    let DSW_REPO_URL = __DSW_REPO_URL__
 
-    // ============================================================
-    // 0. 样式
-    // ============================================================
+    // ============================== 0. 样式 ==============================
     // ==== kernel:backendList (spliced by build) ====
     // ==== kernel:link (spliced by build) ====
+    // ==== kernel:identityMigration (spliced by build) ====
+    // 身份迁移（2026-10-12）：必须抢在任何注册之前——槽位与右栏 tab 按身份串认领，注册先发生的话
+    //   老会话会先按旧串找不到自己的位置，再迁移也补不回那一帧（详见该模块文件头）。
+    try { runIdentityMigration((typeof localStorage !== 'undefined') ? localStorage : null) } catch (eIdMig) {}
 
     // ==== kernel:styles (spliced by build) ====
     styles.insert(STYLE_TEXT)
-    // #851：版本管理页签的视觉语言另起一个样式叶子（styles.js 已 350/350 是冻结基线）。
-    //   注入仍走同一个 styles.insert 接缝 —— 不是第二个 <style>，也没有新的注入机制。
+    // #851：版本管理页签的视觉语言另起一个样式叶子（styles.js 已 350/350 冻结）；仍走同一个 insert 接缝。
     // ==== leaf:vcStyles (spliced by build) ====
     styles.insert(VC_STYLE_TEXT)
-    // 887：技能详情像素风皮肤另起一个样式叶子（与 vcStyles 同一套做法）。
-    // ==== leaf:pixelStyles (spliced by build) ====
+    // ==== leaf:pixelStyles (spliced by build) ====  // 887：技能详情像素风皮肤（做法同 vcStyles）
     styles.insert(PIXEL_STYLE_TEXT)
     // ==== leaf:feedbackStyles (spliced by build) ====
-    styles.insert(FEEDBACK_STYLE_TEXT) // 948 反馈样式叶子（与像素皮肤同款做法，见叶子头）
+    styles.insert(FEEDBACK_STYLE_TEXT) // 948 反馈样式叶子（同像素皮肤做法）
 
     // ============================================================
     // 0.5 locale（T3 #366 · dsws 命名空间 zh/en；跟随 harness 语言；GitHub 数据不翻译）

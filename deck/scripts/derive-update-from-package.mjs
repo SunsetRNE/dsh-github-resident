@@ -48,6 +48,17 @@ const CLIENT_OUT = resolve(ROOT, 'scripts', 'generated', 'updateClient.derived.j
 // 这两个值要同时喂给宿主侧（建更新能力）与客户端侧（拼电话名），
 // 所以它们只有一处声明，就是这里；宿主适配器不写第二份，按包里的默认值校验一遍。
 export const PLUGIN_ID = 'dsh-mattpocock-skills-deck'
+
+/** 被融掉的旧 Deck 包名（只读）：与根 package.json 的 `dsh.identity.legacy` 同源，派生后处理按它做改名守卫。 */
+const LEGACY_DECK_PACKAGE_NAME = (() => {
+  try {
+    const rootPkg = JSON.parse(readFileSync(resolve(ROOT, '..', 'package.json'), 'utf8'))
+    const v = rootPkg && rootPkg.dsh && rootPkg.dsh.identity && rootPkg.dsh.identity.legacy
+    return typeof v === 'string' && v ? v : 'dsh-mattpocock-skills-deck'
+  } catch {
+    return 'dsh-mattpocock-skills-deck'
+  }
+})()
 export const PHONE_PREFIX = 'wf'
 
 // #875：宿主侧派生已删（旧派生目录随 #875 删除，运行时按包名直引已安装包）。
@@ -138,6 +149,19 @@ export function deriveClient() {
     if (before === text) {
       throw new Error('[derive-update] 改名没命中：' + from + '（更新包源码可能已改名或删掉，请同步本脚本的 RENAMES）')
     }
+  }
+  // 第三步（2026-10-12 身份融合）：官方工具把 `PACKAGE_NAME` 默认值写成它自己的包名
+  //   （`dsh-mattpocock-skills-deck`）。合并后这个默认值既是"另一个插件的名字"，也是身份回退的入口
+  //   （它正是 `targetPackageName` 的兜底）。这里换成**构建期身份占位符**，由 scripts/build.mjs
+  //   按根 package.json 的 dsh.identity.merge 注入 —— 于是"派生副本写死的名字"与"运行时传入的
+  //   pluginId / targetPackageName"不可能再各说各话。
+  // 形态一：默认值字面量（`"dsh-mattpocock-skills-deck"`）→ 构建期身份占位符，由注入器换成合并身份。
+  // 形态二：注释里那种**不带引号**的裸包名 —— 一并换成占位符，免得合并产物里留着旧名当线索
+  //   （合并改写层的门禁对旧身份串是零容忍的：出现即判身份回退）。
+  if (text.includes(LEGACY_DECK_PACKAGE_NAME)) {
+    text = text.split(LEGACY_DECK_PACKAGE_NAME).join('__DSW_IDENTITY__')
+  } else if (!text.includes('__DSW_IDENTITY__')) {
+    throw new Error('[derive-update] 官方产物里既没有旧 Deck 包名默认值，也没有身份占位符：更新包可能改了默认值写法，请同步本脚本')
   }
   // 零变化断言（默认前缀 wf 下与旧字面一字不差；门禁直接看到这些字面，运行时走上面的拼名）。
   // 官方产物不带这行，门禁要读它，所以这里补上；已存在就不重复加，保证重跑零 diff。

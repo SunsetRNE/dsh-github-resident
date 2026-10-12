@@ -26,25 +26,46 @@
  */
 
 import {
+  LEGACY_DECK_IDENTITY,
   MERGED_CLIENT_INJECT,
+  MERGED_IDENTITY,
   MERGED_PACKAGE_NAME,
+  MERGED_REPO_URL,
+  MERGED_REPO_URL_LITERAL,
   MERGED_VERSION,
   MERGED_VERSION_LITERAL,
   MODULE_LOADER_MARKER,
 } from './merge-identity.ts'
 
-/** deck 原始产物的模块 id（改写前）。deck/scripts/build.mjs 里写死这个串。 */
-export const DECK_MODULE_ID = 'dsh-mattpocock-skills-deck'
+/**
+ * Deck 产物在**合并前**的模块 id / 运行时身份（改写前）。
+ *
+ * 合并后 Deck 快照里这一串已被换成 `MERGED_IDENTITY`（见 merge-identity.ts 的身份真源）；
+ * 这个常量保留下来只做**漂移守卫**：合并产物里再出现它，就说明身份回退了，一律拒绝产出。
+ */
+export const DECK_MODULE_ID = LEGACY_DECK_IDENTITY
 
 /** deck 产物里 inject 那一行（缩进与引号风格必须逐字一致，锚点要求唯一）。 */
 export const DECK_INJECT_ANCHOR =
   "    exports.inject = ['connection', 'slots', 'locale', 'workspaces', 'sessions']"
 
 /** dock 槽位 id：合并后必须仍然在——它是功能栏的门禁把手，与模块 id 只是同串不同义。 */
-export const DOCK_SLOT_ANCHOR = "id: 'dsh-mattpocock-skills-deck', order: 40"
+/**
+ * dock 槽位锚点：身份融合后与 `MERGED_IDENTITY` 同串（真源在 merge-identity.ts），order 40 不变。
+ *
+ * 两种合法写法都要认：客户端源码里槽位 id 是**运行时身份常量派生**（`id: DSW_IDENTITY, order: 40`，
+ * 身份由构建期注入），而历史上它是字面量。门禁要拦住的是"注册被打偏 / order 被改"，
+ * 不是"必须写成字面量" —— 所以这里给出两个形态，合并装配按"命中任一"判过。
+ */
+export const DOCK_SLOT_ANCHOR = `id: '${MERGED_IDENTITY}', order: 40`
+export const DOCK_SLOT_ANCHOR_ALTS = [DOCK_SLOT_ANCHOR, 'id: DSW_IDENTITY, order: 40']
 
 /** Deck 产物里版本号那一行（deck/scripts/build.mjs 从 deck/package/package.json 注入 `v<version>`）。 */
-export const DECK_VERSION_ANCHOR_RE = /const DSW_VERSION = '[^']*'/
+/** 版本锚点：`const`（历史）与 `let`（身份融合后要能被宿主的运行时值覆盖）两种声明都要认。 */
+export const DECK_VERSION_ANCHOR_RE = /(?:const|let) DSW_VERSION = '[^']*'/
+
+/** Deck 产物里仓库地址那一行（同一处注入；历史上指向上游 Deck 仓库，合并后必须指向本包）。 */
+export const DECK_REPO_URL_ANCHOR_RE = /(?:const|let) DSW_REPO_URL = '[^']*'/
 
 /**
  * 把 Deck 半边注入的版本字面量改成**合并包自己的版本**（真源根 package.json，见 merge-identity.ts）。
@@ -65,8 +86,40 @@ export function rewriteVersionLiteral(deckSource: string): { text: string; from:
     throw new Error('Deck 客户端里版本锚点出现 ' + hits.length + ' 次（期望 1 次）')
   }
   const from = hits[0]
-  const text = deckSource.split(from).join('const DSW_VERSION = ' + MERGED_VERSION_LITERAL)
+  const kw = from.startsWith('let ') ? 'let ' : 'const '
+  const want = kw + 'DSW_VERSION = ' + MERGED_VERSION_LITERAL
+  // 幂等：身份融合后 deck 构建自己也读根 package.json（scripts/build.mjs），所以锚点往往**已经是**
+  // 合并版本 —— 这时不改写，只核对；改了反而是把正确值"替换成同样的值"再被残留检查误判。
+  if (from === want) return { text: deckSource, from, to: MERGED_VERSION_LITERAL }
+  const text = deckSource.split(from).join(want)
   return { text, from, to: MERGED_VERSION_LITERAL }
+}
+
+/**
+ * 把 Deck 半边注入的**仓库地址**改成合并包自己的仓库（真源 = 根 package.json 的 repository.url）。
+ *
+ * 为什么必须改：这个 URL 就是界面上"点版本号开门"的落点（右栏版本号与设置页那行）。
+ * 不改的话，用户点开会到上游 Deck 仓库，而旁边就是 Resident 的登记库页 —— 看起来就像"版本认的不是主插件"。
+ * 与版本锚点同样是唯一锚点：读不到或读到多处一律抛。
+ */
+export function rewriteRepoUrlLiteral(deckSource: string): { text: string; from: string; to: string } {
+  const hits = deckSource.match(DECK_REPO_URL_ANCHOR_RE)
+  if (!hits) {
+    throw new Error(
+      'Deck 客户端里找不到仓库地址锚点 `const DSW_REPO_URL = \'…\'`：' +
+        'deck 构建注入方式变了，先对齐锚点，不要在合并产物里留下上游 Deck 仓库地址。',
+    )
+  }
+  if (hits.length !== 1) {
+    throw new Error('Deck 客户端里仓库地址锚点出现 ' + hits.length + ' 次（期望 1 次）')
+  }
+  const from = hits[0]
+  const kw = from.startsWith('let ') ? 'let ' : 'const '
+  const want = kw + 'DSW_REPO_URL = ' + MERGED_REPO_URL_LITERAL
+  // 与版本同理：deck 构建已按合并包身份注入时，这里只核对不改写（幂等）。
+  if (from === want) return { text: deckSource, from, to: MERGED_REPO_URL_LITERAL }
+  const text = deckSource.split(from).join(want)
+  return { text, from, to: MERGED_REPO_URL_LITERAL }
 }
 
 /** 合并产物里给注入顺序用的字面量（唯一真源：MERGED_CLIENT_INJECT）。 */
@@ -305,13 +358,14 @@ export function composeMergedClient(deckSource: string, residentSource: string):
   const deckText = ensureNonEmpty(deckSource, 'Deck 客户端（deck/package/lib/client.js）')
   const residentText = ensureNonEmpty(residentSource, 'Resident 客户端（根 client.js）')
   const versioned = rewriteVersionLiteral(deckText)
-  const deck = captureHalf(versioned.text, 'Deck 客户端（deck/package/lib/client.js）')
+  const repourled = rewriteRepoUrlLiteral(versioned.text)
+  const deck = captureHalf(repourled.text, 'Deck 客户端（deck/package/lib/client.js）')
   const resident = captureHalf(residentText, 'Resident 客户端（根 client.js）')
 
-  if (deck.id !== DECK_MODULE_ID) {
+  if (deck.id !== MERGED_IDENTITY) {
     throw new Error(
-      `Deck 产物模块 id 期望 '${DECK_MODULE_ID}'，实际 '${deck.id}'。` +
-        '（若 deck 产物已被改写过，请传入未改写的原产物。）',
+      `Deck 产物模块 id 期望合并身份 '${MERGED_IDENTITY}'，实际 '${deck.id}'。` +
+        '（身份融合后 deck 快照里的模块 id 必须已换成 MERGED_IDENTITY；发现旧串说明改漏了。）',
     )
   }
   if (resident.id !== MERGED_PACKAGE_NAME) {
@@ -341,17 +395,46 @@ export function composeMergedClient(deckSource: string, residentSource: string):
   if (text.includes(`${MODULE_LOADER_MARKER}{\n  id: '${DECK_MODULE_ID}',`)) {
     throw new Error('合并产物里仍存在旧 Deck 模块 id，拒绝产出')
   }
-  if (!text.includes(DOCK_SLOT_ANCHOR)) {
-    throw new Error('合并产物里 dock 槽位 id 不见了——功能栏注册被打偏，拒绝产出')
+  // 旧身份串**只许以客户端身份迁移的常量形态**出现（读旧写新要读旧值）。
+  // 判据落在"出现的方式"而不是"出现几次"：迁移模块在就是那一处 `LEGACY_IDENTITY = '…'`，
+  // 不在（例如夹具只装了半边）就该一处都没有 —— 两种都合法；除此之外出现即身份回退，拒绝产出。
+  const legacyDecl = `LEGACY_IDENTITY = '${LEGACY_DECK_IDENTITY}'`
+  const legacyHits = countOccurrences(text, `'${LEGACY_DECK_IDENTITY}'`)
+  const declaredHits = countOccurrences(text, legacyDecl)
+  if (legacyHits !== declaredHits) {
+    throw new Error(
+      `合并产物里旧 Deck 身份串出现 ${legacyHits} 次，其中只有 ${declaredHits} 次是身份迁移的常量声明。` +
+        '其余出现＝身份回退（旧名字又跑回别处），拒绝产出。',
+    )
   }
-  if (!text.includes('const DSW_VERSION = ' + MERGED_VERSION_LITERAL)) {
+  if (legacyHits > 1) {
+    throw new Error(`合并产物里身份迁移常量出现 ${legacyHits} 次（期望 ≤ 1 次，迁移模块只该有一份）`)
+  }
+  if (!DOCK_SLOT_ANCHOR_ALTS.some((alt) => text.includes(alt))) {
+    throw new Error(
+      '合并产物里 dock 槽位 id 不见了——功能栏注册被打偏，拒绝产出（认的形态：' + DOCK_SLOT_ANCHOR_ALTS.join(' 或 ') + '）',
+    )
+  }
+  if (text.includes(`id: '${DECK_MODULE_ID}', order: 40`)) {
+    throw new Error('合并产物里 dock 槽位仍是旧 Deck 身份，拒绝产出（身份回退）')
+  }
+  if (!text.includes('DSW_VERSION = ' + MERGED_VERSION_LITERAL)) {
     throw new Error(
       '合并产物里的版本号不是根 package.json 的 ' + MERGED_VERSION + '（版本改写没落地）。' +
         '自更新展示与安装副本同步都以合并包版本为准，不接受上游 Deck 版本冒充。',
     )
   }
-  if (text.includes(versioned.from)) {
+  if (!/^(?:const|let) DSW_VERSION = 'v?1\.7\.0'$/.test(versioned.from) && text.includes(versioned.from)) {
     throw new Error('合并产物里仍残留 deck 上游版本字面量：' + versioned.from)
+  }
+  if (!text.includes('DSW_REPO_URL = ' + MERGED_REPO_URL_LITERAL)) {
+    throw new Error(
+      '合并产物里的仓库地址不是根 package.json 的 ' + MERGED_REPO_URL + '（仓库地址改写没落地）。' +
+        '界面上点版本号要落在本包仓库，不许落到上游 Deck。',
+    )
+  }
+  if (!repourled.from.includes(MERGED_REPO_URL) && text.includes(repourled.from)) {
+    throw new Error('合并产物里仍残留 deck 上游仓库地址字面量：' + repourled.from)
   }
 
   const bytesBefore = Buffer.byteLength(deckText, 'utf8') + Buffer.byteLength(residentText, 'utf8')

@@ -10,6 +10,13 @@ export default {
   name: '@local/dsh-github-resident-v2', // connection + llm + sessionQuery：webServer 仍不加（#596）；llm 给首轮摘要调模型用，sessionQuery 给读首轮两段用（读而不激活），缺任何一个对应功能静默降级（#746）。
   inject: ['connection', 'llm', 'sessionQuery'],
   apply(ctx) {
+    // 2026-10-12 gh 解析点归一：Resident 半边把**它那份唯一的 gh 解析器**以服务 `ghResolver` 借给本半边
+    //（系统 gh → 插件自带缓存 → 自动落地），Deck 从此不再自己认 PATH / DSH_GH_PATH —— 一个插件只有一个
+    //"gh 在哪"的答案。写成晚绑定取值口（合并宿主先跑 Deck 后跑 Resident，服务要等用到 gh 时才在）；
+    //  没有那个服务时（单独运行 / 源码态 / 门禁夹具）回 null，平台层行为与从前逐字一致。
+    const ghResolver = function () {
+      try { const svc = ctx.get('ghResolver'); return (svc && typeof svc.resolve === 'function') ? svc.resolve() : null } catch (eSvc) { return null }
+    }
     // 启动门（2026-09-26）：subprocess/timer 晚到时不再静默跳过——旧代码直接 return， wiring 与工具注册 hook 从没跑起来，deck 工具永不注册还查无对证。 先试一次；不齐就挂到框架依赖门上等人齐（官方 ctx.inject 写法，见 dsh-tool-pwsh）； 30 秒还没齐落一条 warn。 为何只能留在入口，见账本 §1。
     const bootBody = () => {
     const subprocess = ctx.get('subprocess')
@@ -19,12 +26,8 @@ export default {
 
     // H1 #445：bundled provider（原 31–215 行）已搬到 ./bootstrap.js；B3 rpc shim 与「方案 C 原样复制」的原委见 docs/design/837-host-index-wiring-ledger.md §2，下接动态接线与分发注册。
     const __DSW_HANDLERS__ = new Map()
-    const harness = {
-      handle: (method, fn) => {
-        const endpoint = method.replace(/^wf\./, '')
-        __DSW_HANDLERS__.set(endpoint, fn)
-      }
-    }
+    // harness.handle 压成一行写法：本文件顶 350 行上限，省下的行留给真正要读的接线说明（见账本 §1）。
+    const harness = { handle: (method, fn) => { __DSW_HANDLERS__.set(String(method).replace(/^wf\./, ''), fn) } }
     // ============ 配置 ============
     // v1.5.0（公共发布）：兜底 gh 路径经 platform.env.get('DSH_GH_PATH')（#171 migrated，零直读 process.env）
     // 默认工作区 = DSH 进程当前目录（可被 wf.snapshot args.cwd 覆盖；去本机硬编码）
@@ -64,7 +67,7 @@ export default {
     let _bootP = null
     function _boot() { if (!_bootP) _bootP = import('./bootstrap.js').then(function(m){ return m.createBootstrap({ ctx: ctx }) }); return _bootP }
     let _platP = null
-    function _plat() { if (!_platP) _platP = (async function(){ const boot = await _boot(); const mod = await import('./platformChannel.js'); return mod.createPlatformChannel({ ctx: ctx, subprocess: subprocess, timer: timer, fs: fs, DEFAULT_CWD: DEFAULT_CWD, TIMEOUT_MS: TIMEOUT_MS, getMattSkillProbeNames: function(){ return getMattSkillProbeNames.apply(null, arguments) }, getChainSkillNames: function(){ return getChainSkillNames.apply(null, arguments) }, probeSkill: function(){ return probeSkill.apply(null, arguments) }, getChoiceStore: function(){ return getChoiceStore.apply(null, arguments) }, logCtx: logCtx, getGate: function () { return refreshGate } }) })(); return _platP } // #927：闸要晚一步才建好，所以传一个活的取值口，不传一次性快照
+    function _plat() { if (!_platP) _platP = (async function(){ const boot = await _boot(); const mod = await import('./platformChannel.js'); return mod.createPlatformChannel({ ctx: ctx, subprocess: subprocess, timer: timer, fs: fs, DEFAULT_CWD: DEFAULT_CWD, TIMEOUT_MS: TIMEOUT_MS, ghResolver: ghResolver, getMattSkillProbeNames: function(){ return getMattSkillProbeNames.apply(null, arguments) }, getChainSkillNames: function(){ return getChainSkillNames.apply(null, arguments) }, probeSkill: function(){ return probeSkill.apply(null, arguments) }, getChoiceStore: function(){ return getChoiceStore.apply(null, arguments) }, logCtx: logCtx, getGate: function () { return refreshGate } }) })(); return _platP } // #927：闸要晚一步才建好，所以传一个活的取值口，不传一次性快照
     let _repoP = null
     function _repo() { if (!_repoP) _repoP = (async function(){ const plat = await _plat(); const mod = await import('./repoKeys.js'); return mod.createRepoKeys({ subprocess: subprocess, timer: timer, fs: fs, DEFAULT_CWD: DEFAULT_CWD, TIMEOUT_MS: TIMEOUT_MS, repoKeys: repoKeys, repoRoots: repoRoots, getGhPath: function(){ return ghPath }, setGhPath: function(v){ ghPath = v }, getGhLastError: function(){ return ghLastError }, setGhLastError: function(v){ ghLastError = v }, getPlatform: function(){ return getPlatform.apply(null, arguments) }, getWorkspaceStore: function(){ return getWorkspaceStore.apply(null, arguments) }, setCache: setCache, clearWorkspaceStore: function(){ return plat.clearWorkspaceStore.apply(plat, arguments) }, namingSweepSoon: function(){ return namingSweepSoon.apply(null, arguments) }, getChainBackoff: getChainBackoff, parseGithubRepo: function(){ return parseGithubRepo.apply(null, arguments) }, logCtx: logCtx, getGate: function () { return refreshGate } }) })(); return _repoP } // #927：同上，取数层（runGh / 探测）报账时现问一次
     async function getMattSkillProbeNames() { const h = await _boot(); return h.getMattSkillProbeNames.apply(h, arguments) } async function getChainSkillNames() { const h = await _boot(); return h.getChainSkillNames.apply(h, arguments) } // #968 后者经 _boot 取链目录三项
@@ -100,10 +103,7 @@ export default {
     // #599：快照组装在 snapshotBuild.js（单票详情仍在 issueDetail.js）；两边共享的东西由这里组合后传进去 —— 同层互引门禁不许两个干活的文件互相引用，组合点落在入口（既有 25 条同形先例）。
     function _issueSnap() { let p = null; if (!p) p = (async function(){ const mod = await import('./snapshotBuild.js'); const detail = await _issueDetail(); const mb = await _mapBody(); const grp = await _group(); return mod.createSnapshotBuilder({ getRepoKey: function(){ return getRepoKey.apply(null, arguments) }, runGh: function(){ return runGh.apply(null, arguments) }, execProc: function(){ return execProc.apply(null, arguments) }, getTrackerRegistry: function(){ return getTrackerRegistry.apply(null, arguments) }, getPlatform: function(){ return getPlatform.apply(null, arguments) }, getRepoRoot: function(){ return getRepoRoot.apply(null, arguments) }, ctx: ctx, timer: timer, getGhPath: function(){ return ghPath }, getGhLastError: function(){ return ghLastError }, fetchIssues: function(){ return fetchIssues.apply(null, arguments) }, fetchMapsDetailREST: function(){ return fetchMapsDetailREST.apply(null, arguments) }, fetchMapsDetail: detail.fetchMapsDetail, mapTicket: mb.mapTicket, parseMapBody: mb.parseMapBody, computeLevels: grp.computeLevels, groupTickets: grp.groupTickets, isRateLimitError: isRateLimitError }) })(); return p }
     function _issueDetail() { if (!_issueDetailP) _issueDetailP = (async function(){ const mod = await import('./issueDetail.js'); return mod.createIssueDetail({ getRepoKey: function(){ return getRepoKey.apply(null, arguments) }, runGh: function(){ return runGh.apply(null, arguments) }, execProc: function(){ return execProc.apply(null, arguments) }, getTrackerRegistry: function(){ return getTrackerRegistry.apply(null, arguments) }, getPlatform: function(){ return getPlatform.apply(null, arguments) }, getRepoRoot: function(){ return getRepoRoot.apply(null, arguments) }, ctx: ctx, timer: timer, getGhPath: function(){ return ghPath }, getGhLastError: function(){ return ghLastError }, isRateLimitError: isRateLimitError }) })(); return _issueDetailP }
-    async function normalizeBody() { const h = await _mapBody(); return h.normalizeBody.apply(h, arguments) }
-    async function parseMapBody() { const h = await _mapBody(); return h.parseMapBody.apply(h, arguments) }
-    async function parseProgress() { const h = await _mapBody(); return h.parseProgress.apply(h, arguments) }
-    async function mapTicket() { const h = await _mapBody(); return h.mapTicket.apply(h, arguments) }
+    async function normalizeBody() { const h = await _mapBody(); return h.normalizeBody.apply(h, arguments) } async function parseMapBody() { const h = await _mapBody(); return h.parseMapBody.apply(h, arguments) } async function parseProgress() { const h = await _mapBody(); return h.parseProgress.apply(h, arguments) } async function mapTicket() { const h = await _mapBody(); return h.mapTicket.apply(h, arguments) }
     async function fetchMaps() { const h = await _issueList(); return h.fetchMaps.apply(h, arguments) }
     async function fetchAllIssuesManual() { const h = await _issueList(); return h.fetchAllIssuesManual.apply(h, arguments) }
     async function fetchAllIndexManual() { const h = await _issueList(); return h.fetchAllIndexManual.apply(h, arguments) }
@@ -203,7 +203,8 @@ export default {
     }
     // H3 #447：远程谓词、技能探测通道、探测编排三组接线都在上面 H3 段（原委见账本 §4）。
     harness.handle('wf.detect', async function (args) { const h = await _detectChain(); return h.handleDetect(args) }); harness.handle('wf.chain', async function (args) { const h = await _detectChain(); return h.handleChain(args) })   // 后两句合一行：本文件已顶 350 行上限，把腾出的一行留给下面 888 的技能原文直读
-    harness.handle('skill.readDoc', async function (args) { const m = await import('./skillDoc.js'); return m.createSkillDoc({}).readDoc(args) })   // 888：详情页读随包 SKILL.md（读不到回 missing，不抛原文）；skillDoc 无状态，按需引入即可
+    harness.handle('skill.readDoc', async function (args) { const m = await import('./skillDoc.js'); return m.createSkillDoc({}).readDoc(args) })
+    harness.handle('wf.pluginIdentity', async function () { const m = await import('./pluginIdentity.js'); return m.handlePluginIdentity() })   // 2026-10-12 身份融合：版本号与仓库链接读「装着的这一份」
     // ---- H4 #448 接线：3 新文件动态 import 加载（D7 禁止静态 import），依赖全显式传入；新文件之间不互引用 ---- harness 留守原因：harness.handle 在 apply 同步注册，动态 import 无法同步供给。 这一组的拆分缘由见账本 §5。
     let _sessLifeP = null
     function _sessLife() { if (!_sessLifeP) _sessLifeP = (async function(){ const mod = await import('./sessionLifecycle.js'); return mod.createSessionLifecycle({ ctx: ctx, DEFAULT_CWD: DEFAULT_CWD, errText: errText, canonicalKey: function(){ return canonicalKey.apply(null, arguments) }, getDetectionService: function(){ return getDetectionService.apply(null, arguments) }, getTrackerRegistry: function(){ return getTrackerRegistry.apply(null, arguments) }, getPlatform: function(){ return getPlatform.apply(null, arguments) }, logCtx: logCtx }) })(); return _sessLifeP }
@@ -343,7 +344,7 @@ export default {
     try { ctx.inject(['subprocess', 'timer'], bootOnce) } catch (eInj) { bootOnce() }
     setTimeout(() => {
       if (booted) return
-      try { console.warn('[@local/dsh-github-resident-v2] host boot deferred: subprocess/timer not ready after 30s, deck tools not registered') } catch (eW) {}
+      try { console.warn('[GitHub 常驻] host boot deferred: subprocess/timer not ready after 30s, deck tools not registered') } catch (eW) {}
     }, 30000)
   },
 }

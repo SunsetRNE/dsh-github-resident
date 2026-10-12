@@ -81,8 +81,16 @@
     "title": "GitHub Resident + Skills Deck",
     "description": "Resident GitHub credentials with multi-repository commit, push and PR tools, a consent-gated Git repository registry file library, self-contained gh provisioning, full credential teardown — plus the Matt Skills Deck issue/map toolkit, 27 bundled skills and the right-side panel."
   },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/SunsetRNE/dsh-github-resident"
+  },
   "icon": "./icon.svg",
   "dsh": {
+    "identity": {
+      "merge": "dsh-github-resident-v2",
+      "legacy": "dsh-mattpocock-skills-deck"
+    },
     "bundle": {
       "patch": "./cordis.patch.yml"
     },

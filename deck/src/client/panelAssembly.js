@@ -77,12 +77,39 @@
     //   原来挂在这个位置的是页内浮窗组件（shell.overlay 槽位），它已随这次退役整份删除；
     //   它当年负责的提示条与切换弹窗，Dock 那边本来就有。
     __injectOnce('conversation.input.dock', function () {
-      return slots.register({ name: 'conversation.input.dock', id: 'dsh-mattpocock-skills-deck', order: 40 }, withCx(StatusBar))
+      return slots.register({ name: 'conversation.input.dock', id: DSW_IDENTITY, order: 40 }, withCx(StatusBar))
     })
+    /**
+     * 身份融合（2026-10-12）：向宿主要"现在装着的这一份"的 name / version / repository，并**就地更新**
+     * 那两个构建期常量（`DSW_VERSION` / `DSW_REPO_URL` 都由本闭包持有，赋值后所有读它们的地方一起跟上）。
+     *
+     * 三条口径：
+     *   - 只认宿主回的**已装目录 package.json**（`wf.pluginIdentity`），不认构建期字面量；
+     *   - 宿主问不到（源码态、门禁、老宿主没有这条电话）就保持字面量，静默不阻断；
+     *   - 版本号与仓库地址**一起换**：它们本来就是同一份身份的两个字段，分开换会让界面上出现
+     *     "新版本号 + 旧仓库链接"这种半融状态（正是这次要收掉的东西）。
+     */
+    const probePluginIdentity = function () {
+      try {
+        if (typeof host === 'undefined' || !host || typeof host.call !== 'function') return
+        Promise.resolve(host.call('wf.pluginIdentity', {})).then(function (res) {
+          try {
+            const v = res && res.ok !== false ? res : null
+            if (!v) return
+            const ver = v.version ? String(v.version) : ''
+            // 设置页与右栏都按 `v` 前缀显示（locale 词条与 CSS 都按这个形态对齐），这里统一补上。
+            if (ver && /^\d/.test(ver)) DSW_VERSION = 'v' + ver
+            else if (ver) DSW_VERSION = ver
+            const url = v.repoUrl ? String(v.repoUrl) : ''
+            if (/^https?:\/\//.test(url)) DSW_REPO_URL = url
+          } catch (eApply) {}
+        }).catch(function () {})
+      } catch (eProbe) {}
+    }
     __injectOnce('tool.view.cordis', function () {
       return slots.register({ name: 'tool.view.cordis', key: 'self' }, withCx(RunPanel))
     })
-    // v25-50：配置页（设置 → 插件 → MattSkillsDeck；与 opencode 主题同模式）
+    // v25-50：配置页（设置 → 插件 → GitHub 常驻；与 opencode 主题同模式）
     //   合并后这里仍是「插件管理」兼容入口：内容与「设置 → 仓库登记库」里嵌入的那份**同源同状态**
     //   （同一批分区组件、同一个 store），不是第二套私有设置。
     __injectOnce('settings.plugins.tab', function () {
@@ -145,11 +172,17 @@
         try { if (nativeTabDisposer) nativeTabDisposer() } catch (e) { /* 忽略 */ }
         nativeTabDisposer = null
       }
-    }, 'dsh-mattpocock-skills-deck: native right sidebar tab')
+    }, DSW_IDENTITY + ': native right sidebar tab')
 
     // #490 client 日志底座：开关启动对账（本地秒显已在 log.js 顶层同步完成；
     //   此处再向宿主读开关，以宿主为准；宿主不可用就保持本地值，不阻断启动）。
     try { if (typeof reconcileLogSwitch === 'function') reconcileLogSwitch() } catch (e) {}
+    // 身份融合（2026-10-12）：版本号与仓库地址改为**问宿主要运行中那一份的真实值**。
+    //   为什么：构建期字面量（DSW_VERSION / DSW_REPO_URL）说的是"构建那一刻的身份"，而界面上要显示的是
+    //   "现在装着的这一份" —— 文件级安装只换代码不换身份证那类场景下两者会不一致（见宿主
+    //   updateFromPackage.js 的 __syncInstalledManifest 注释）。宿主回**已装目录 package.json** 的
+    //   name / version 与 repository；问不到（源码态 / 门禁 / 老宿主）就保留构建期字面量，不阻断启动。
+    try { if (typeof probePluginIdentity === 'function') probePluginIdentity() } catch (eIdProbe) {}
     // #347：加载真数据快照（repo 链接 + 前置检测兜底），失败静默
     loadSnapshot(shared, false)
     // #265：命名守护常驻渲染钩子（面板未开也续跑；计划单经 wf.namingPlan 拉取后代执行改名）

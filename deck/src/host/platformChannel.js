@@ -14,10 +14,9 @@ export function selectSkillProbeNames(allNames, chainNames, scope) {
 }
 
 export function createPlatformChannel(deps) {
-  const { ctx, subprocess, timer, fs, DEFAULT_CWD, TIMEOUT_MS, getMattSkillProbeNames, getChainSkillNames, probeSkill, logCtx, gate, getGate } = deps
-  // #494 O1：旧文本通道退役——backend.diagnostic 不再产生（github 房内零调用；残留 ctx.log.* 调用自动静默，gitlab 房由本房 O 票另行结构化）。房内埋点只走 logEvent/isEnabled。
-  // #927：闸可能比本通道晚一步就位（刷新接线要到插件起步时才建好），所以每次报账现问一次：
-  // 拿到就用，还没有就什么都不做。写成一次性快照的话，先建好的那一路会永远拿不到闸。
+  const { ctx, subprocess, timer, fs, DEFAULT_CWD, TIMEOUT_MS, getMattSkillProbeNames, getChainSkillNames, probeSkill, logCtx, gate, getGate, ghResolver } = deps
+  // #494 O1：旧文本通道退役——backend.diagnostic 不再产生（残留 ctx.log.* 自动静默）。房内埋点只走 logEvent/isEnabled。
+  // #927：闸可能晚一步就位（刷新接线要到插件起步才建好），所以每次报账现问一次（一次性快照会让先建好的那一路永远拿不到闸）。
   function gateOf() {
     let g = null
     try { g = (typeof getGate === 'function') ? getGate() : gate } catch (e) { g = null }
@@ -34,11 +33,9 @@ export function createPlatformChannel(deps) {
   function progName(cmd) { try { return String(cmd || '').split(/[\\/]/).pop() || '' } catch { return '' } }
   const STATUS_CACHE_MS = 30000  // workspaceStore 探测级联 TTL（#344 沿革 · #284 保留；原 index.js 234 行）
     // ============ Tracker Registry（#155 · 后端选择 UI）============
-    let _trackerRegistry = null
-    let _trackerRegistryInit = null
+    let _trackerRegistry = null, _trackerRegistryInit = null
     async function getTrackerRegistry() {
-      if (_trackerRegistry) return _trackerRegistry
-      if (_trackerRegistryInit) return _trackerRegistryInit
+      if (_trackerRegistryInit) return _trackerRegistryInit   // 已建好或正在建：直接复用（同一实例只建一次）
       _trackerRegistryInit = (async () => {
         try {
           const injected = ctx.get('trackerRegistry')
@@ -91,24 +88,34 @@ export function createPlatformChannel(deps) {
       _trackerRegistry = await _trackerRegistryInit
       return _trackerRegistry
     }
-    // 触发预热（不阻塞主流程）
-    try { getTrackerRegistry().catch(()=>{}) } catch {}
-    // ============ 平台抽象（#171 · createPlatform 惰性单例）============
-    // 第一性原理：平台单点 + 零手拼 + 双闸不变量；经 ctx.get('platform') 或内联 fallback（零 import 语法，避 D7 dev host vm.Script 阻塞）
-    let _platform = null
-    let _platformInit = null
-    let lastPlatformOk = null
+    try { getTrackerRegistry().catch(()=>{}) } catch {}   // 触发预热（不阻塞主流程）
+    // ===== 平台抽象（#171 惰性单例）=====  第一性原理：平台单点 + 零手拼 + 双闸不变量；经 ctx.get('platform')
+    // 或内联 fallback（零 import 语法，避 D7 dev host vm.Script 阻塞）
+    let _platform = null, _platformInit = null, lastPlatformOk = null
     async function getPlatform() {
       const platT0 = Date.now()
       if (_platform) return _platform
       if (_platformInit) return _platformInit
       _platformInit = (async () => {
         const injected = ctx.get('platform')
-        if (injected && typeof injected.getHome === 'function' && injected.path) return injected
+        if (injected && typeof injected.getHome === 'function' && injected.path) {
+          // 2026-10-12 gh 解析点归一：注入的平台对象也要认合并宿主的 gh 解析器，否则"有没有 ctx.platform
+          //   服务"会决定 Deck 走哪套 gh 解析（症状是换个宿主就时好时坏）。只包 gh 一个名字，其余逐字透传。
+          if (typeof ghResolver === 'function' && typeof injected.resolveExecutable === 'function') {
+            try {
+              return Object.freeze(Object.assign({}, injected, { resolveExecutable: async function (name) {
+                if (name !== 'gh') return injected.resolveExecutable.call(injected, name)
+                try { const p = await ghResolver(); return p || null } catch (eGh) { return null }
+              } }))
+            } catch (eWrap) {}
+          }
+          return injected
+        }
         try {
           const platMod = await import('./platform/index.js')
           const createPlatform = platMod.createPlatform || platMod.default
-          if (typeof createPlatform === 'function') return createPlatform(ctx)
+          // 2026-10-12 gh 解析点归一：gh 解析器随 opts 进平台层（见 platform/index.js 的 injectedGh）；没注入时行为不变。
+          if (typeof createPlatform === 'function') return createPlatform(ctx, ghResolver ? { ghResolver: ghResolver } : undefined)
         } catch {}
         let nodePath = null
         let nodeOs = null
@@ -194,11 +201,10 @@ export function createPlatformChannel(deps) {
     }
     // #幽灵修复：BackendContext.exec（contract.js §BackendContext）——preflight 经 ghClient/glab 执行 gh/glab。
     // 契约形状 {stdout,stderr,code}；exit code≠0 不抛（调用方判）；超时 terminate；opts.timeout/signal 透传。
-    // #606 补测点：这条路此前一条日志都不留（唯一的记录点在 github 房的 client.js，它要调用上下文自带记录器，
-    //   而各操作上下文都没带），于是面板列表的主取数路、每次探测的预检、取当前登录用户与所有写操作
-    //   起了多少次外部命令全都看不见。这里补 exec.run（按需）：一次调用落一行，只记命令名、工作区短指纹、
-    //   耗时、退出码与发起链名；不记完整参数、不记令牌、不记原始路径。调试开关关着时只读一次开关就返回。
-    // 第四个参数 via 是「这条命令由哪条链起的」：造操作上下文的调用方把链名传进来，日志只记这个固定名字。
+    // #606 补测点：这条路此前一条日志都不留（唯一记录点在 github 房，而各操作上下文都没带记录器），于是
+    //   面板主取数路、探测预检、登录用户与写操作起了多少外部命令全都看不见。这里按需补 exec.run：一次调用
+    //   落一行，只记命令名 / 工作区短指纹 / 耗时 / 退出码 / 发起链名，不记完整参数、令牌与原始路径。
+    // 第四个参数 via = 「这条命令由哪条链起的」：造操作上下文的调用方传链名，日志只记这个固定名字。
     async function detectionExec(cmd, args, opts, via) {
       const argv = [String(cmd)].concat(args || [])
       const c = (opts && opts.cwd) || ''
@@ -217,16 +223,14 @@ export function createPlatformChannel(deps) {
           return { stdout: '', stderr: 'cancelled while queued for gh admission', code: -1 }
         }
       }
-      // #723（T19）：这一笔真实出站先报给闸（I1）。这条通道是操作上下文交给后端的那种 exec 出口
-      // （tracker 三个房间与快照那几路都走它），起的是 gh / glab / git 三条命令；gh 与 glab 是真出站，
-      // git 只读远端地址，但都是「起了一个进程」，一起报才能保证账上的条数与真起的命令数一一对应。
-      // #965：这一块在拿名额之后 —— 排队等待不算这一笔，取消排队的不进账。
+      // #723（T19）：这一笔真实出站先报给闸（I1）。本通道是操作上下文的 exec 出口（tracker 三个房间与快照
+      // 都走它），gh / glab / git 都是"起了一个进程"，一起报才能保证账上条数 = 真起的命令数。#965：这一块
+      // 在拿名额之后 —— 排队等待不算这一笔，取消排队的不进账。
       try {
         const g = gateOf()
         if (g) {
-          // #927 复核发现：GraphQL 那一路要看第二段（`gh api graphql …` 的第一段是 api），
-          // 原来只看第一段，于是面板与工具那一路的 GraphQL 调用被当成 REST 记（点数记成 0）。
-          // 口径与 repoKeys.js 里那一处对齐。
+          // #927：GraphQL 要看第二段（`gh api graphql …` 第一段是 api）；只看第一段会把面板与工具那一路的
+          // GraphQL 当 REST 记（点数记成 0）。口径与 repoKeys.js 对齐。
           const a0 = String((args && args[0]) || '')
           const a1 = String((args && args[1]) || '')
           const isGraphql = a0.indexOf('graphql') >= 0 || (a0 === 'api' && a1.indexOf('graphql') >= 0)

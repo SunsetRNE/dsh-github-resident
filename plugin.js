@@ -2066,6 +2066,25 @@ sys.stdout.flush()
   };
   if (typeof ctx.provide === 'function') ctx.provide(SERVICE_KEY, serviceApi);
 
+  // 2026-10-12 gh 解析点归一（身份/交付融合收尾）：把**本插件唯一的 gh 解析器**（resolveGh：
+  //   系统 gh → 插件自带缓存 ~/.dsh/gh-cli/bin/gh → 自动落地）以服务形式借给同一 ctx 里的另一半
+  //   （合并进来的 Deck：它过去自己认 PATH 与 DSH_GH_PATH，于是出现"Resident 能用 gh、Deck 说没装 gh"）。
+  // 为什么是服务而不是装配层传对象：合并宿主先跑 Deck、后跑 Resident（见 tools/merge/client-factory.ts 的
+  //   装配约定），所以 Deck 侧必须**晚绑定**——真正取 gh 是在用的时候（探测/执行），那时本服务已在。
+  // resolve() 只回路径或 null，不回抛：调用方（Deck 平台层）自己按"没找到"诚实报告。
+  if (typeof ctx.provide === 'function') {
+    try {
+      ctx.provide('ghResolver', {
+        resolve: async function () {
+          try {
+            const r = await resolveGh({ install: false });
+            return (r && r.ok && r.path) ? r.path : null;
+          } catch (e) { return null; }
+        },
+      });
+    } catch (eProvide) { /* 服务位被占：Deck 侧会如实回落 PATH（不静默换口径） */ }
+  }
+
   ctx.tools.register(textTool({
     toolName: 'gh_protocol',
     description: 'Return the machine-readable protocol of this plugin: protocol version, the Host Service surface other plugins may call, the loopback HTTP endpoints, the tool catalogue with declared inputs and returns, the result envelope, and the error-code table. Read this before driving this plugin from another plugin or script.',

@@ -17,7 +17,8 @@
  * 门禁（G）：
  *   - dev 产物：precheckCode 包装编译（等价宿主 (async () => {code})() 校验）
  *   - pkg 产物：vm 编译 + __ModuleLoader__ 特征 + 单组件单声明
- *   - DSW_VERSION：从 package/package.json 注入（__DSW_VERSION__ 占位符替换）
+ *   - DSW_IDENTITY / DSW_VERSION / DSW_REPO_URL：合并包在时取根 package.json，否则取 package/package.json
+ *     （__DSW_IDENTITY__ / __DSW_VERSION__ / __DSW_REPO_URL__ 占位符替换）
  *
  * 用法：node scripts/build.mjs [--dev-only|--pkg-only]
  *
@@ -142,13 +143,13 @@ const PKG_CLIENT_SHIMS = `    // ===================== seam shims（pkg 方言�
       insert: (css) => {
         const ctx = __DSW_CTX__
         const styleEl = document.createElement('style')
-        styleEl.setAttribute('data-plugin', 'dsh-mattpocock-skills-deck')
+        styleEl.setAttribute('data-plugin', '__DSW_IDENTITY__')
         styleEl.textContent = typeof css === 'string' ? css : Array.isArray(css) ? css.join('') : String(css)
         document.head.appendChild(styleEl)
         if (ctx && typeof ctx.effect === 'function') {
           ctx.effect(() => () => {
             try { if (styleEl.parentNode) styleEl.parentNode.removeChild(styleEl) } catch (e) { /* 忽略 */ }
-          }, 'dsh-mattpocock-skills-deck: styles')
+          }, '__DSW_IDENTITY__: styles')
         }
         return () => {
           try { if (styleEl.parentNode) styleEl.parentNode.removeChild(styleEl) } catch (e) { /* 忽略 */ }
@@ -178,25 +179,95 @@ const harness = {
 `
 
 // ---------- 版本注入 ----------
-function dswVersion() {
+/**
+ * 身份与版本身份的**取值顺序**（身份融合 2026-10-12 定）：
+ *   1) 合并包（本仓根 package.json）在时，一律用**主包**的名字 / 版本 / 仓库地址 —— deck 至此是主包的一部分，
+ *      不再是"另一个插件"。
+ *   2) 不在合并仓里（拿 deck 子树单独构建、或上游独立构建）时回落到 `package/package.json` 自己的值，
+ *      这时 deck 就是独立产物，行为与从前逐字一致。
+ * 两者都不满足则抛错：宁可构建失败，也不让产物带一个查不到来源的版本身份。
+ */
+function mergedPackageJson() {
+  try {
+    const p = JSON.parse(readFileSync(resolve(ROOT, '..', 'package.json'), 'utf8'))
+    if (p && typeof p.name === 'string' && /resident/i.test(p.name) && typeof p.version === 'string') return p
+    return null
+  } catch {
+    return null
+  }
+}
+
+/**
+ * 本产物在界面与状态里的身份串（槽位 id / 右栏 tab / 样式属性 / effect 名）。
+ * 合并包在时取根 package.json 的 `dsh.identity.merge`（**与 tools/merge/merge-identity.ts 同一个字段**，
+ * 于是构建期注入的身份与合并改写层认定的身份不可能各说各话）；独立构建时取 package/package.json 的 name。
+ */
+function dswIdentity() {
+  const merged = mergedPackageJson()
+  if (merged) {
+    const v = merged.dsh && merged.dsh.identity && merged.dsh.identity.merge
+    if (typeof v === 'string' && v) return v
+    const id = String(merged.name).replace(/^@[^/]+\//, '')
+    if (id) return id
+  }
   const pkg = JSON.parse(read('package/package.json'))
+  return String(pkg.name || '')
+}
+
+/**
+ * 被融掉的旧身份（**只读**）：迁移与漂移守卫用。取值与合并改写层同源
+ * （根 package.json 的 `dsh.identity.legacy`），独立构建时回落到那个历史字面量。
+ */
+function dswLegacyIdentity() {
+  const merged = mergedPackageJson()
+  const v = merged && merged.dsh && merged.dsh.identity && merged.dsh.identity.legacy
+  if (typeof v === 'string' && v) return v
+  return 'dsh-mattpocock-skills-deck'
+}
+
+/** 已装 / 构建时的身份来源，供构建日志如实打印。 */
+function identitySource() {
+  return mergedPackageJson() ? 'root package.json（合并包）' : 'package/package.json（独立 deck）'
+}
+
+function dswVersion() {
+  const merged = mergedPackageJson()
+  const pkg = merged || JSON.parse(read('package/package.json'))
   return 'v' + pkg.version
 }
 
-/** 仓库主页 URL（#repo-link）：package/package.json 的 repository 字段（string 或 {url}），
+/** 仓库主页 URL（#repo-link）：合并包在时取根 package.json 的 repository，否则取 package/package.json。
  *  去 git+ 前缀与 .git 后缀。版本号可点跳转的单一真源；客户端源码只有 __DSW_REPO_URL__ 占位符，
  *  无 URL 字面量（过硬编码门禁 F2），产物中的字面量已在门禁 RE_LICENSED 登记。 */
 function dswRepoUrl() {
-  const pkg = JSON.parse(read('package/package.json'))
+  const src = mergedPackageJson() ? readFileSync(resolve(ROOT, '..', 'package.json'), 'utf8') : read('package/package.json')
+  const pkg = JSON.parse(src)
   const r = pkg.repository
   const raw = typeof r === 'string' ? r : (r && r.url) || ''
   const url = String(raw).replace(/^git\+/, '').replace(/\.git$/, '')
-  if (!url) throw new Error('[build] package/package.json 缺 repository 字段，__DSW_REPO_URL__ 注入无源')
+  if (!url) throw new Error('[build] 取仓库地址失败：主包与 package/package.json 都没有 repository 字段，__DSW_REPO_URL__ 注入无源')
   return url
 }
 
-function injectVersion(body, version, repoUrl) {
-  return body.split('__DSW_VERSION__').join(`'${version}'`).split('__DSW_REPO_URL__').join(`'${repoUrl}'`)
+/**
+ * 外壳注入：`window.__ModuleLoader__.load({ id: '__DSW_IDENTITY__' })` 那一行不在插件函数体里
+ * （injectIdentity 只处理函数体），所以单独走这里。
+ * 只断言身份这一个占位符：外壳里还嵌着插件函数体，版本 / 仓库地址 / 旧身份那几个占位符归 injectIdentity 管。
+ */
+function injectShellIdentity(shell, identity) {
+  const out = String(shell).split('__DSW_IDENTITY__').join(identity)
+  if (out.includes('__DSW_IDENTITY__')) {
+    throw new Error('[build] 客户端外壳注入后仍有未替换的 __DSW_IDENTITY__：注入器与模板不同步')
+  }
+  return out
+}
+
+function injectIdentity(body, identity, legacyIdentity, version, repoUrl) {
+  return body
+    .split('__DSW_IDENTITY__').join(identity)
+    .split('__DSW_LEGACY_IDENTITY__').join(legacyIdentity)
+    .split('__DSW_VERSION__').join(`'${version}'`)
+    .split('__DSW_REPO_URL__').join(`'${repoUrl}'`)
 }
 
 // ---------- 说明同步（单说明源头 · #479 最简收口） ----------
@@ -299,6 +370,9 @@ const KERNEL_MODULES = [
   { name: 'link', file: 'src/client/kernel/link.js' },
   { name: 'styles', file: 'src/client/kernel/styles.js' },
   { name: 'portal', file: 'src/client/kernel/portal.js' },
+  // 身份融合（2026-10-12）：启动早期跑一次的一次性身份迁移（旧 Deck 身份 → 本包身份）。
+  //   放在这里的原因：它必须在任何注册（dock 槽位 / 右栏 tab）之前读改写持久化状态。
+  { name: 'identityMigration', file: 'src/client/kernel/identityMigration.js' },
   { name: 'localePanel', file: 'src/client/kernel/locale-panel.js' },
   { name: 'localeFlow', file: 'src/client/kernel/locale-flow.js' },
   { name: 'localeWord', file: 'src/client/kernel/locale-word.js' },
@@ -390,7 +464,7 @@ const SHARED_SPLICE = [
   // #629 配色核心的两个产物：宿主半走普通相对 import，客户端半要按同一份口径判断
   // 用户填的颜色能不能用、颜色有没有变，所以把这两份零依赖产物一并拼进界面闭包。
   // 它们的顶层名字由 tests/verify-generated-no-shadow.js 与既有的派生文件一起比对，
-  // 产物里不许出现 __DSW_VERSION__ 与 __DSW_REPO_URL__（拼接发生在版本注入之后）。
+  // 产物里不许出现 __DSW_IDENTITY__ / __DSW_LEGACY_IDENTITY__ / __DSW_VERSION__ / __DSW_REPO_URL__（拼接发生在注入之后）。
   { marker: '// ==== shared:labelColors (spliced by build) ====', file: 'src/shared/label-color/colors.js' },
   { marker: '// ==== shared:labelColorPrompt (spliced by build) ====', file: 'src/shared/label-color/prompt.js' },
   // #715 诚实显示：新鲜度阈值（5 分钟黄 / 30 分钟红）、合并窗口（10 秒）、降档的延迟承诺，
@@ -578,9 +652,11 @@ function wireModules(body) {
 }
 
 // ---------- 构建 client ----------
-async function buildClient({ version, repoUrl }) {
+async function buildClient({ identity, legacyIdentity, version, repoUrl }) {
   const { header, body } = extractPluginBody('src/client/index.js')
-  const bodyW = wireCtx(wireModules(injectVersion(body, version, repoUrl)))
+  // 顺序要紧：内核 / 叶子 / 共享片段是**拼进来**的，它们内部也有 __DSW_*__ 占位符
+  //（例如身份迁移模块里的旧身份）。所以先拼装、后注入 —— 反过来会漏掉被拼进来的那一批。
+  const bodyW = injectIdentity(wireCtx(wireModules(body)), identity, legacyIdentity, version, repoUrl)
   // 根产物降级声明（G1 · T5 #98）：client.js/host.js 为构建产物，人手不碰
   const devBanner = `// AUTO-GENERATED by scripts/build.mjs — DO NOT EDIT. Source: src/client/index.js + kernel/* + leaves/* (${version})\n// 产物 gitignore，一源两物；改 src/ 后运行 node scripts/build.mjs 重新生成。\n`
 
@@ -593,7 +669,7 @@ async function buildClient({ version, repoUrl }) {
   const pkgCode = `${header}
 
 window.__ModuleLoader__.load({
-  id: 'dsh-mattpocock-skills-deck',
+  id: '__DSW_IDENTITY__',
   factory: (require) => {
     var module = { exports: {} }
     var exports = module.exports
@@ -607,10 +683,11 @@ ${PKG_CLIENT_SHIMS}
 })
 `
   await gateSyntax(pkgCode, 'client-pkg')
-  gateModuleLoader(pkgCode, 'client-pkg')
+  const pkgCodeId = injectShellIdentity(pkgCode, identity)
+  gateModuleLoader(pkgCodeId, 'client-pkg')
   gateSingleDeclaration(pkgCode, 'client-pkg', ['StatusBar', 'DetailsDock', 'SettingsPage', 'RunPanel', 'IssueDetail'])
-  write('package/lib/client.js', pkgCode)
-  return { devCode, pkgCode }
+  write('package/lib/client.js', pkgCodeId)
+  return { devCode, pkgCode: pkgCodeId }
 }
 
 // ---------- 构建 host（方案 C 原样复制 · #136/#172） ----------
@@ -798,8 +875,12 @@ const devOnly = args.includes('--dev-only')
 const pkgOnly = args.includes('--pkg-only')
 const version = dswVersion()
 const repoUrl = dswRepoUrl()
-console.log(`[build] DSW_VERSION=${version} (package/package.json)`)
-console.log(`[build] DSW_REPO_URL=${repoUrl} (package/package.json repository)`)
+const identity = dswIdentity()
+const legacyIdentity = dswLegacyIdentity()
+console.log(`[build] DSW_IDENTITY=${identity} (${identitySource()})`)
+console.log(`[build] DSW_LEGACY_IDENTITY=${legacyIdentity} (迁移用，只读)`)
+console.log(`[build] DSW_VERSION=${version} (${identitySource()})`)
+console.log(`[build] DSW_REPO_URL=${repoUrl} (${identitySource()} repository)`)
 
 // A 自检（build 前）：若产物存在但无横幅，给 warn（不阻断，防旧产物）
 gateBuildArtifacts()
@@ -923,8 +1004,8 @@ try {
 }
 
 const out = {}
-if (!pkgOnly) out.clientDev = (await buildClient({ version, repoUrl })).devCode
-if (!devOnly) out.clientPkg = (await buildClient({ version, repoUrl })).pkgCode
+if (!pkgOnly) out.clientDev = (await buildClient({ identity, legacyIdentity, version, repoUrl })).devCode
+if (!devOnly) out.clientPkg = (await buildClient({ identity, legacyIdentity, version, repoUrl })).pkgCode
 if (!pkgOnly) out.hostDev = (await buildHost({ version })).devCode
 if (!devOnly) out.hostPkg = (await buildHost({ version })).pkgCode
 

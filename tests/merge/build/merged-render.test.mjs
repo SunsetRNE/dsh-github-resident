@@ -20,7 +20,7 @@ import { join } from 'node:path'
 import vm from 'node:vm'
 import { createRequire } from 'node:module'
 import { JSDOM } from 'jsdom'
-import { MERGED_PACKAGE_NAME, MERGED_VERSION } from '../../../tools/merge/merge-identity.ts'
+import { MERGED_IDENTITY, MERGED_PACKAGE_NAME, MERGED_VERSION } from '../../../tools/merge/merge-identity.ts'
 import { REPO_ROOT, check, countOccurrences, existsSync, finish, section } from './_lib.mjs'
 
 const CLIENT = join(REPO_ROOT, 'dist/client.js')
@@ -160,11 +160,11 @@ for (const r of registrations) {
   const key = (r.meta && r.meta.name) + '#' + (r.meta && (r.meta.id || r.meta.key))
   byName[key] = r.comp
 }
-const StatusBarComp = byName['conversation.input.dock#dsh-mattpocock-skills-deck']
+const StatusBarComp = byName['conversation.input.dock#' + MERGED_IDENTITY]
 const RegistryComp = byName['settings.section#github-repo-registry']
-const RightPaneComp = byName['sidebar.right.pane.tab#dsh-mattpocock-skills-deck/deck:map']
+const RightPaneComp = byName['sidebar.right.pane.tab#' + MERGED_IDENTITY + '/deck:map']
 const RunPanelComp = byName['tool.view.cordis#self']
-check('dock 功能栏组件被捕获（id = dsh-mattpocock-skills-deck）', !!StatusBarComp)
+check('dock 功能栏组件被捕获（id = 合并身份）', !!StatusBarComp)
 check('仓库登记库页组件被捕获（settings.section#github-repo-registry）', !!RegistryComp)
 check('右侧栏面板内容体被捕获（keyed 槽）', !!RightPaneComp)
 check('RunPanel 被捕获（tool.view.cordis key=self）', !!RunPanelComp)
@@ -313,7 +313,7 @@ for (const marker of ['dsws-modal', 'dsws-modalbox', 'dsws-banner', 'dsws-capsul
   check('产物含 ' + marker, has(code, marker))
 }
 check('模态座位（FormModalSeat/modalSeat）仍在状态栏渲染路径里', has(code, 'FormModalSeat') && has(code, 'modalSeat'))
-check('右栏 tab 类型 id/kind 未变（用户既有布局把手）', nativeTypes.length === 1 && nativeTypes[0].kind === 'dsh-mattpocock-skills-deck:deck-map')
+check('右栏 tab 类型 id/kind = 合并身份（老会话由身份迁移接管）', nativeTypes.length === 1 && nativeTypes[0].kind === MERGED_IDENTITY + ':deck-map')
 console.error = originalConsoleError
 check('卡片 / 表单 / 关闭状态切换不改变 Hooks 顺序', hookErrors.length === 0, hookErrors.join('\n'))
 finish()

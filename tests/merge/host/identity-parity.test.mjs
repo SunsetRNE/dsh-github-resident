@@ -18,6 +18,8 @@ import { REPO_ROOT, check, importRel, note, readJson, readText, section, skip, s
 section('1) 真源常量与根清单')
 const identity = await importRel('tools/merge/merge-identity.ts')
 const MERGED = identity.MERGED_PACKAGE_NAME
+const MERGED_IDENTITY = identity.MERGED_IDENTITY
+const LEGACY_DECK_PACKAGE_NAME = identity.LEGACY_DECK_IDENTITY
 const HOST_INJECT = identity.MERGED_HOST_INJECT
 const CLIENT_INJECT = identity.MERGED_CLIENT_INJECT
 check(typeof MERGED === 'string' && MERGED.length > 0, '真源 MERGED_PACKAGE_NAME = ' + MERGED)
@@ -52,10 +54,16 @@ const rpcNameMatch = /const MANIFEST_NAME = '([^']+)'/.exec(rpcSrc)
 check(!!rpcNameMatch && rpcNameMatch[1] === MERGED, 'rpcChannel.js 的 MANIFEST_NAME = 合并包名（实际 ' + (rpcNameMatch && rpcNameMatch[1]) + '）')
 
 const updateSrc = readText('deck/src/host/updateFromPackage.js')
-const updateMergedMatch = /export const MERGED_PACKAGE_NAME = '([^']+)'/.exec(updateSrc)
-check(!!updateMergedMatch && updateMergedMatch[1] === MERGED, 'updateFromPackage.js 的 MERGED_PACKAGE_NAME = 真源（实际 ' + (updateMergedMatch && updateMergedMatch[1]) + '）')
-const legacyMatch = /export const LEGACY_DECK_PACKAGE_NAME = '([^']+)'/.exec(updateSrc)
-check(!!legacyMatch && legacyMatch[1] === 'dsh-mattpocock-skills-deck', '旧 Deck 包名只作为漂移守卫的对照值存在')
+// 2026-10-12 身份融合：三个身份改住在共享真源 deck/src/shared/plugin-identity.js，
+// updateFromPackage.js 只 import + 转出（不再是本文件里的字面量）。这里改钉两件事：
+//   ① 它确实从共享真源取；② 共享真源的值与合并层真源逐字一致。
+const sharedIdentitySrc = readText('deck/src/shared/plugin-identity.js')
+const sharedNameMatch = /MERGED_PACKAGE_NAME = '([^']+)'/.exec(sharedIdentitySrc)
+check(!!sharedNameMatch && sharedNameMatch[1] === MERGED, '共享身份真源的 MERGED_PACKAGE_NAME = 合并层真源（实际 ' + (sharedNameMatch && sharedNameMatch[1]) + '）')
+const sharedLegacyMatch = /LEGACY_DECK_PACKAGE_NAME = '([^']+)'/.exec(sharedIdentitySrc)
+check(!!sharedLegacyMatch && sharedLegacyMatch[1] === LEGACY_DECK_PACKAGE_NAME, '共享身份真源的旧 Deck 包名 = 合并层真源（漂移守卫对照值）')
+check(/from '\.\.\/shared\/plugin-identity\.js'/.test(updateSrc), 'updateFromPackage.js 从共享真源取身份（不再自己写第二份）')
+check(!/export const MERGED_PACKAGE_NAME = '/.test(updateSrc), 'updateFromPackage.js 里不再有 MERGED_PACKAGE_NAME 字面量（单一真源）')
 
 section('4) 技能/清单发现：旧包名不得再出现在候选里')
 for (const rel of ['deck/src/host/bootstrap.js', 'deck/src/host/skillDoc.js']) {
@@ -94,7 +102,7 @@ if (!existsSync(hostOut) || !existsSync(clientOut)) {
   const loadCount = clientText.split(identity.MODULE_LOADER_MARKER).length - 1
   check(loadCount === 1, 'dist/client.js 里 ' + identity.MODULE_LOADER_MARKER + ' 恰好 1 次（实际 ' + loadCount + '）')
   check(clientText.includes("id: '" + MERGED + "'"), 'dist/client.js 模块 id = 合并包名')
-  check(clientText.includes("id: 'dsh-mattpocock-skills-deck', order: 40"), 'dist/client.js 保留 dock 槽位 id 与 order 40')
+  check(clientText.includes("id: 'dsh-github-resident-v2', order: 40") || clientText.includes('id: DSW_IDENTITY, order: 40'), 'dist/client.js 的 dock 槽位 id = 合并身份、order 40')
 }
 
 note('客户端 inject 真源：' + JSON.stringify(CLIENT_INJECT))

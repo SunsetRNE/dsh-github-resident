@@ -28,8 +28,13 @@ if (!hasUpdatePkg) {
 const identity = await importRel('tools/merge/merge-identity.ts')
 const MERGED = identity.MERGED_PACKAGE_NAME
 const updateSrc = readText('deck/src/host/updateFromPackage.js')
+// 身份融合后旧包名字面量**只许住在共享真源**一处（deck/src/shared/plugin-identity.js）；
+// updateFromPackage.js 只 import 它，所以本文件里应当 0 处。
 const legacyLitCount = (updateSrc.match(/'dsh-mattpocock-skills-deck'/g) || []).length
-check(legacyLitCount === 1, "源码里旧 Deck 包名字面量恰好 1 处（只作漂移守卫的对照值，实际 " + legacyLitCount + "）")
+check(legacyLitCount === 0, "updateFromPackage.js 里旧 Deck 包名字面量 0 处（改从共享真源取，实际 " + legacyLitCount + "）")
+const sharedIdentitySrc = readText('deck/src/shared/plugin-identity.js')
+const sharedLegacyCount = (sharedIdentitySrc.match(/'dsh-mattpocock-skills-deck'/g) || []).length
+check(sharedLegacyCount === 1, "共享身份真源里旧 Deck 包名字面量恰好 1 处（只作漂移守卫的对照值，实际 " + sharedLegacyCount + "）")
 check(updateSrc.includes('targetPackageName: MERGED_PACKAGE_NAME'), 'resolveUpdateConfig 显式传 targetPackageName（不传就落到更新包自带的旧 Deck 默认值）')
 
 if (!hasUpdatePkg) {

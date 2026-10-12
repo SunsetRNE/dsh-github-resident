@@ -32,10 +32,14 @@ test('deck 产物里出现两次 load → 抛错（重复注册）', () => {
   assert.throws(() => rewriteDeckClient(makeDeckSource({ extraLoad: true }), RESIDENT()), /出现 2 次/)
 })
 
-test('deck 模块 id 不是旧 Deck 身份 → 抛错', () => {
+test('deck 模块 id 不是合并身份 → 抛错（含仍带旧 Deck 名的情况，那是身份回退）', () => {
   assert.throws(
     () => rewriteDeckClient(makeDeckSource({ id: 'some-other-package' }), RESIDENT()),
-    /模块 id 期望 'dsh-mattpocock-skills-deck'/,
+    /模块 id 期望合并身份 'dsh-github-resident-v2'/,
+  )
+  assert.throws(
+    () => rewriteDeckClient(makeDeckSource({ id: 'dsh-mattpocock-skills-deck' }), RESIDENT()),
+    /模块 id 期望合并身份 'dsh-github-resident-v2'/,
   )
 })
 

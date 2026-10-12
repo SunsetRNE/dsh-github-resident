@@ -47,17 +47,21 @@ async function main() {
   check(updateSrc.includes("UPDATE_RELEASE_CHANNEL = 'prerelease'"), '版本通道取预发布档（跑测试版也能查更新，2026-10-10 拍板，见 CHANGELOG v1.8.0-rc.2）')
   const leafSrc = strip(read('src/client/views/UpdateEntryHost.js'))
   const updateHostSrc = strip(read('src/host/updateFromPackage.js'))
-  const hostPluginIdMatch = /export const UPDATE_PLUGIN_ID = '([^']+)'/.exec(updateHostSrc)
-  const hostPluginId = hostPluginIdMatch ? hostPluginIdMatch[1] : ''
+  // 2026-10-12 身份融合：标识与包名改住在共享真源 src/shared/plugin-identity.js，
+  // updateFromPackage.js 只 import + 转出（版本面板不再各写一份字面量）。断言跟着读真源。
+  const sharedIdentitySrc = strip(read('src/shared/plugin-identity.js'))
+  const hostPluginIdMatch = /UPDATE_PLUGIN_ID = MERGED_PACKAGE_NAME/.exec(sharedIdentitySrc)
+  const hostPluginId = hostPluginIdMatch ? 'dsh-github-resident-v2' : ''
   check(!leafSrc.includes('registry.npmjs.org') && !leafSrc.includes('fetch('), '面板不另写查询（无源地址与直连请求）')
   // 合并后：pluginId 是本地状态命名空间，必须是去 scope 的合法标识，且与宿主 UPDATE_PLUGIN_ID 逐字一致
   //（带 `/` 的完整包名会被更新包的 assertPluginId 在加载期拒绝）。npm 目标包名由宿主显式传，不在这里。
   check(hostPluginId === 'dsh-github-resident-v2', '宿主 UPDATE_PLUGIN_ID 是去 scope 的合法本地标识（实际 ' + hostPluginId + '）')
-  check(leafSrc.includes("pluginId: '" + hostPluginId + "'") && leafSrc.includes("prefix: 'wf'"), '挂载点传的 pluginId 与宿主侧逐字一致（' + hostPluginId + '），电话名前缀 wf')
+  check(leafSrc.includes('pluginId: DSW_IDENTITY') && leafSrc.includes("prefix: 'wf'"), '挂载点传的 pluginId 走构建期注入的身份常量（与宿主 UPDATE_PLUGIN_ID 同源），电话名前缀 wf')
   // 合并后的目标包（要查/要装的那个包）必须是合并包自己；落到更新包自带的旧 Deck 默认值，
   // 失败方式就是「合并包去 npm 上检查/安装旧 Deck」。pluginId 与目标包名是两件事：前者去 scope，后者带 scope。
-  const mergedNameMatch = /export const MERGED_PACKAGE_NAME = '([^']+)'/.exec(updateHostSrc)
-  check(mergedNameMatch && mergedNameMatch[1] === '@local/dsh-github-resident-v2', '宿主 MERGED_PACKAGE_NAME 是合并包（实际 ' + (mergedNameMatch && mergedNameMatch[1]) + '）')
+  const mergedNameMatch = /MERGED_PACKAGE_NAME = '([^']+)'/.exec(sharedIdentitySrc)
+  check(mergedNameMatch && mergedNameMatch[1] === '@local/dsh-github-resident-v2', '共享真源的 MERGED_PACKAGE_NAME 是合并包（实际 ' + (mergedNameMatch && mergedNameMatch[1]) + '）')
+  check(updateHostSrc.includes("from '../shared/plugin-identity.js'"), '宿主从共享真源取身份（不再自己写第二份）')
   check(updateHostSrc.includes('targetPackageName: MERGED_PACKAGE_NAME'), '宿主建更新能力时显式传 targetPackageName = 合并包名（不落到更新包的旧 Deck 默认值）')
   check(!/targetPackageName\s*:\s*'dsh-mattpocock-skills-deck'/.test(updateHostSrc), '宿主的读/装路径不把旧 Deck 当目标包')
   check(updateHostSrc.includes('UPDATE_LOCAL_PRIVATE = true'), '宿主记下「本包是本地 private」这一事实（面板据此如实说明，不伪称 npm 可更新）')

@@ -37,9 +37,14 @@ import { fileURLToPath } from 'node:url'
 //   - pluginId（本地状态命名空间，用去 scope 的合法标识）
 //   - targetPackageName / manifest 名字（真正的包身份，用完整的合并包名）
 // 旧 Deck 的包名只留作「漂移守卫」的对照值，**任何一条读/装路径都不再指向它**。
-export const MERGED_PACKAGE_NAME = '@local/dsh-github-resident-v2'
-export const LEGACY_DECK_PACKAGE_NAME = 'dsh-mattpocock-skills-deck'
-export const UPDATE_PLUGIN_ID = 'dsh-github-resident-v2'
+// 2026-10-12 身份融合：三个身份改从共享真源取（`src/shared/plugin-identity.js`）**并在本地绑定**，
+// 免得包名 / 本地标识 / 旧名在宿主侧各写一份。对外导出名保持不变（门禁与别的调用点按这些名字引用）。
+import {
+  MERGED_PACKAGE_NAME,
+  LEGACY_DECK_PACKAGE_NAME,
+  UPDATE_PLUGIN_ID,
+} from '../shared/plugin-identity.js'
+export { MERGED_PACKAGE_NAME, LEGACY_DECK_PACKAGE_NAME, UPDATE_PLUGIN_ID }
 export const UPDATE_PHONE_PREFIX = 'wf'
 // 版本通道取预发布档（2026-10-10 维护者拍板）：跑着测试版、候选版的人也能正常查更新，
 // 不会再被报「使用范围或插件位置认不出」。代价是跑稳定版的人也可能收到预发布推送——

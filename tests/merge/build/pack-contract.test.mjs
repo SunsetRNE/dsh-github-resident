@@ -196,7 +196,8 @@ check('全文只有一个模块装载点', countOccurrences(clientText, MODULE_L
   check('load({id}) = 合并身份', id === MERGED_PACKAGE_NAME, String(id))
 }
 check('inject 并集字面量逐项含 MERGED_CLIENT_INJECT', MERGED_CLIENT_INJECT.every((s) => clientText.includes(`'${s}'`)))
-check('dock 注册把手（id/order 40）仍在', clientText.includes("id: 'dsh-mattpocock-skills-deck', order: 40"))
+// 槽位 id 由运行时身份常量派生（构建期注入），所以只钉 order 与派生的那一写法。
+check('dock 注册把手（id=身份常量 / order 40）仍在', clientText.includes('id: DSW_IDENTITY, order: 40') || clientText.includes("id: 'dsh-github-resident-v2', order: 40"))
 check('旧 Deck 模块 id 没有残留', !clientText.includes(`${MODULE_LOADER_MARKER}{\n  id: 'dsh-mattpocock-skills-deck',`))
 for (const marker of [
   'github-repo-registry',

@@ -24,7 +24,7 @@
 import type { RewriteResult } from './merge-identity.ts'
 import { composeMergedClient, type ComposedClient } from './client-factory.ts'
 
-export { DECK_INJECT_ANCHOR, DOCK_SLOT_ANCHOR, DECK_MODULE_ID } from './client-factory.ts'
+export { DECK_INJECT_ANCHOR, DOCK_SLOT_ANCHOR, DOCK_SLOT_ANCHOR_ALTS, DECK_MODULE_ID } from './client-factory.ts'
 
 /**
  * 合并产物与既有 `RewriteResult` 的兼容视图：

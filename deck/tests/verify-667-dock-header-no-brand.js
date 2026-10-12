@@ -1,4 +1,8 @@
 #!/usr/bin/env node
+// 2026-10-12 身份融合（维护者拍板）：面板名从「MattSkills」改为「GitHub 常驻」——
+//   本文件里凡是钉品牌字样的断言，按这个名字取；头部那一行「不许有品牌」的判据不变
+//   （头部仍然只有仓库芯片与图标，面板名只出现在状态胶囊栏与 DSH 右栏标签上）。
+const PANEL_TITLE = 'GitHub 常驻'
 /**
  * verify-667-dock-header-no-brand.js — 面板头部不再有品牌图标与文字（#667 门禁）
  *
@@ -645,7 +649,7 @@ try {
       check(m.firstIsChip, 'B1 头部这一行的第一个元素就是仓库芯片（实测第一个：<' + m.firstTag + '> ' + JSON.stringify(m.firstText.slice(0, 40)) + '）')
       check(m.chipLeftGap !== null && Math.abs(m.chipLeftGap) <= 1.5,
         'B2 仓库芯片自己贴着左内边距：它左边什么都没有、也没有留下空位（实测芯片左偏 ' + m.chipLeftGap + ' 像素，这一行的内边距 ' + m.paddingLeft + '）')
-      check(m.rowText.indexOf('MattSkills') < 0, 'B3 整行看不到品牌字样（实测这一行的字：' + JSON.stringify(m.rowText.slice(0, 80)) + '）')
+      check(m.rowText.indexOf(PANEL_TITLE) < 0 && m.rowText.indexOf('MattSkills') < 0, 'B3 整行看不到品牌字样（实测这一行的字：' + JSON.stringify(m.rowText.slice(0, 80)) + '）')
       check(!m.hasCompass, 'B4 整行没有罗盘那几笔图形（' + JSON.stringify(m.hasCompass) + '）')
       check(m.rowOverflow <= 1, 'B5 一行不溢出（scrollWidth-clientWidth = ' + m.rowOverflow + '）')
       check(m.chipIdx === 0, 'B6 仓库芯片是第 0 个孩子（实测下标 ' + m.chipIdx + '）')
@@ -681,7 +685,7 @@ try {
       check(n.rowWidth <= 361, 'Bn0 面板确实变窄了（实测宽 ' + n.rowWidth + '）')
       check(n.firstIsChip, 'Bn1 窄面板下第一个元素仍是仓库芯片（实测 ' + JSON.stringify(n.firstText.slice(0, 40)) + '）')
       check(n.chipLeftGap !== null && Math.abs(n.chipLeftGap) <= 1.5, 'Bn2 窄面板下仓库芯片仍贴着左内边距、左边没有空位（实测芯片左偏 ' + n.chipLeftGap + ' 像素）')
-      check(n.rowText.indexOf('MattSkills') < 0 && !n.hasCompass, 'Bn3 窄面板下没有品牌字样也没有罗盘图形')
+      check(n.rowText.indexOf(PANEL_TITLE) < 0 && n.rowText.indexOf('MattSkills') < 0 && !n.hasCompass, 'Bn3 窄面板下没有品牌字样也没有罗盘图形')
       check(n.rowOverflow <= 1, 'Bn4 窄面板下一行不溢出（scrollWidth-clientWidth = ' + n.rowOverflow + '）—— 去掉那一段没有把这一行撑破')
       check(n.switchIdx > 0 && n.paletteIdx > 0 && n.refreshIdx > 0 && n.updatedIdx > n.refreshIdx,
         'Bn5 窄面板下这几件都还在：切换后端 / 标签配色 / 刷新按钮 / 时间标签（实测下标 ' + JSON.stringify([n.switchIdx, n.paletteIdx, n.refreshIdx, n.updatedIdx]) + '）')
@@ -690,8 +694,8 @@ try {
     console.log('')
     console.log('C) 反向：这次不许碰的两处照旧')
     const t = await page.evaluate(() => window.__TAB_TITLE__())
-    check(t.text === 'MattSkills', 'C1 DSH 右栏那格标签标题画的仍是「MattSkills」（实测 ' + JSON.stringify(t.text) + '）')
-    check(t.typeTitle === 'MattSkills', 'C2 注册标签类型时给的名字仍是「MattSkills」（实测 ' + JSON.stringify(t.typeTitle) + '，kind ' + JSON.stringify(t.kind) + '）')
+    check(t.text === PANEL_TITLE, 'C1 DSH 右栏那格标签标题画的是面板名「' + PANEL_TITLE + '」（实测 ' + JSON.stringify(t.text) + '）')
+    check(t.typeTitle === PANEL_TITLE, 'C2 注册标签类型时给的名字是面板名「' + PANEL_TITLE + '」（实测 ' + JSON.stringify(t.typeTitle) + '，kind ' + JSON.stringify(t.kind) + '）')
     const cap = await page.evaluate(() => window.__CAPSULE__())
     if (!cap.ok) {
       bad('C3 状态胶囊栏没挂起来：' + JSON.stringify(cap))
@@ -710,12 +714,12 @@ try {
       check(!!cap.foldRect && cap.foldRect.w > 0 && cap.foldRect.h > 0 && String(cap.foldText).trim() !== '',
         'C5 宽面板下品牌那串字可见：矩形非零且文本非空（getBoundingClientRect 实测 ' + JSON.stringify(cap.foldRect) + '、字 ' + JSON.stringify(cap.foldText) + '）')
       const wide = await page.evaluate(() => window.__CAPSULE_WIDTH__(1600))
-      check(!!wide && String(wide.foldText).trim() === 'MattSkills' && wide.foldRect && wide.foldRect.w > 0,
+      check(!!wide && String(wide.foldText).trim() === PANEL_TITLE && wide.foldRect && wide.foldRect.w > 0,
         'C6 宽到 1600 像素时品牌那串字整串都在（有位置就显示：不再有任何宽度都收着不放的规矩；实测 ' + JSON.stringify(wide) + '）')
       // C7：从宽一路收窄，找到第一个「品牌已经让位、而下一段（优先级 2）还没动」的宽度 ——
       //   这就是「它第一个让位」的可执行版。找不到那种宽度也判红：说明它不是第一个让位的。
       //   扫描实况只打印「品牌那一段变过的地方」那几档（每一档都打印会把报告冲成一片宽度数字）。
-      const fullBrand = 'MattSkills'
+      const fullBrand = PANEL_TITLE
       let firstGive = null
       const sweep = []
       let lastBrand = null

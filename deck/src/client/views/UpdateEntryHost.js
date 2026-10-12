@@ -38,7 +38,7 @@ const UpdateEntryHost = (props) => {
       // `targetPackageName` 传下去。两者不能混用：带 `/` 的值会被更新包的 assertPluginId 在加载期拒绝。
       // 写回旧 Deck 包名会被宿主判为不匹配，更糟的是可能把用户装回旧 Deck —— 合并后明令禁止。
       entry = bundle.mountUpdateEntry(el, {
-        pluginId: 'dsh-github-resident-v2',
+        pluginId: DSW_IDENTITY, // 2026-10-12 身份融合：与宿主 UPDATE_PLUGIN_ID 同源，不再各写一份字面量
         prefix: 'wf',
         call: callThrough,
         theme: 'archive',

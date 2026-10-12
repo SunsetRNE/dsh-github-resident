@@ -26,7 +26,9 @@ test('panelAssembly：撤除 Deck 左栏入口，保留功能栏、右栏、插�
   const src = readRepoFile(PANEL_ASSEMBLY)
   assert.equal(count(src, "id: 'dsws-settings-section'"), 0, 'Deck 旧 settings.section 注册必须撤除')
   assert.equal(count(src, "__injectOnce('settings.section'"), 0, 'Deck 半边不再注入 settings.section')
-  assert.equal(count(src, "id: 'dsh-mattpocock-skills-deck', order: 40"), 1, 'dock 注册必须恰好一条')
+  // 身份融合后槽位 id 是运行时身份常量派生（DSW_IDENTITY，构建期注入），order 40 不变。
+  assert.equal(count(src, 'id: DSW_IDENTITY, order: 40'), 1, 'dock 注册必须恰好一条（身份常量 + order 40）')
+  assert.equal(count(src, "id: 'dsh-mattpocock-skills-deck', order: 40"), 0, '不再用旧 Deck 身份注册槽位')
   assert.ok(src.includes("'conversation.input.dock'"))
   assert.ok(src.includes("'sidebar.right.pane.tab'"))
   assert.ok(src.includes("'sidebar.right.pane.tab.title'"))
@@ -75,13 +77,19 @@ test('唯一更新入口用去 scope 的本地 pluginId，且与 Host UPDATE_PLU
   // 两边靠 UPDATE_PLUGIN_ID 对齐 —— 这里读 Host 源核对，不是各写一份。
   const localId = MERGED_PACKAGE_NAME.replace(/^@[^/]+\//, '')
   assert.notEqual(localId, MERGED_PACKAGE_NAME, '合并包名必须带 scope，否则这条断言失去意义')
+  // 2026-10-12 身份融合：两边都不再各写一份字面量 —— 客户端用构建期注入的 DSW_IDENTITY，
+  // 宿主用共享真源 deck/src/shared/plugin-identity.js 的 UPDATE_PLUGIN_ID。这里钉三件事：
+  //   ① 共享真源的值 = 去 scope 的合并包名；② 客户端传的是那个常量而不是字面量；
+  //   ③ 两边都不回旧 Deck 包名、也不把含 scope 的包名当 pluginId。
+  const sharedSrc = readRepoFile('deck/src/shared/plugin-identity.js')
+  const sharedMatch = /UPDATE_PLUGIN_ID = MERGED_PACKAGE_NAME\.replace\(\/\^@\[\^\/\]\+\\\/\/, ''\)/.exec(sharedSrc)
+  assert.ok(sharedMatch, '共享真源必须由 MERGED_PACKAGE_NAME 派生 UPDATE_PLUGIN_ID')
   const hostSrc = readRepoFile('deck/src/host/updateFromPackage.js')
-  const hostMatch = /export const UPDATE_PLUGIN_ID = '([^']+)'/.exec(hostSrc)
-  assert.ok(hostMatch, 'Host 必须导出 UPDATE_PLUGIN_ID')
-  assert.equal(hostMatch[1], localId, 'Host UPDATE_PLUGIN_ID 必须等于去 scope 的合并包名')
-  assert.ok(src.includes(`pluginId: '${localId}'`), `pluginId 必须等于 ${localId}`)
+  assert.ok(/export \{ MERGED_PACKAGE_NAME, LEGACY_DECK_PACKAGE_NAME, UPDATE_PLUGIN_ID \}/.test(hostSrc), 'Host 仍导出 UPDATE_PLUGIN_ID（改从共享真源取）')
+  assert.ok(src.includes('pluginId: DSW_IDENTITY'), '客户端 pluginId 用构建期注入的身份常量')
   assert.equal(count(src, `pluginId: '${MERGED_PACKAGE_NAME}'`), 0, '不把含 scope 的包名当 pluginId')
   assert.equal(count(src, "pluginId: 'dsh-mattpocock-skills-deck'"), 0, '不回旧 Deck 包名')
+  assert.equal(localId, 'dsh-github-resident-v2', '去 scope 的本地标识形状不变')
 })
 
 test('locale：新键中英各一份，工作区刷新按钮改名为「刷新工作区总览」', () => {

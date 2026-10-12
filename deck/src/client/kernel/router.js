@@ -27,8 +27,8 @@
     // 面板只有一条路（2026-09-21 定）：本插件自己在 DSH 原生右侧边栏的类型登记表里注册一个类型，右栏里那一格由我们渲染。
     //   拿不到原生控制器就不算打开 —— 记一行日志并给用户一句可见提示，不再悄悄退回别的形态（页内浮窗已退役）。
     //   这里两个标识必须成对：kind 是打开请求上带的类型名，id 是类型在登记表里的身份，右栏按 id 找内容体与标题。
-    export const DECK_NATIVE_TAB_KIND = 'dsh-mattpocock-skills-deck:deck-map'
-    export const DECK_NATIVE_TYPE_ID = 'dsh-mattpocock-skills-deck/deck:map'
+    export const DECK_NATIVE_TAB_KIND = DSW_IDENTITY + ':deck-map'
+    export const DECK_NATIVE_TYPE_ID = DSW_IDENTITY + '/deck:map'
     // 右侧边栏里那张标签的内容体（面板本体）。
     //   先出空壳、下一帧再挂内容（#603）：打开是在点击处理器里同步跑完的，一次把整棵树建完会让浏览器
     //   在处理器返回前画不出第一帧 —— 用户看到的就是「点了半天面板不出来」。实测首挂 5.6 秒 → 0.19 秒。
