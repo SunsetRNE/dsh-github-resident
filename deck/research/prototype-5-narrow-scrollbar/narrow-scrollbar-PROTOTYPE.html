@@ -200,6 +200,16 @@ code{background:#151922;padding:1px 4px;border-radius:4px;font-size:11px}
   <p class="lede">要回答的一件事：<b>393px 竖屏上，这条横条怎么滚、钉不钉左边、点开一个菜单算不算点得中，同时仍要推进「顺手」。</b>
   「顺手」在这里只能靠摸：左边手机框里那一条是<b>按一套状态模型真跑</b>的，右边面板每次操作都把全部相关状态摊开（改过的格子会亮一下）。</p>
 
+  <div class="card" id="decision-card">
+    <h2>已拍板（维护者 2026-10-12）</h2>
+    <table class="state">
+      <tr><th>① 钉住区</th><td><b>不钉住</b> —— 左端品牌段跟别段一起滚（页内形状开关默认已切到这一档）</td></tr>
+      <tr><th>② 滑到头提示</th><td><b>小箭头</b> —— 到哪头就显哪头那颗箭头，能点着往回走（默认已切到「边缘箭头」）</td></tr>
+      <tr><th>③ 点开规则</th><td><b>再点一下收起 + 点空白收起；点开那一下只收菜单、不顺手开右栏</b></td></tr>
+      <tr><th>仍待定</th><td>可点面积要不要提到 44px；窄屏这一条要不要从 22px 放到 26px</td></tr>
+    </table>
+  </div>
+
   <div class="card">
     <h2>① 摆件：393px 竖屏里那条横条</h2>
     <div class="cols">
@@ -362,8 +372,8 @@ function initialState() {
   return {
     viewW: 393,
     pointer: 'coarse',        // 'coarse' 触屏 | 'fine' 鼠标
-    pinMode: 'pin',
-    afford: 'fade',
+    pinMode: 'off',        // 拍板①：不钉住（左端品牌段跟别段一起滚）
+    afford: 'arrows',      // 拍板②：滑到头给小箭头
     density: 'current',
     hitTest: true,
     scroller: { scrollLeft: 0, clientW: 361, scrollW: 361 },
@@ -454,7 +464,10 @@ if (typeof window !== 'undefined') window.CAPMODEL = APP
       else if (k.slice(0, 2) === 'on') el.addEventListener(k.slice(2), v)
       else el.setAttribute(k, v === true ? '' : v)
     }
-    ;(kids || []).forEach(function (c) { if (c) el.appendChild(c) })
+    ;(kids || []).forEach(function (c) {
+      if (c === null || c === undefined || c === false) return
+      el.appendChild((c instanceof Node) ? c : document.createTextNode(String(c)))
+    })
     return el
   }
   const ICONS = {
@@ -585,8 +598,8 @@ if (typeof window !== 'undefined') window.CAPMODEL = APP
     }
     if (st.afford === 'scrollbar') lane.appendChild(h('div', { class: 'scrollbar', 'data-sb': '1' }, [h('div', { class: 'thumb', 'data-sbthumb': '1' })]))
     if (st.afford === 'arrows') {
-      lane.appendChild(h('button', { class: 'edge-arrow left', 'data-arrow': 'left', onclick: function (e) { e.stopPropagation(); dispatch({ type: 'scrollBy', dx: -120 }) } }, ['‹']))
-      lane.appendChild(h('button', { class: 'edge-arrow right', 'data-arrow': 'right', onclick: function (e) { e.stopPropagation(); dispatch({ type: 'scrollBy', dx: 120 }) } }, ['›']))
+      lane.appendChild(h('button', { class: 'edge-arrow left', 'data-arrow': 'left', title: '往回滚', onclick: function (e) { e.stopPropagation(); dispatch({ type: 'scrollBy', dx: -120 }) } }, ['‹']))
+      lane.appendChild(h('button', { class: 'edge-arrow right', 'data-arrow': 'right', title: '继续滚', onclick: function (e) { e.stopPropagation(); dispatch({ type: 'scrollBy', dx: 120 }) } }, ['›']))
     }
     // 胶囊那一层：点开右栏与吸附
     lane.addEventListener('click', function (e) {
@@ -603,24 +616,24 @@ if (typeof window !== 'undefined') window.CAPMODEL = APP
     const spec = M.CAP_ITEMS.filter(function (x) { return x.p === p })[0]
     if (!spec) return
     const folded = (words[p] === '' || words[p] === undefined)
-    const hidden = function (n) { return h('span', { class: 'dsws-folded' }, [n]) }   // 收起来的段：整块 display:none，但位置留着
+    const labelSpan = function (txt) { return h('span', { class: folded ? 'dsws-folded' : null, text: txt }) }   // 收起来的段：整块 display:none，载荷（图标/数字）留着
     const anchorOf = function (id, node) { return (st.pinMode === 'off' && id === 'brand') ? segAnchor(id, node) : segAnchor(id, node) }
-    if (p === 2) return host.appendChild(segAnchor('refresh', h('button', { class: 'dsws-timebtn', title: TIP.refresh }, [svg('refresh', 11), folded ? hidden(null) : h('span', { text: '更新' })])))
+    if (p === 2) return host.appendChild(segAnchor('refresh', h('button', { class: 'dsws-timebtn', title: TIP.refresh }, [svg('refresh', 11), labelSpan('更新')])))
     if (p === 3) return host.appendChild(h('span', { class: 'dsws-timebtn', title: TIP.refresh, text: words[3] || '' }))
-    if (p === 4) return host.appendChild(segAnchor('env', h('span', { class: 'dsws-seg', style: 'color:var(--ok)' }, [svg('check', 14), folded ? hidden(null) : h('span', { text: '环境' })])))
+    if (p === 4) return host.appendChild(segAnchor('env', h('span', { class: 'dsws-seg', style: 'color:var(--ok)' }, [svg('check', 14), labelSpan('环境')])))
     if (p === 5) return host.appendChild(h('span', { class: 'dsws-num', text: '5/9' }))
     if (p === 6) return host.appendChild(h('span', { class: 'dsws-timebtn', text: words[6] || '' }))
     if (p === 12) return host.appendChild(segAnchor('serial', h('span', { class: 'dsws-seg', style: 'color:#c084fc', title: TIP.fixate }, [svg('note', 12), h('span', { text: '沉淀' })])))
     // 9 可接 / 10 故障：悬停开菜单（鼠标），触屏下由「点开」开（segNode 里那颗按钮本身没有点击动作时也开）
     if (p === 9) {
-      const n = h('span', { class: 'dsws-seg', style: 'color:#4ade80;display:inline-flex;align-items:center;gap:4px' }, [svg('target', 12, '#4ade80'), folded ? hidden(null) : h('span', { text: '可接' }), h('span', { class: 'dsws-num', text: '2' })])
+      const n = h('span', { class: 'dsws-seg', style: 'color:#4ade80;display:inline-flex;align-items:center;gap:4px' }, [svg('target', 12, '#4ade80'), labelSpan('可接'), h('span', { class: 'dsws-num', text: '2' })])
       n.addEventListener('click', function (e) { e.stopPropagation(); dispatch({ type: 'openMenu', menu: 'takeable' }) })
       n.addEventListener('mouseenter', function () { openOnHover('takeable') })
       n.addEventListener('mouseleave', scheduleClose)
       return host.appendChild(segAnchor('takeable', n))
     }
     if (p === 10) {
-      const n = h('span', { class: 'dsws-seg', style: 'color:#f87171;display:inline-flex;align-items:center;gap:4px' }, [svg('bug', 12, '#f87171'), folded ? hidden(null) : h('span', { text: '故障' }), h('span', { class: 'dsws-num', text: '2' })])
+      const n = h('span', { class: 'dsws-seg', style: 'color:#f87171;display:inline-flex;align-items:center;gap:4px' }, [svg('bug', 12, '#f87171'), labelSpan('故障'), h('span', { class: 'dsws-num', text: '2' })])
       n.addEventListener('click', function (e) { e.stopPropagation(); dispatch({ type: 'openMenu', menu: 'bug' }) })
       n.addEventListener('mouseenter', function () { openOnHover('bug') })
       n.addEventListener('mouseleave', scheduleClose)
@@ -629,7 +642,7 @@ if (typeof window !== 'undefined') window.CAPMODEL = APP
     if (p === 11) return host.appendChild(segNode(M.CAP_ITEMS.filter(function (x) { return x.p === 11 })[0], st, words[11]))
     if (p === 7) return host.appendChild(segNode(M.CAP_ITEMS.filter(function (x) { return x.p === 7 })[0], st, words[7]))
     if (p === 8) return host.appendChild(h('span', { class: 'dsws-split', 'data-seg': 'handoff', title: TIP.handoff }, [
-      h('button', { class: 'dsws-split-part', style: 'color:#58a6ff' }, [svg('handoff', 12), folded ? hidden(null) : h('span', { text: '交接' })]),
+      h('button', { class: 'dsws-split-part', style: 'color:#58a6ff' }, [svg('handoff', 12), labelSpan('交接')]),
       h('span', { class: 'dsws-split-div' }),
       h('button', { class: 'dsws-split-part', style: 'color:#8b8b95;opacity:.55' }, [svg('handoff', 12)]),
     ]))
@@ -884,7 +897,7 @@ if (typeof window !== 'undefined') window.CAPMODEL = APP
         { say: '分隔线换成渐隐（钉住区与滚动区之间那道「软边」）。', act: { type: 'setPin', value: 'pin-line' } },
         { say: '干脆什么都不加：只靠位置与底色区分。', act: { type: 'setPin', value: 'pin-fade' } },
         { say: '把这档推到宽视口：品牌整串字应该看得见（第 0 档）。', act: { type: 'setView', viewW: 600 } },
-        { ask: '钉住区：钉 / 不钉？分隔线、阴影、渐隐三者选哪个？', verdicts: ['钉住 + 分隔线', '钉住 + 渐隐', '钉住，什么都不加', '不钉（左端一起滚）'] },
+        { ask: '钉住区：钉 / 不钉？分隔线、阴影、渐隐三者选哪个？', verdicts: ['不钉（左端一起滚）✓ 已定', '钉住 + 分隔线', '钉住 + 渐隐', '钉住，什么都不加'] },
       ],
     },
     {
@@ -894,7 +907,7 @@ if (typeof window !== 'undefined') window.CAPMODEL = APP
         { say: '换成细滚动条：能看出「还剩多少没滚」，但只有 3px 高，触屏摸不到。', act: { type: 'setAfford', value: 'scrollbar' } },
         { say: '换成边缘箭头：给一个能点的目标（26px，仍然不到 44px —— 这是要维护者拍的一条）。', act: { type: 'setAfford', value: 'arrows' } },
         { say: '回左端看另一头。', act: { type: 'scrollTo', where: 'left' } },
-        { ask: '两端提示选哪种？点按下限要不要按 44px 走？', verdicts: ['两端渐隐', '细滚动条', '边缘箭头', '不给提示', '按 44px 提命中区（视觉不变）', '接受现状（目标更小）'] },
+        { ask: '两端提示选哪种？点按下限要不要按 44px 走？', verdicts: ['边缘箭头✓ 已定', '两端渐隐', '细滚动条', '不给提示', '按 44px 提命中区（视觉不变，待定）', '接受现状（目标更小，待定）'] },
       ],
     },
     {
@@ -906,7 +919,7 @@ if (typeof window !== 'undefined') window.CAPMODEL = APP
         { say: '激活胶囊那一下：第 1 下只是「武装」，第 2 下才开右栏。', act: { type: 'tapCapsule' } },
         { say: '再点一下，右栏才开。', act: { type: 'tapCapsule' } },
         { say: '行高放松一档，看菜单行是否够点。', act: { type: 'setDensity', value: 'roomy' }, then: { type: 'openMenu', menu: 'bug', force: true } },
-        { ask: '点开的规则（再点收起 / 点外收起 / 只收菜单不冒泡）与弹层定位？', verdicts: ['点开再点收起', '点外任意处收起', '第一下只收菜单（不冒泡）', '夹取定位（不越界）', '菜单行按 40px 高'] },
+        { ask: '点开的规则（再点收起 / 点外收起 / 只收菜单不冒泡）与弹层定位？', verdicts: ['点开再点收起 + 点外收起 + 第一下只收菜单 ✓ 已定', '夹取定位（不越界）✓ 已定', '菜单行按 40px 高（待定）'] },
       ],
     },
     {
@@ -917,7 +930,7 @@ if (typeof window !== 'undefined') window.CAPMODEL = APP
         { say: '点黄条上那个叉：一键收起整个功能区（黄条与横条一起没了，只剩一句 10px 灰字）。', act: { type: 'foldDeck' } },
         { say: '再展开回来。', act: { type: 'expandDeck' } },
         { say: '收到 320px：黄条折行、横条收到最后一档。', act: { type: 'setView', viewW: 320 }, then: { type: 'scrollTo', where: 'mid' } },
-        { ask: '窄屏下高度/字号/间距、以及黄条+收起态的排法？', verdicts: ['单行不变（12px / 22px）', '放松一档（26px）', '黄条与横条间隔 6px', '收起态保持一句 10px 灰字'] },
+        { ask: '窄屏下高度/字号/间距、以及黄条+收起态的排法？', verdicts: ['单行不变（12px / 22px，待定）', '放松一档（26px，待定）', '黄条与横条间隔 6px', '收起态保持一句 10px 灰字'] },
       ],
     },
   ]
