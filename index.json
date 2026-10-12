@@ -2,18 +2,39 @@
   "schema": "dsh-github-resident/artifact-index",
   "schemaVersion": 1,
   "package": "@sunsetrne/dsh-github-resident-v2",
-  "version": "1.7.2",
-  "publishedAt": "2026-10-12T19:54:33Z",
-  "sourceRef": "ea64262 + 改名/版本(1.7.2) + merge 版本守卫修复(工作区未提交)",
-  "tarball": "sunsetrne-dsh-github-resident-v2-1.7.2.tgz",
-  "url": "https://sunsetrne.github.io/dsh-github-resident/sunsetrne-dsh-github-resident-v2-1.7.2.tgz",
-  "sha256": "8c523f67a984f4dec5e9c05aad8d2122914860b2d00de143fa9f9b5748318dd6",
-  "bytes": 2797396,
-  "install": "npm i https://sunsetrne.github.io/dsh-github-resident/sunsetrne-dsh-github-resident-v2-1.7.2.tgz",
+  "version": "1.7.3",
+  "publishedAt": "2026-10-12T20:27:18Z",
+  "sourceRef": "ea64262 + 身份源统一(@sunsetrne·六处) + 更新修复(profile探测/main) + merge 版本守卫修复",
+  "tarball": "sunsetrne-dsh-github-resident-v2-1.7.3.tgz",
+  "url": "https://sunsetrne.github.io/dsh-github-resident/sunsetrne-dsh-github-resident-v2-1.7.3.tgz",
+  "sha256": "61e7d4b3a3c3fad289bc46531827bbd9966b0e890402d3a1f9cca283950c4384",
+  "bytes": 2797427,
+  "install": "npm i https://sunsetrne.github.io/dsh-github-resident/sunsetrne-dsh-github-resident-v2-1.7.3.tgz",
   "previous": [
     {
+      "version": "1.7.2",
+      "tarball": "sunsetrne-dsh-github-resident-v2-1.7.2.tgz",
+      "deprecated": true
+    },
+    {
       "version": "1.7.0",
-      "tarball": "local-dsh-github-resident-v2-1.7.0.tgz"
+      "tarball": "local-dsh-github-resident-v2-1.7.0.tgz",
+      "deprecated": true
+    }
+  ],
+  "verify": "解包后 node --input-type=module -e \"import('./dist/host.js').then(()=>console.log('LOADED-OK'))\" 必须打印 LOADED-OK",
+  "deprecated": [
+    {
+      "version": "1.7.2",
+      "tarball": "sunsetrne-dsh-github-resident-v2-1.7.2.tgz",
+      "sha256": "8c523f67a984f4dec5e9c05aad8d2122914860b2d00de143fa9f9b5748318dd6",
+      "reason": "宿主入口桩期望旧包名 @local/…，装上去插件不加载（工具栏/右侧边栏消失、回环 31790 不监听）——勿装"
+    },
+    {
+      "version": "1.7.0",
+      "tarball": "local-dsh-github-resident-v2-1.7.0.tgz",
+      "sha256": "8a54ead3a214f78bef18722f3029d7ff0cb828a63f58d54039496cac55cf350d",
+      "reason": "包名仍是旧名 @local/…，仅作通道自检样本，勿作更新源"
     }
   ]
 }

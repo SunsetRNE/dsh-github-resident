@@ -1,13 +1,17 @@
 <!doctype html><meta charset="utf-8"><title>dsh-github-resident · 分发包</title>
-<body style="font:14px/1.7 system-ui;max-width:640px;margin:40px auto;padding:0 16px">
+<body style="font:14px/1.7 system-ui;max-width:680px;margin:40px auto;padding:0 16px">
 <h1>dsh-github-resident · 分发包</h1>
-<p>这里是插件的自托管分发点（GitHub Pages）。机器读 <a href="index.json">index.json</a>，人点下面这个：</p>
-<ul id="l"></ul>
+<p>机器读 <a href="index.json">index.json</a>；人看下面这张表。</p>
+<div id="cur"></div><div id="dep"></div>
 <script>
 fetch('index.json').then(r=>r.json()).then(j=>{
-  document.getElementById('l').innerHTML =
-    '<li><a href="'+j.tarball+'">'+j.tarball+'</a> — '+j.bytes+' 字节 · v'+j.version+' · sha256 '+j.sha256.slice(0,16)+'…</li>'
-    + '<li>安装：<code>'+j.install+'</code></li>';
+  document.getElementById('cur').innerHTML =
+    '<h2>当前 v'+j.version+'</h2><ul>'
+    + '<li><a href="'+j.tarball+'">'+j.tarball+'</a> — '+j.bytes+' 字节 · sha256 '+j.sha256.slice(0,16)+'…</li>'
+    + '<li>安装：<code>'+j.install+'</code></li>'
+    + '<li>装载自检：'+j.verify+'</li></ul>';
+  document.getElementById('dep').innerHTML = '<h2>已废弃（勿装）</h2><ul>'
+    + (j.deprecated||[]).map(d=>'<li><b>v'+d.version+'</b> — '+d.reason+'<br><code>'+d.tarball+'</code></li>').join('')
+    + '</ul>';
 }).catch(()=>{});
-</script>
-</body>
+</script></body>
