@@ -25,6 +25,12 @@
 - 任何 `gh_*` 工具调用都会经 `resolveGh()`：三层都没有就当场落地一份，调用不被打断。
 - 插件**加载期**也会预置：只先探本地（毫秒级、不出网），确认缺 gh 才在后台落地，不阻塞加载。
 - 落地的是用户级副本，**不进系统包库**；系统层 gh 永远不被修改。
+- **宿主后装的 gh 会被自动接管**：想装系统级就把官方源加上 `apt-get install gh`（[cli.github.com](https://cli.github.com/)），
+  插件下一轮读路径（≤`DSH_GH_SYS_LAYER_TTL_MS`）就改判 `system`，无需重载插件；
+  同 ctx 的 Deck 半边经 `ghResolver` 服务拿到的是**同一个结论**，不会出现「Resident 说装了、Deck 说没装」。
+  卸掉系统 gh 也会同样自动退回自带层。
+- 落地是**内部实现细节**，不写进 `PATH`：只跑 `gh_*` / `deck_*` 工具时它够用，
+  但你若要在终端里直接敲 `gh`、或让别的插件/脚本用它，就得装系统层那份（见上一条）。
 - 下载优先 `curl`，宿主没有 `curl` 就用 Node 内建 `fetch`（`attempts[].method` 写明走的哪条）。
 
 ### 2. 凭据：只回掩码，可一键拆干净
@@ -217,6 +223,7 @@ node verify-real-artifact.mjs  # 拿官方 release 真包验抽取器（断网�
 | `DSH_GH_VERSION_PROBE_TTL_MS` | 版本探测缓存窗口 | `1800000`（30min） |
 | `DSH_GH_SNAPSHOT_TTL_MS` | 账号快照有效期 | `90000` |
 | `DSH_GH_SNAPSHOT_RETRY_MS` | 快照重建失败后的重试间隔 | `20000` |
+| `DSH_GH_SYS_LAYER_TTL_MS` | 系统层（L1）结论的保鲜期：期内复用、过期重探（宿主 apt 装卸 gh 都能及时反映） | `10000` |
 | `DSH_GH_RELEASE_API` / `DSH_GH_DOWNLOAD_BASE` | release 元数据 / 下载基址（夹具与私有镜像用） | 官方 |
 | `DSH_GH_OAUTH_CLIENT_ID` | 撤销 token 用的 OAuth client id | 占位常量 |
 | `DSH_GH_API_PORT` | 插件回环接口端口（设置页/脚本都打它）。改端口要同时给页面注入 `window.__DSH_GITHUB_RESIDENT_API__`，否则面板失联（审计 L12） | `31790` |

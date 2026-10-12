@@ -46,7 +46,7 @@
     "build:entries": "node tools/merge/build-merge-entries.ts",
     "check:entries": "node tools/merge/build-merge-entries.ts --check",
     "verify": "npm run check:entries && npm run verify:merge && npm run verify:resident && npm run verify:deck",
-    "verify:resident": "bash verify-bundle.sh && node verify-logout.mjs && node verify-registry.mjs && node verify-ui.mjs && node verify-gh-bootstrap.mjs && node verify-update-gc.mjs && node verify-real-artifact.mjs",
+    "verify:resident": "bash verify-bundle.sh && node verify-logout.mjs && node verify-registry.mjs && node verify-ui.mjs && node verify-gh-bootstrap.mjs && node verify-gh-system-layer.mjs && node verify-update-gc.mjs && node verify-real-artifact.mjs",
     "verify:deck": "node deck/scripts/verify-chain.js",
     "verify:merge": "node tests/merge/run.mjs",
     "verify:deck:smoke": "cd deck && node tests/smoke-client.test.js && node tests/smoke-host.test.js && node tests/smoke-host-dispatch.test.js && node tests/smoke-render.test.js && node tests/smoke-naming-persistence.test.js && node tests/smoke-comment-passthrough.test.js",
@@ -55,6 +55,7 @@
     "verify:registry": "node verify-registry.mjs",
     "verify:ui": "node verify-ui.mjs",
     "verify:gh": "node verify-gh-bootstrap.mjs",
+    "verify:gh:system": "node verify-gh-system-layer.mjs",
     "verify:artifact": "node verify-real-artifact.mjs",
     "verify:update": "node verify-update-gc.mjs"
   },

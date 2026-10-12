@@ -269,6 +269,29 @@
 
 ---
 
+## 坑 29：`ghMemo` 只写不清 —— 宿主后装的 gh 永远不被接管（同一个插件里两种口径）
+
+- **现象**：宿主用官方源 `apt-get install gh` 装好系统级 gh 之后，`gh_cli_resolve` 报 `resolved: "system"`、
+  `/usr/bin/gh`，可同一时刻 `gh_cli_status` 报 `layer: "plugin-cache"`、`gitCredentialHelper: null`，
+  设置页快照也跟着报自带层。**同一个插件、同一个进程、同一秒，两个工具说两套话。**
+- **真因**：`resolveGh()` 的读路径（`install:false`）是「有 memo 就直接返回」。加载期 `scheduleAutoLand()` 先跑了一次，
+  那一刻宿主还没装 gh → 存下 `plugin-cache`。之后 PATH 上出现 gh，但 memo 没人清，
+  于是所有读路径（`gh_cli_status` / `buildSnapshot` / `versionStatus` / 借给 Deck 的 `ghResolver` 服务）
+  永远停在旧结论。而 `gh_cli_resolve` 走 `install:true`、绕过 memo，所以只有它是对的。
+- **判据**：伪 HOME + 伪 PATH 夹具里，先用「跑不起来的 gh 占位」让读路径 memo 出 `plugin-cache`，
+  再把能跑的系统层 gh 放进 PATH，然后比 `gh_cli_resolve` 与 `gh_cli_status` 的层 —— 不一致就是这条。
+  见 `verify-gh-system-layer.mjs`（E 段）。
+- **正确做法**：给「系统层未命中」加一个 `sysMemoPending` 标志，读路径**只在欠一次时**重探 L1；
+  同时给系统层结论加保鲜期 `DSH_GH_SYS_LAYER_TTL_MS`（默认 10s），否则宿主的 gh 被卸掉/换掉后
+  会一直报一个跑不起来的路径。**插件自带层不需要这套**：它是本地文件，mtime+size 就是事实，可以永久缓存。
+- **附带一条（同一个缺陷家族）**：`readCredHelper()` 只读全局 `credential.helper`，而 `gh auth setup-git`
+  写的是 host 作用域 `credential.https://github.com.helper` → `gh_cli_status` 在凭据**完全可用**时也报 `null`。
+  实测 `git ls-remote` 拿得到 HEAD，工具却说没接线。修法是报告类调用点统一走 `readCredHelper()`（两个作用域都读）。
+  **但登录流程的判断分支故意不改**：`gh_resident_login` 里 `helperBefore !== 'store'` 判断的是「要不要回退写 store」，
+  它要的就是全局 helper 本身，换成 host 作用域会把决策反过来。
+
+---
+
 ## 安装 / 改名 SOP（照这个顺序做，不会炸）
 
 0. 要连带销毁凭据：先 `gh_cli_logout`（`confirm:true, revoke:true, purge_git:true, reset_state:true, uninstall_gh:true`），再往下走。

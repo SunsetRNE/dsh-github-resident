@@ -46,6 +46,23 @@ function git(repo, args) {
   return run('git', ['-C', repo, ...args]);
 }
 
+/**
+ * 读当前生效的 git 凭据助手 —— 只给**报告类**调用点用（gh_cli_status / buildSnapshot）。
+ *
+ * `gh auth setup-git` 写的是 host 作用域 credential.https://github.com.helper，
+ * 而 git 先问 host 作用域、再回落全局 credential.helper。只读全局的话，
+ * 在「helper 由 gh 接管」的常见状态下会读到空 —— 于是凭据明明能用、报告却说没接线：
+ * 实测 `git ls-remote` 认证成功，gh_cli_status 却报 gitCredentialHelper=null（假告警）。
+ *
+ * 注意**不要**拿它去改登录流程的判断分支（gh_resident_login 里"已有非 store helper 就不覆盖"
+ * 看的是全局 helper 本身：那里要判断的是"要不要回退写 store"，换成 host 作用域会把决策反过来）。
+ */
+async function readCredHelper() {
+  const hostScoped = (await git(process.cwd(), ['config', '--global', '--get-all', 'credential.https://github.com.helper'])).stdout.trim();
+  if (hostScoped) return hostScoped;
+  return (await git(process.cwd(), ['config', '--global', 'credential.helper'])).stdout.trim();
+}
+
 async function readState() {
   try {
     return JSON.parse(await fs.readFile(STATE_FILE, 'utf8'));
@@ -1390,20 +1407,42 @@ export function apply(ctx) {
 
   let lastEnsure = null;
   let ghMemo = null;
+  /**
+   * 系统层探测是否还"欠一次"（L1 没有缓存一说：宿主可能在插件进程活着的时候才装上 gh）。
+   * 插件自带层是本地文件、跑没跑起来是事实，可以永久缓存；PATH 上的东西会变。
+   * 只记「未命中」两个字面量、不带进快照，所以对既有调用方是惰性修复、不改任何返回字段。
+   */
+  let sysMemoPending = false;
+  let sysProbedAt = 0;
+  /** 系统层结论的最长保鲜期：TTL 内复用，过期重探（apt 卸载/替换 gh 后不至于一直报一个跑不起来的路径）。 */
+  const SYS_LAYER_TTL_MS = Number(process.env.DSH_GH_SYS_LAYER_TTL_MS || 10 * 1000);
 
   /**
    * 全插件唯一的 gh 入口。system = 宿主已装（有就用），plugin-cache = 自带，
    * 两者都没有且 install !== false 时自动落地一份。
    */
   async function resolveGh({ install = true, force = false } = {}) {
-    if (!force && ghMemo && !install) return ghMemo;
+    // install:false 是"读路径"（面板 buildSnapshot / gh_cli_status / 版本探测），它不落地，
+    // 但系统层结论必须能过期重探：否则 L1 出现之前留下的 plugin-cache 会一直在，同一个插件里
+    // gh_cli_resolve（install:true）报 system、gh_cli_status 报 plugin-cache，口径互相打架；
+    // 反过来宿主的 gh 被卸掉后也会一直报一个跑不起来的路径。
+    if (!force && ghMemo && !install) {
+      const sysStateFresh = ghMemo.layer === 'system'
+        && sysProbedAt > 0 && (Date.now() - sysProbedAt) < SYS_LAYER_TTL_MS;
+      if (sysStateFresh || (!sysMemoPending && ghMemo.layer !== 'system')) return ghMemo;
+    }
     const sys = await probeGh('gh');
     if (sys.ok) {
       // 报告真实路径：下游（buildSnapshot / gh_cli_status / teardown）都是拿这个路径去执行（N5）。
       const abs = sys.bin === 'gh' ? ((await whichCmd('gh')) || '/usr/bin/gh') : sys.bin;
       ghMemo = { ok: true, layer: 'system', path: abs, version: sys.version };
+      sysMemoPending = false;
+      sysProbedAt = Date.now();
       return ghMemo;
     }
+    // L1 未命中：只把这次结论当"此刻的快照"，下次读路径重探（见 sysMemoPending）。
+    sysMemoPending = true;
+    sysProbedAt = Date.now();
     const cached = await probeGh(GH_BIN);
     if (cached.ok) {
       ghMemo = { ok: true, layer: 'plugin-cache', path: GH_BIN, version: cached.version };
@@ -1694,6 +1733,8 @@ sys.stdout.flush()
         steps.push({ step: 'gh-cache-dir', removed: true, path: GH_DATA_DIR });
       }
       ghMemo = null;
+      sysMemoPending = true;   // 环境刚被改过，下次读路径必须重探 L1
+      sysProbedAt = 0;
     }
     if (opts.remove_gh_config === true) {
       await fs.rm(path.join(HOME, '.config', 'gh'), { recursive: true, force: true });
@@ -1853,7 +1894,7 @@ sys.stdout.flush()
       if (!g.ok) return { installed: false, hint: '下次调用任意 gh_* 工具会自动落地一份，或显式跑 gh_cli_install' };
       const version = g.version;
       const status = await run(g.path, ['auth', 'status', '--hostname', 'github.com']);
-      const helper = (await git(process.cwd(), ['config', '--global', 'credential.helper'])).stdout.trim();
+      const helper = await readCredHelper();
       const hostsPath = path.join(HOME, '.config', 'gh', 'hosts.yml');
       let hosts = null;
       try {
@@ -1899,7 +1940,7 @@ sys.stdout.flush()
       if (!g.ok) return { ok: false, error: 'gh 不可用，且自带落地没成功', ensure: g.ensure || null };
       const setup = await run(g.path, ['auth', 'setup-git', '--hostname', 'github.com']);
       const result = { exitCode: setup.code, ghLayer: g.layer, stderr: setup.stderr.trim().slice(0, 300) };
-      result.credentialHelper = (await git(process.cwd(), ['config', '--global', 'credential.helper'])).stdout.trim() || null;
+      result.credentialHelper = (await readCredHelper()) || null;
       if (args.set_identity !== false && setup.code === 0) {
         const who = await run(g.path, ['api', 'user', '--jq', '.login']);
         const mail = await run(g.path, ['api', 'user', '--jq', '.email']);
@@ -2248,6 +2289,8 @@ sys.stdout.flush()
     versionState = null;
     versionState = await versionStatus({ force: false });
     ghMemo = null;
+    sysMemoPending = true;   // 自更新换过二进制，下次读路径重探
+    sysProbedAt = 0;
     return { ok: Boolean(res.ok && after), ...lastAutoUpdate };
   }
 
@@ -2351,12 +2394,8 @@ sys.stdout.flush()
       hostsPath: HOSTS_FILE,
       stateFile: STATE_FILE,
       // gh auth setup-git 写的是 host 作用域的 helper（credential.https://github.com.helper），
-      // 只读全局 credential.helper 永远是空，所以两个都读。
-      credHelper: (
-        (await git(process.cwd(), ['config', '--global', '--get-all', 'credential.https://github.com.helper'])).stdout.trim()
-        || (await git(process.cwd(), ['config', '--global', 'credential.helper'])).stdout.trim()
-        || null
-      ),
+      // 只读全局 credential.helper 永远是空，所以走 readCredHelper() 两个作用域都读。
+      credHelper: (await readCredHelper()) || null,
       reposRoot: state.reposRoot || DEFAULT_ROOT,
     };
   }
