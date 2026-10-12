@@ -64,7 +64,7 @@ cd deck/research/prototype-5-narrow-scrollbar/verify && NODE_PATH=/tmp/pwproto/n
 ## 设备分线（2026-10-12 追加）
 
 手机 / 平板 / 桌面**各走一条线**：手机线（≤679px）走阶梯收字 + 22px 行 + 26px 点位 + 渐隐/箭头；
-平板线（680–1023px）**不收字**、26px 行 + 44px 点位 + 渐隐/细滚动条；桌面线（≥1024px）走阶梯 + 22px 行 + 20px 点位、不给提示。
+平板线（680–1023px）**不收字**、**26px 行（默认，维护者已定）** + 44px 点位 + 渐隐/细滚动条；桌面线（≥1024px）走阶梯 + 22px 行 + 20px 点位、不给提示。
 判据真源在原型里的 `DEVICE_LINES` / `capDeviceClass` / `capScaleFor`，文字版见 [DEVICE-LINES.md](DEVICE-LINES.md)。
 页内「设备线」那一排可以手动指定，也可以自动；三档实测都记在 DEVICE-LINES.md，截图 `measurements/m5~m7`。
 
