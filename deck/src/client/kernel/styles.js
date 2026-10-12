@@ -163,10 +163,23 @@
       //   各项之间那条间隔随宽度伸缩但有上限（胶囊那层的 gap，实测四档相邻空隙最大÷最小 ≈ 1.0–1.14），
       //   所以宽条上既不散成表格、也没有一格把余量一个人吃掉。这一条也管面板头部第一行那几颗单字形小图标（标记 data-head-fold + data-head-icon，见 panel/Dock.js）：图标本身就是单个字形，一步撤一颗，撤的标记必须落在**不写死 display** 的那层元素上，否则这一条盖不住它；同一行里那些「一串字」的元素（仓库名 / 刷新按钮的字 / 时间标签）不走这一条，它们按 panel/headFold.js 那条阶梯逐字变短，永远不整块 display:none。
       '.dsws-capsule [data-fold-priority].dsws-folded,[data-head-fold].dsws-folded{display:none}',
-      '.dsws-banner{display:flex;align-items:center;gap:8px;border-radius:8px;padding:6px 10px;font-size:12px;margin:6px 0;cursor:pointer}',
+      // 2026-10-12（票「黄条（banner.setup）窄屏适配」）：这条横幅原来只有 `display:flex`、**不许折行**，
+      //   容器一窄就只剩两种下场：内容挤成一列（正文被压到一字宽，维护者真机截图里那句「适配性太差」）
+      //   或者溢出。现在让它能折行，正文给一个 200px 的 flex-basis —— 一行放不下「图标 + 可读的正文」时，
+      //   那颗长按钮自然落到下一行，而不是回头把正文压扁。桌面宽度行为不变（放得下就不折行）。
+      '.dsws-banner{display:flex;flex-wrap:wrap;align-items:center;gap:8px;row-gap:6px;border-radius:8px;padding:6px 10px;font-size:12px;margin:6px 0;cursor:pointer}',
       '.dsws-banner.bad{background:rgba(248,113,113,.12);border:1px solid rgba(248,113,113,.45);color:#f87171}',
       '.dsws-banner.warn{background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.45);color:#fbbf24}',
       '.dsws-banner.ok{background:rgba(74,222,128,.1);border:1px solid rgba(74,222,128,.35);color:#4ade80}',
+      // 正文这一格：能收（min-width:0）但不许收到读不成句 —— 200px 起，放得下就长满余量。
+      '.dsws-banner-text{flex:1 1 200px;min-width:0;overflow-wrap:anywhere;line-height:1.35}',
+      // 横幅里那颗主按钮：窄屏下它可能独占一行，标签要能在自己框内折行，且不许宽出黄条。
+      '.dsws-banner-act{flex:0 1 auto;max-width:100%;white-space:normal;text-align:left;line-height:1.35}',
+      // 状态栏那条横幅（黄条/蓝条/探测中）独占一行宽：**按内容收窄是窄屏读不成句的根** ——
+      //   黄条的宽度原来由内容决定（≈413px），于是「图标 + 可读的正文 + 长按钮」永远只差一点放不下，
+      //   挤也挤不出余量。撑到 560 上限之后，桌面档那三种横幅都还是**一行**（实测一行需 505px ≤ 内宽 538），
+      //   窄屏则让长按钮整颗落到第二行。面板里那条同名横幅（NamingFailBanner）不挂这个类，保持原样。
+      '.dsws-banner-dock{width:100%;box-sizing:border-box}',
       // #669（2026-09-21）：横幅上那颗收起控件是图形叉（类名 dsws-banner-fold-x）。同一天一度改成带字的「收起」
       //   （类名 dsws-banner-collapse），维护者要求还原成叉，类名跟着写回来。
       '.dsws-banner-fold-x:hover{opacity:.8}',
