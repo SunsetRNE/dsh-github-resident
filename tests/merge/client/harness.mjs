@@ -84,7 +84,7 @@ ${extraLoad}`
 
 /** 最小 Resident 半边夹具；options 只用于负例（id / inject 数组）。 */
 export function makeResidentSource(options = {}) {
-  const id = options.id || '@local/dsh-github-resident-v2'
+  const id = options.id || '@sunsetrne/dsh-github-resident-v2'
   const inject = options.inject || ['slots']
   const injectLiteral = '[' + inject.map((s) => `'${s}'`).join(', ') + ']'
   return `window.__ModuleLoader__.load({

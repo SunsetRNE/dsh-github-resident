@@ -32,7 +32,7 @@ import { awaitDeckTable, peekDeckTable, readDeckGate, noteDeckPath, readDeckPath
 // （真源 tools/merge/merge-identity.ts 的 MERGED_PACKAGE_NAME + '/tools'；deck/ 内不能运行期 import
 // 那份 .ts，字面由 tests/merge/host/identity-parity 逐项核对）。子路径行不会产生第二个客户端脚本，
 // 客户端永远只有 dist/client.js 一份。9 个 deck_* 业务工具与探针 deck_probe 仍由本行注册。
-export const name = '@local/dsh-github-resident-v2/tools'
+export const name = '@sunsetrne/dsh-github-resident-v2/tools'
 export const inject = ['tools']
 
 const SEVEN = [deckContextDef, deckIssueGetDef, deckMapSnapshotDef, deckIssueListDef, deckIssueCreateDef, deckMapPlanCreateDef, deckMapLinkDef, deckIssuePatchDef, deckIssueReportDef]

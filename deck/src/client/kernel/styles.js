@@ -93,16 +93,16 @@
       '.dsws-skillpop::-webkit-scrollbar-track{background:transparent}',
       '.dsws-skillpop::-webkit-scrollbar-thumb{background:var(--dsw-alias-border-l2,#3a3f4a);border-radius:4px;border:2px solid transparent;background-clip:padding-box}',
       '.dsws-skillpop::-webkit-scrollbar-thumb:hover{background:var(--dsw-alias-label-caption,#8b8b95);border-radius:4px;border:2px solid transparent;background-clip:padding-box}',
-      '.dsws-seg{cursor:pointer;padding:2px 7px;border-radius:99px;border:1px solid transparent;display:inline-flex;align-items:center;gap:4px}',
+      '.dsws-seg{cursor:pointer;padding:2px 7px;border-radius:99px;border:1px solid transparent;display:inline-flex;align-items:center;gap:4px;position:relative}',
       '.dsws-seg:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.08));border-color:var(--dsw-alias-border-l1,#2a2d35)}',
       // 需求1·二阶段 rev（2026-08-18）：交接分割按钮 —— 外框边框/细分隔线 hover 时才显示（与 seg 常驻透明一致）；左右半各自点击区 + hover 沿用 seg 背景
       '.dsws-split{display:inline-flex;align-items:center;border:1px solid transparent;border-radius:99px;flex:none;overflow:hidden}',
       '.dsws-split:hover{border-color:var(--dsw-alias-border-l1,#2a2d35)}',
-      '.dsws-split .dsws-split-part{display:inline-flex;align-items:center;gap:4px;padding:2px 7px;cursor:pointer}',
+      '.dsws-split .dsws-split-part{display:inline-flex;align-items:center;gap:4px;padding:2px 7px;cursor:pointer;position:relative}',
       '.dsws-split .dsws-split-part:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.08))}',
       '.dsws-split .dsws-split-div{width:1px;height:14px;background:var(--dsw-alias-border-l1,#2a2d35);flex:none;opacity:0;transition:opacity .12s}',
       '.dsws-split:hover .dsws-split-div{opacity:1}',
-      '.dsws-timebtn{cursor:pointer;padding:2px 7px;border-radius:99px;border:1px dashed transparent;color:var(--dsw-alias-label-caption,#8b8b95);white-space:nowrap;font-variant-numeric:tabular-nums;flex:none}',
+      '.dsws-timebtn{cursor:pointer;position:relative;padding:2px 7px;border-radius:99px;border:1px dashed transparent;color:var(--dsw-alias-label-caption,#8b8b95);white-space:nowrap;font-variant-numeric:tabular-nums;flex:none}',
       '.dsws-timebtn:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.08));border-color:var(--dsw-alias-border-l1,#2a2d35);color:var(--dsw-alias-label-primary,#e6edf3)}',
       '.dsws-uirow{display:flex;align-items:center;gap:6px;margin:4px 0;flex-wrap:wrap}',
       '.dsws-uirow .dsws-btn.on{border-color:var(--dsw-alias-state-success-primary,#4ade80);color:var(--dsw-alias-state-success-primary,#4ade80)}',
@@ -181,6 +181,49 @@
       //   （类名 dsws-banner-collapse），维护者要求还原成叉，类名跟着写回来。
       '.dsws-banner-fold-x:hover{opacity:.8}',
       '.dsws-fold-toggle:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.08));color:var(--dsw-alias-label-primary,#e6edf3)}',
+      // 2026-10-12（票 #7 真机验收反馈）：这条横条上的点按目标原来只有视觉那么大 —— 收起∨ 的箭头
+      //   12px、加内距后命中区约 16×16；日志点 10×10；文字段约 22px 高。手指点不中是他原话
+      //   （「没办法让它收起来」）。这里按设备分线补一层**透明命中区**：视觉一个像素都不动，
+      //   命中区在触屏上撑到 44×44（手机线与平板线同一口径），指针设备（鼠标）仍是原样。
+      '.dsws-capsule{position:relative}',
+      // 2026-10-13（票 #7「没办法滑动」）：这条横条补上横滑 —— 内容进 `.dsws-barcell`（可拖的滑窗），
+      //   右端两件（日志点、收起∨）进 `.dsws-bar-tail` 留在窗外钉住；到端头用小箭头提示（维护者 2026-10-12 定）。
+      //   幻影行只用来量「不折叠时多宽」，不参与显示。
+      '.dsws-capsule{display:flex;align-items:center;gap:0;padding:0;overflow:hidden}',
+      '.dsws-barcell{flex:1 1 auto;min-width:0;display:flex;align-items:center;gap:2px 6px;overflow-x:auto;overflow-y:hidden;scrollbar-width:none;-ms-overflow-style:none;overscroll-behavior-x:contain;touch-action:pan-x;padding:3px 6px}',
+      '.dsws-barcell::-webkit-scrollbar{height:0;display:none}',
+      // 2026-10-13 真机截图（被圈的地方）：幻影行原来用 position:absolute + left:-9999px ——
+      //   而它的父节点 .dsws-capsule 是 flex 容器且**不是** position:relative 的包含块，于是那 -9999px
+      //   落到了视口外，反而把幻影行（它比可见行宽）横着压回可见区，跟内容叠在一起（维护者截图里
+      //   那行「GitHub 常驻」压住了「可接」）。改成 fixed 甩到屏幕外、并把高度收成 0：只借它的 width 量尺子。
+      '.dsws-bar-phantom{position:fixed;left:-100000px;top:-100000px;height:0;overflow:hidden;display:flex;align-items:center;gap:2px 6px;white-space:nowrap;pointer-events:none;visibility:hidden}',
+      '.dsws-bar-phantom *{visibility:hidden!important}',
+      '.dsws-bar-tail{flex:none;display:inline-flex;align-items:center;gap:2px 6px;padding:3px 6px 3px 2px}',
+      // 2026-10-13（真机「字被图标替代」）：横滑形态下可见行里的各段不许再被压扁。
+      //   与阶梯机是一对：阶梯机在 bar 形态下不再收字（capFoldMachine.js 里那段判定），这里保证字
+      //   **不被 flex 压掉** —— 默认这些段是 flex:0 1 auto，窄条上会被压到 min-content，字被 chip 的
+      //   overflow:hidden 吞掉（真机上看到的就是「只剩图标与数字」）。改成不缩，内容自然溢出到
+      //   .dsws-barcell 的滚动区里，拖回来还在。开关由 barScroll.js / 阶梯机落（有可滑量或手机线才加）。
+      //   选择器要够重：`.dsws-capsule .dsws-capsule-word` 那条是 (0,2,0) 级，这条必须压过它，
+      //   否则品牌那一段照样缩回 22px —— 2026-10-13 本机实测踩过：规则在了、class 也在了，
+      //   计算出来的 flex 仍是 0 1 auto、min-width 仍是 0px。
+      '.dsws-barcell.dsws-bar-scroll > *,.dsws-barcell.dsws-bar-scroll > .dsws-capsule-word{flex:0 0 auto;min-width:auto}',
+      // 到端头提示：滚动指示条（细的 2px 一条，比箭头更轻；箭头按维护者的定论另留）
+      '.dsws-barcell{position:relative}',
+      '.dsws-barcell::after{content:"";position:absolute;left:6px;right:6px;bottom:1px;height:2px;border-radius:99px;background:linear-gradient(to right,transparent, var(--dsw-alias-border-l2,#3a3f4a) 20%, var(--dsw-alias-border-l2,#3a3f4a) 80%, transparent);opacity:0;transition:opacity .12s;pointer-events:none}',
+      '.dsws-barcell.dsws-can-left.dsws-can-right::after{opacity:.9}',
+      '.dsws-bar-arrow{position:absolute;top:50%;transform:translateY(-50%);width:20px;height:20px;align-items:center;justify-content:center;border-radius:99px;border:1px solid var(--dsw-alias-border-l1,#2a2d35);background:var(--dsw-alias-bg-layer-2,#16181d);color:var(--dsw-alias-label-secondary,#a1a1aa);cursor:pointer;z-index:3;flex:none}',
+      '.dsws-bar-arrow.dsws-show{display:inline-flex}',
+      '.dsws-bar-arrow-l{left:2px}',
+      '.dsws-bar-arrow-r{right:2px}',
+      '.dsws-bar-arrow:hover{color:var(--dsw-alias-label-primary,#e6edf3)}',
+      '.dsws-capsule .dsws-fold-toggle,.dsws-capsule .dsws-logdot{position:relative}',
+      '@media (pointer:coarse){',
+      '.dsws-capsule .dsws-fold-toggle::after{content:"";position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);min-width:44px;min-height:44px;width:100%;height:100%}',
+      '.dsws-capsule .dsws-logdot::after{content:"";position:absolute;left:50%;top:50%;transform:translate(-50%,-50%);min-width:44px;min-height:44px;width:10px;height:10px}',
+      '.dsws-capsule .dsws-seg::after,.dsws-capsule .dsws-timebtn::after{content:"";position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);height:44px}',
+      '.dsws-capsule .dsws-split .dsws-split-part::after{content:"";position:absolute;left:0;right:0;top:50%;transform:translateY(-50%);height:44px}',
+      '}',
       // v1.3.3 UI 修复：aggrow 现含两行子块（行1 idcol+标题+圆环 / 行2 标签+按钮），必须纵向堆叠
       // v1.3.3：左侧预留空白减 20%（8px → 6.4px，map 行/普通行一致更紧凑）
       '.dsws-aggrow{display:flex;flex-direction:column;align-items:stretch;gap:6px;padding:6px 6.4px;border-radius:6px;border:1px solid transparent}',

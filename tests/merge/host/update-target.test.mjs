@@ -51,8 +51,8 @@ check(mod.DEFAULT_TARGET_PACKAGE === MERGED, 'DEFAULT_TARGET_PACKAGE = 合并包
 check(mod.DEFAULT_TARGET_PACKAGE !== mod.LEGACY_DECK_PACKAGE_NAME, 'DEFAULT_TARGET_PACKAGE 不是旧 Deck 包名')
 check(mod.__updateTargetsLegacyDeck({ targetPackageName: mod.DEFAULT_TARGET_PACKAGE }) === false, '漂移守卫：当前配置不指向旧 Deck')
 check(mod.__updateTargetsLegacyDeck({ targetPackageName: mod.LEGACY_DECK_PACKAGE_NAME }) === true, '漂移守卫：真指回旧 Deck 时返回 true（守卫本身有效）')
-check(mod.UPDATE_LOCAL_PRIVATE === true && typeof mod.UPDATE_LOCAL_PRIVATE_HINT === 'string' && mod.UPDATE_LOCAL_PRIVATE_HINT.includes(MERGED), '本地 private 事实与如实文案都导出了：' + mod.UPDATE_LOCAL_PRIVATE_HINT)
-check(String(mod.UPDATE_LOCAL_PRIVATE_HINT).includes('npm'), '文案明说更新不走 npm')
+check(mod.UPDATE_LOCAL_PRIVATE === false && typeof mod.UPDATE_LOCAL_PRIVATE_HINT === 'string' && mod.UPDATE_LOCAL_PRIVATE_HINT.includes(MERGED), '发布状态（v1.7.1 起可 npm 安装）与如实文案都导出了：' + mod.UPDATE_LOCAL_PRIVATE_HINT)
+check(String(mod.UPDATE_LOCAL_PRIVATE_HINT).includes('npm'), '文案明说更新走 npm')
 
 section('3) 真建一次电话处理器：更新包接受我们的 pluginId（含 scope 的包名会被拒）')
 const quietLog = { fire: () => {} }

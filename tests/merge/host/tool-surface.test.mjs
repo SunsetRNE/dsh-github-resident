@@ -52,7 +52,7 @@ check(hostReturn === undefined, '宿主半边 apply 返回 undefined（清理走
 
 section('2) agent 行：真调用 deckToolsRow.js 的 apply')
 const row = await importRel('deck/src/host/platform/deckToolsRow.js')
-check(row.name === '@local/dsh-github-resident-v2/tools', '行模块 name = 合并包名 + /tools（实际 ' + row.name + '）')
+check(row.name === '@sunsetrne/dsh-github-resident-v2/tools', '行模块 name = 合并包名 + /tools（实际 ' + row.name + '）')
 check(JSON.stringify(row.inject) === JSON.stringify(['tools']), '行模块 inject = [tools]（与宿主半边分开的作用域）')
 
 const rowCtx = makeFakeCtx()

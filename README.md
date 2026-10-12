@@ -2,7 +2,7 @@
 
 **中文** ｜ [English](README.en.md)
 
-> **1.7.0 合并测试包**：保留本包名 `@local/dsh-github-resident-v2`，内置 Skills Deck 的 10 个 `deck_*` 工具、27 个技能、输入框功能栏与右侧面板，加上原有 17 个 `gh_*` 工具。Deck 来源为 1.8.0-rc.7 源码快照，当前设备原独立安装版为 1.7.51，存在上游版本差异。
+> **1.7.0 合并测试包**：保留本包名 `@sunsetrne/dsh-github-resident-v2`，内置 Skills Deck 的 10 个 `deck_*` 工具、27 个技能、输入框功能栏与右侧面板，加上原有 17 个 `gh_*` 工具。Deck 来源为 1.8.0-rc.7 源码快照，当前设备原独立安装版为 1.7.51，存在上游版本差异。
 >
 > 安装顺序：先在插件管理器中停用独立的 `dsh-mattpocock-skills-deck`（含其 tools 组件），再导入本合并包升级 Resident，重启 DSH。确认工具、技能和面板可用后，再通过插件管理器卸载已经停用的旧 Deck。不要先删旧插件目录：现有安装可能通过 `link:` 引用它。合并包继续使用原数据位置，卸载旧包时不要选择清除数据。
 >
@@ -10,7 +10,7 @@
 
 给 [DeepSeek Harness](https://github.com/deepseek-ai) 用的常驻 GitHub 身份 bundle：装一次，当前 profile 里每个会话都有一组现成的 `gh_*` 工具 —— 提交、推送、开 PR、管理 gh CLI 与凭据，**不需要宿主机预装 gh，也不需要手动装一次**。
 
-> 包名 `@local/dsh-github-resident-v2` ｜ 插件名 `github-resident` ｜ profile 行 id `include:github-resident-v2`
+> 包名 `@sunsetrne/dsh-github-resident-v2` ｜ 插件名 `github-resident` ｜ profile 行 id `include:github-resident-v2`
 
 ## 能力
 

@@ -20,7 +20,7 @@ export function createBootstrap(deps) {
             // 合并后的单包身份（真源 tools/merge/merge-identity.ts 的 MERGED_PACKAGE_NAME；deck/ 内不能运行期 import
             // 那份 .ts，字面由 tests/merge/host/identity-parity 逐项核对）。**不留旧包名候选**：读到旧 Deck 的技能目录
             // 等于两套技能并存，而合并的前提就是旧组合已停用。
-            const MERGED_PACKAGE_NAME = '@local/dsh-github-resident-v2'
+            const MERGED_PACKAGE_NAME = '@sunsetrne/dsh-github-resident-v2'
             // 1) 先按**本模块自己的位置**找（2026-10-11 修的就是这条）：旧实现只按 process.cwd() 系列找根，合并后
             //    cwd 与技能根不再有任何关系。本模块在开发检出里是 <repo>/deck/src/host/，在构建形态里是
             //    <repo>/deck/package/lib/，打包解压后是 <pkg>/deck/src/host/。候选按**层**穷举而不是猜层数：

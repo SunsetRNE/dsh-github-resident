@@ -51,7 +51,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
  * 真源是 [`./merge-identity.ts`](./merge-identity.ts) 的 `MERGED_PACKAGE_NAME`；
  * 运行期真正生效的是**实测**到的那份 package.json 的 name，这里只做形状锚点与漂移断言。
  */
-const EXPECTED_PACKAGE_NAME = '@local/dsh-github-resident-v2'
+const EXPECTED_PACKAGE_NAME = '@sunsetrne/dsh-github-resident-v2'
 
 /**
  * 宿主插件的服务依赖（两半并集，真源 [`./merge-identity.ts`](./merge-identity.ts) 的 `MERGED_HOST_INJECT`）。

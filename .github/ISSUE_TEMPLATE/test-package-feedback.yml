@@ -1,5 +1,5 @@
 name: 试装包反馈（v1.7.0 合并包）
-description: 试装 @local/dsh-github-resident-v2 1.7.0 合并测试包后的问题、疑问与建议
+description: 试装 @sunsetrne/dsh-github-resident-v2 1.7.0 合并测试包后的问题、疑问与建议
 title: "[试装] "
 labels: ["test-package", "needs-triage"]
 body:

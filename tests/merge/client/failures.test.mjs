@@ -51,7 +51,7 @@ test('Resident 半边不是合并身份 → 抛错', () => {
 })
 
 test('Resident 半边没有 apply → 构建期就抛错', () => {
-  const src = `window.__ModuleLoader__.load({ id: '@local/dsh-github-resident-v2', factory(require) { return { inject: ['slots'] } } });`
+  const src = `window.__ModuleLoader__.load({ id: '@sunsetrne/dsh-github-resident-v2', factory(require) { return { inject: ['slots'] } } });`
   assert.throws(() => rewriteDeckClient(DECK(), src), /没有 apply/)
 })
 

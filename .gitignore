@@ -37,3 +37,6 @@ github-resident.json
 
 # 合并验证的独占日志目录（本仓受忽略；见 docs/merge-implementation-progress.md）
 /.merge-verify/
+
+# prototype 截图为中间态证据，不入库（维护者 2026-10-13 定）
+deck/research/prototype-5-narrow-scrollbar/**/*.png

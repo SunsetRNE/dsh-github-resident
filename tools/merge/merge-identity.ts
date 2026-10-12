@@ -6,7 +6,7 @@
  * 而「id 不一致」的失败方式是**静默的**（客户端脚本加载不上、技能发现目录全丢），
  * 排查成本极高。所以这里定死一次，别处只许引用。
  *
- * 改名纪律（评估 §3.4 已定）：本包沿用 Resident 主体身份 `@local/dsh-github-resident-v2`，
+ * 改名纪律（评估 §3.4 已定）：本包沿用 Resident 主体身份 `@sunsetrne/dsh-github-resident-v2`，
  * 但**包名与槽位/存储键解耦**——下面这几个串**不跟着改**：
  *   - dock 槽位 id          'dsh-mattpocock-skills-deck'（conversation.input.dock）
  *   - 右栏 tab 类型 id/kind 'dsh-mattpocock-skills-deck/deck:map' / '...:deck-map'
@@ -19,7 +19,7 @@ import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 /** 合并后的 npm 包名，同时是客户端模块 id 与 bundle patch 里的 name。 */
-export const MERGED_PACKAGE_NAME = '@local/dsh-github-resident-v2'
+export const MERGED_PACKAGE_NAME = '@sunsetrne/dsh-github-resident-v2'
 
 const IDENTITY_REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
 
@@ -103,7 +103,7 @@ export const DECK_TOOLS_ROW_SOURCE = `${DECK_SUBDIR}/src/host/platform/deckTools
 /**
  * 合并后的**运行时身份串**（槽位 id、右栏 tab kind/id、样式表 data-plugin、控制台前缀、日志命名空间）。
  *
- * 为什么与包名分开写：包名是 npm 身份（`@local/dsh-github-resident-v2`），身份串是**界面与状态里的名字**。
+ * 为什么与包名分开写：包名是 npm 身份（`@sunsetrne/dsh-github-resident-v2`），身份串是**界面与状态里的名字**。
  * 两者过去都借用了上游 Deck 的名字（`dsh-mattpocock-skills-deck`），于是合并后界面上到处是"另一个插件"
  * 的痕迹 —— 这正是"彻底融为一个插件"要收掉的东西。
  *
@@ -174,7 +174,7 @@ export const RESIDENT_CLIENT_SRC = 'client.js'
  *
  * 为什么不是 deck 快照里的 `deck/package/bundled-skills/`：合并后宿主按
  * `<包名>/bundled-skills` 找随包技能（候选根写死包名，见 deck/src/host/bootstrap.js 与 skillDoc.js），
- * 装到 profile 后本包根就是 `node_modules/@local/dsh-github-resident-v2/`，
+ * 装到 profile 后本包根就是 `node_modules/@sunsetrne/dsh-github-resident-v2/`，
  * 因此技能必须落在**包根**。源快照仍在 `deck/package/bundled-skills/`（deck 自己的构建与门禁按它认路径），
  * 构建时逐字复制到包根，两份不一致由 `--check` 拦住。
  */

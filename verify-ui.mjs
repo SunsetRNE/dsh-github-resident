@@ -145,7 +145,7 @@ let captured = null;
 const windowStub = { __ModuleLoader__: { load: (m) => { captured = m; } }, setTimeout, clearTimeout };
 globalThis.window = windowStub;
 new Function('window', 'require', clientSrc)(windowStub, () => { throw new Error('factory 之前不该 require'); });
-check('client.js 用 __ModuleLoader__ 注册模块', Boolean(captured) && captured.id === '@local/dsh-github-resident-v2', captured && captured.id);
+check('client.js 用 __ModuleLoader__ 注册模块', Boolean(captured) && captured.id === '@sunsetrne/dsh-github-resident-v2', captured && captured.id);
 const required = [];
 const clientMod = captured.factory((id) => { required.push(id); return id === 'react' ? { createElement: () => null } : null; });
 check('客户端半边只 require react（无 Harness 包依赖）', required.length === 1 && required[0] === 'react', required);

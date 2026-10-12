@@ -424,8 +424,15 @@ export function composeMergedClient(deckSource: string, residentSource: string):
         '自更新展示与安装副本同步都以合并包版本为准，不接受上游 Deck 版本冒充。',
     )
   }
-  if (!/^(?:const|let) DSW_VERSION = 'v?1\.7\.0'$/.test(versioned.from) && text.includes(versioned.from)) {
-    throw new Error('合并产物里仍残留 deck 上游版本字面量：' + versioned.from)
+  // 2026-10-12（票 #8 的本机 beta）：这一条原来拿「改写读到的上游版本号」当残留判据，而
+  //   `versioned.from` 在改写之后已经是**新写入的那串**，于是版本号一动就假红
+  //   （实测：版本写 1.7.0-rc.3 时报「仍残留 … 'v1.7.0-rc.3'」，而它正是产物里唯一正确的字面量）。
+  //   改成扫产物里**带数字的**版本字面量，逐个跟合并版本比：真正的上游残留（1.7.51 之类）照样拦，
+  //   pre-release 后缀（1.7.0-rc.N）放行。
+  const versionLiterals = Array.from(text.matchAll(/DSW_VERSION = '(v\d[^']*)'/g)).map(function (m) { return m[1] })
+  const stray = versionLiterals.filter(function (one) { return one !== 'v' + MERGED_VERSION })
+  if (stray.length) {
+    throw new Error('合并产物里仍残留 deck 上游版本字面量：' + stray.join('、'))
   }
   if (!text.includes('DSW_REPO_URL = ' + MERGED_REPO_URL_LITERAL)) {
     throw new Error(

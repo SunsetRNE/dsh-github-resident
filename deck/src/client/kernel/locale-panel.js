@@ -10,6 +10,8 @@
       zh: {
         'nav.word': '沉淀',
         'nav.takeable': '可接',
+        'nav.barScrollLeft': '往回滚',
+        'nav.barScrollRight': '继续滚',
         'nav.occupied': '阻塞',
         'nav.env': '环境',
         'nav.envTitle': '环境检查 ({n}/{t})',
@@ -165,6 +167,8 @@
       en: {
         'nav.word': 'Consolidate',
         'nav.takeable': 'Ready',
+        'nav.barScrollLeft': 'Scroll back',
+        'nav.barScrollRight': 'Scroll on',
         'nav.occupied': 'Busy',
         'nav.env': 'Env',
         'nav.envTitle': 'Environment checks ({n}/{t})',

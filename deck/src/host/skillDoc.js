@@ -24,7 +24,7 @@ export function createSkillDoc(deps) {
     const candidates = []
     // 合并后的单包身份与随包技能根（真源 tools/merge/merge-identity.ts 的 MERGED_PACKAGE_NAME；deck/ 内不能运行期
     // import 那份 .ts，字面由 tests/merge/host/identity-parity 逐项核对）。**不留旧包名候选**：合并的前提是旧组合已停用。
-    const MERGED_PACKAGE_NAME = '@local/dsh-github-resident-v2'
+    const MERGED_PACKAGE_NAME = '@sunsetrne/dsh-github-resident-v2'
     // 1) 本模块自身位置优先：开发检出 <repo>/deck/src/host/、构建形态 <repo>/deck/package/lib/、打包解压后
     //    <pkg>/deck/src/host/。候选按**层**穷举而不是猜层数：每层都问 <层>/bundled-skills（构建负责人定下的
     //    发布位置，包根 bundled-skills/）与 <层>/package/bundled-skills（入库快照），再加两种 node_modules 形状。

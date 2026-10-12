@@ -111,6 +111,13 @@ export const StatusBar = (props) => {
     if (_isOtherSBGate && tab!=='settings') { try{ s.tab='settings'; }catch(e){}; return }
     s.tab = tab; openPanel(s)
   }
+  // 2026-10-13（票 #7）：横滑窗的四个引用 + 一本记账（滑动判定与箭头状态都记在 keep 里）。
+  const barCellRef = React.useRef(null)     // .dsws-capsule（外层，含幻影行与滑窗）
+  const barPhantomRef = React.useRef(null)  // .dsws-bar-phantom（只用来量自然宽 = 阶梯那把尺子）
+  const barWinRef = React.useRef(null)      // .dsws-barcell（overflow-x:auto 的滑窗）
+  const barKeep = React.useRef({ scrollState: null })
+  const barGuard = React.useRef(makeScrollClickGuard())
+  const barMoved = React.useRef(false)
   const foldRef = React.useRef(null)
   const bugAnchorRef = React.useRef(null)
   const bugCloseRef = React.useRef(null)
@@ -178,6 +185,30 @@ export const StatusBar = (props) => {
   //   换回完整的一串（时间串一直在变），那一刻胶囊可能当场溢出。这件事现在由下面这条副作用接管 ——
   //   它在每次提交之后跑一次，不排任何定时器、也不自续：谁把字写回完整的，下一帧就又被收一遍。
   React.useEffect(function () { scheduleFold() })
+  // 滑窗的观察器：尺寸变 → 重量（阶梯可能刚改过字号）；滚动 → 只重画箭头状态。
+  //   量不到有效宽的那一趟不下结论（与 capFold 同一条规矩）。
+  React.useEffect(function () {
+    const win = barWinRef.current
+    if (!win) return undefined
+    let raf = null
+    const sync = function () {
+      if (raf !== null) return
+      const run = function () {
+        raf = null
+        try { measureBarScroll(barWinRef.current, barKeep.current) } catch (e) {}
+      }
+      if (typeof requestAnimationFrame === 'function') raf = requestAnimationFrame(run)
+      else raf = setTimeout(run, 0)
+    }
+    const ro = (typeof ResizeObserver === 'function') ? new ResizeObserver(sync) : null
+    if (ro) { try { ro.observe(win); if (barPhantomRef.current) ro.observe(barPhantomRef.current) } catch (e) {} }
+    win.addEventListener('scroll', sync, { passive: true })
+    sync()
+    return function () {
+      if (ro) { try { ro.disconnect() } catch (e) {} }
+      try { win.removeEventListener('scroll', sync) } catch (e) {}
+    }
+  })
   // #196 · 状态栏胶囊移除 backend segment 后不再在此处挂 SwitchConfirmModal（仍由 Dock/Overlay 挂载，状态机保留）
   const _isGatePending = !!(_selSBGate && _selSBGate.pending && !!s.cwd)
   const _gateActive = _isOtherSBGate || _isGatePending
@@ -237,7 +268,17 @@ export const StatusBar = (props) => {
   let logDotOn = false
   try { logDotOn = !!(typeof logSwitch !== 'undefined' && logSwitch && logSwitch.enabled === true) } catch (eLogDot) {}
   // 优化3：胶囊恒渲染（任何情况下不隐藏）；未选后端时其上方叠加 gate 蓝条引导入口
-  const capsule = h('div', { className: 'dsws-capsule', ref: foldRef, onClick: function () { openPanel(s) }, style: { position: 'relative', width: '100%', boxSizing: 'border-box' } }, [
+  // 2026-10-13（票 #7 真机反馈「滑不动」）：内容进滑窗（`.dsws-barcell`），右端两件留在窗外钉死。
+  //   幻影行 `.dsws-bar-phantom` 只用来量「不折叠时内容多宽」——它是这条阶梯放下判断的尺子。
+  const capsule = // 2026-10-13（根因修正）：这个 ref 有两个身份 —— 阶梯机把它当「这条横条」用，滑窗那台把它当「外层格」用。
+  //   我上一轮把 ref 换成了 barCellRef，foldRef 从此永远是 null：applyFold 里 `if (cap)` 一直为假，
+  //   阶梯机一次都没被调用（门禁 cap-fold 那 8 条红的真正原因，不是尺子口径）。这里两个 ref 都挂上。
+  h('div', { className: 'dsws-capsule', ref: function (el) { foldRef.current = el; barCellRef.current = el }, style: { position: 'relative', width: '100%', boxSizing: 'border-box' } }, [
+    h('div', { className: 'dsws-bar-phantom', ref: barPhantomRef, 'aria-hidden': 'true' }, [
+      h('span', { className: 'dsws-capsule-word' }, [Icon({ scheme: s.ui.icon, size: 14 }), h('span', { 'data-fold-priority': 1 }, tr('panel.title'))]),
+      h(SessionChainCapsule, { st: s, sid: sid, phantom: true }),
+    ]),
+    h('div', { className: 'dsws-barcell', ref: barWinRef, onClick: function () { if (barMoved.current) { barMoved.current = false; return } openPanel(s) }, onPointerDown: function (e) { barGuard.current.down(e) }, onPointerUp: function (e) { barMoved.current = barGuard.current.up(e) }, onTouchMove: function () { barMoved.current = true }, onWheel: function () { barMoved.current = true }, style: { position: 'relative', width: '100%', boxSizing: 'border-box' } }, [
     h('span', { className: 'dsws-capsule-word', onClick: function (e) { e.stopPropagation(); togglePanel(s) } }, [
       Icon({ scheme: s.ui.icon, size: 14 }),
       h('span', { 'data-fold-priority': 1 }, tr('panel.title')),
@@ -276,8 +317,19 @@ export const StatusBar = (props) => {
     h(Tip, { content: tr('nav.envTitle', { n: n < 0 ? '?' : String(n), t: String(envTotal(s)) }) }, seg(n < 0 ? 'alert' : (n === envTotal(s) ? 'check' : 'dot'), [h('span', { 'data-fold-priority': 4 }, tr('nav.env')), h('span', { className: 'dsws-num', 'data-fold-priority': 5 }, envLabel(s))], n < 0 ? '#f87171' : n === envTotal(s) ? '#4ade80' : '#f59e0b', function () { go('checks') }, 14)),
     h(Tip, { content: tr('nav.refreshTitle') }, h('span', { className: 'dsws-timebtn', onClick: function (e) { e.stopPropagation(); refreshAll(s) }, 'aria-label': tr('nav.refreshTitle') }, [h('span', { className: 'dsws-rficon' + (s.refreshing ? ' dsws-spin' : '') }, [Ic({ n: 'refresh', size: 11 })]), h('span', { 'data-fold-priority': 2 }, tr('nav.refresh')), h('span', { key: 'dd', 'data-fold-priority': 3 }, splitTimeStr(' ' + timeStr).date), h('span', { key: 'tt', 'data-fold-priority': 6 }, splitTimeStr(' ' + timeStr).time)])),
     h(SkillFloatList, { s: s }),
-    logDotOn ? h(StatusLogDot, { s: s }) : null,
-    capsuleToggle,
+    ]),
+    h('span', { className: 'dsws-bar-arrow dsws-bar-arrow-l', 'data-bar-arrow': 'left', role: 'button', tabIndex: 0,
+      'aria-label': tr('nav.barScrollLeft'),
+      onClick: function (e) { e.stopPropagation(); scrollBarBy(barWinRef.current, -1, barKeep.current) },
+      style: { display: 'none' } }, [Ic({ n: 'chev-left', size: 12 })]),
+    h('span', { className: 'dsws-bar-arrow dsws-bar-arrow-r', 'data-bar-arrow': 'right', role: 'button', tabIndex: 0,
+      'aria-label': tr('nav.barScrollRight'),
+      onClick: function (e) { e.stopPropagation(); scrollBarBy(barWinRef.current, 1, barKeep.current) },
+      style: { display: 'none' } }, [Ic({ n: 'chev-right', size: 12 })]),
+    h('span', { className: 'dsws-bar-tail' }, [
+      logDotOn ? h(StatusLogDot, { s: s }) : null,
+      capsuleToggle,
+    ]),
   ])
   // 状态栏后端选择与门控动作已搬 StatusBackend.js（B1 #460，纯结构；同闭包拼回直调）。
   // 以后改状态栏后端选择（setup 黄条与 gate 蓝条）的人改 StatusBackend.js，本处只留转调包装。

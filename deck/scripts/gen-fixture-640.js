@@ -12,41 +12,49 @@
 //   二、被测元素那一侧用插件自己的几何（从 StatusBar.js 的 dswsStatusDockGeom 读出来）。
 // 如果哪天宿主改了卡片算式，本文件会因读取失败而报错，而不是悄悄变成「两边同一个公式」的恒真测试。
 //
-// 宿主产物怎么找（2026-10-04 定版）：候选列表 = 环境变量 DSH_CONVERSATION_BUNDLE → 原写死的那条安装路径
-//   → asar 解包落点 node_modules/.cache/dsh-host/；都没有时再看 asar 归档
+// 宿主产物怎么找（2026-10-13 #3 起）：候选表统一在 scripts/host-bundle-probe.mjs，顺序是
+//   DSH_CONVERSATION_BUNDLE（人指定）→ DSH_INSTALL_ROOT / 本机已装 DSH 包反推的安装根 → 全局 node_modules 三条
+//   → 历史遗留的写死路径 → asar 解包落点 node_modules/.cache/dsh-host/；都没有时再看 asar 归档
 //   D:\DeepseekHarness\resources\app.asar 里那一条（用 scripts/asar-extract.js 零依赖抽出来，只读）。
 //   全都拿不到时本文件**不再直接抛错**，改为「跳过不生成」，由门禁打印 SKIP 并按严格开关
 //   DSWS_REQUIRE_HOST_BUNDLE 决定算不算失败——量尺必须来自外部，宁可不跑也不自证。
+//   （#3 之前这里只有两条 2026-10-04 手写的 Windows 路径：本机装了宿主也认不出来，门禁常年假绿 SKIP。）
 // 2026-10-12：本仓 package.json 是 "type": "module"，这个文件原来用 require/__dirname/module.exports，
 //   在 ESM 下加载即报 "require is not defined in ES module scope"，verify-640 连量尺都拿不到。
 //   改成 ESM：node 内建模块用 import，asar-extract.js 仍是 CJS，借 createRequire 抓一个。
 import fs from 'node:fs';
 import path from 'node:path';
 import { createRequire } from 'node:module';
+import * as probe from './host-bundle-probe.mjs';
 const require = createRequire(import.meta.url);
 const root = path.resolve(import.meta.dirname, '..');
 const statusSrc = fs.readFileSync(path.join(root, 'src/client/statusbar/StatusBar.js'), 'utf8');
 const stylesSrc = fs.readFileSync(path.join(root, 'src/client/kernel/styles.js'), 'utf8');
 
 // ── 一、从宿主产物里读「卡片那一侧」的真算式 ────────────────────────────────
-// 找法三层（顺序即优先级）：显式指定 → 原来那条安装路径 → asar 解包落点；再不行就抽 asar。
+// 找法：#3 之后统一走 scripts/host-bundle-probe.mjs（顺序见该文件头：人指定 → 安装根探测 → 遗留路径 → asar 缓存）。
+//   这里只留 asar 那一路的开关与落点；候选表不再各自维护，免得「本机装了宿主却认不出来」再演一次。
 const ASAR_PATH = 'D:\\DeepseekHarness\\resources\\app.asar';
 const ASAR_ENTRY = 'dsh/node_modules/@deepseek-ai/dsh-client-ui-conversation/lib/client.js';
 const CACHE_BUNDLE = path.join(root, 'node_modules/.cache/dsh-host/dsh-client-ui-conversation.client.js');
 const ASAR_DISABLED = process.env.DSWS_640_NO_ASAR === '1'; // 验收用：藏掉 asar 兜底，验「找不到就跳过」那条路
-const HOST_CANDIDATES = [
-  process.env.DSH_CONVERSATION_BUNDLE,
-  'D:\\0Tools\\DSH Desktop\\resources\\app\\node_modules\\@deepseek-ai\\dsh-client-ui-conversation\\lib\\client.js',
-  ASAR_DISABLED ? null : CACHE_BUNDLE,
-].filter(Boolean);
-let HOST_BUNDLE = HOST_CANDIDATES.find(function (p) { return fs.existsSync(p); }) || null;
-let hostFrom = HOST_BUNDLE ? (HOST_BUNDLE === CACHE_BUNDLE ? 'asar 解包缓存' : '候选文件') : '';
+const probeOpts = { rootDir: root, cacheBundle: ASAR_DISABLED ? null : CACHE_BUNDLE };
+let HOST_BUNDLE = null;
+let hostFrom = '';
+let probeTried = [];
+const hit = probe.findHostBundle(probeOpts);
+probeTried = probe.hostBundleCandidates(probeOpts).map(function (c) { return c.p + '  ← ' + c.label + (c.kind === 'cache' ? '（asar 解包落点，本次' + (ASAR_DISABLED ? '被 DSWS_640_NO_ASAR=1 关掉' : '尚未解包') + '）' : ''); });
+if (hit) { HOST_BUNDLE = hit.path; hostFrom = hit.from; }
 if (!HOST_BUNDLE && !ASAR_DISABLED && fs.existsSync(ASAR_PATH)) {
   try {
     HOST_BUNDLE = CACHE_BUNDLE;
     require('./asar-extract.js').extractAsarEntry(ASAR_PATH, ASAR_ENTRY, CACHE_BUNDLE);
     hostFrom = 'asar 解包（' + ASAR_PATH + '）';
   } catch (e) { HOST_BUNDLE = null; hostFrom = ''; } // 抽不出来就当没找到，交给下面的跳过分支
+  // 解包只是在缓存落点写了一份：解包成功的话，候选表里那条（cache）从「miss」变成真的存在，
+  //   所以重新问一次探针，让 hostBundleFrom 与日志说的是同一件事。
+  const after = probe.findHostBundle(probeOpts);
+  if (after) { HOST_BUNDLE = after.path; hostFrom = after.from; }
 }
 
 let bundle = '';
@@ -222,7 +230,7 @@ if (!HOST_BUNDLE) {
   // 跳过：不生成 fixture、不抛错。门禁会打印 SKIP，并按 DSWS_REQUIRE_HOST_BUNDLE 决定算不算失败。
   console.log('SKIP gen-fixture-640：本机找不到宿主原文产物，这次不生成 fixture（量尺必须是外部的，不能用插件自己的公式自证）。');
   result = {
-    skipped: true, tried: HOST_CANDIDATES, asarPath: ASAR_PATH, asarEntry: ASAR_ENTRY,
+    skipped: true, tried: probeTried, asarPath: ASAR_PATH, asarEntry: ASAR_ENTRY,
     asarDisabled: ASAR_DISABLED, hostBundle: null, fixture: outFile,
   };
 } else {
@@ -231,7 +239,7 @@ if (!HOST_BUNDLE) {
   console.log('  量尺（宿主原文，' + hostFrom + '）：root「' + hostRootPad + '」 + card「' + hostCardWidth + ' / ' + hostCardMax + '」');
   console.log('  被测（插件真源）：width「' + geomWidth + '」，maxWidth「' + geomMaxWidth + '」，padding「' + geomPad + '」');
   result = {
-    skipped: false, hostBundle: HOST_BUNDLE, hostBundleFrom: hostFrom, tried: HOST_CANDIDATES,
+    skipped: false, hostBundle: HOST_BUNDLE, hostBundleFrom: hostFrom, tried: probeTried,
     hostBundleText: bundle, hostRootRule: hostRootRule, hostCardRule: hostCardRule,
     pickRule: pickRule, pickByClassName: pickByClassName, pickByFormula: pickByFormula,
     fixture: outFile,

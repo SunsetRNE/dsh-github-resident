@@ -49,6 +49,9 @@
         case 'x': return h('svg', common, [h('path', { d: 'M6 6l12 12M18 6L6 18' })])
         // #422 · 折叠箭头（横幅收起/展开，stroke 风格与通用集统一）
         case 'chev-up': return h('svg', common, [h('polyline', { points: '6 15 12 9 18 15' })])
+        // 2026-10-13（票 #7 横滑）：到端头那两颗小箭头
+        case 'chev-left': return h('svg', common, [h('polyline', { points: '15 6 9 12 15 18' })])
+        case 'chev-right': return h('svg', common, [h('polyline', { points: '9 6 15 12 9 18' })])
         case 'chev-down': return h('svg', common, [h('polyline', { points: '6 9 12 15 18 9' })])
         case 'star': return h('svg', common, [h('path', { d: 'M12 3l2.7 5.8 6.3.7-4.7 4.3 1.3 6.2-5.6-3.2-5.6 3.2 1.3-6.2L3 9.5l6.3-.7z', fill: 'currentColor', stroke: 'none' })])
         case 'search': return h('svg', common, [h('circle', { cx: 11, cy: 11, r: 7 }), h('path', { d: 'M21 21l-4.3-4.3' })])

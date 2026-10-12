@@ -34,6 +34,10 @@
 // 返回：最后定下来的档号（同时写进 cap.dataset.foldTier，供真机门禁等它稳定；cap.dataset.fold 记折叠段数）；
 //   这一趟量不到可用宽时返回 null，且不写任何 dataset（门禁据此看得出「还没定档」）。
 export const runCapFold = function (cap, keep) {
+  // 2026-10-13（横滑实装）：胶囊里多了一枚隐形幻影行（.dsws-bar-phantom，只用来量尺子）。
+  //   这条横条的「可见行」是 .dsws-barcell；放下判断/可用宽/矩形都按它量 —— 幻影行高 0、
+  //   画面外，拿它当版面量出来的数全是错的（门禁 I1/I2 那 12 条就是这么红的）。
+  const capRow = (cap && cap.querySelector) ? (cap.querySelector('.dsws-barcell') || cap) : cap
   const full = (keep && keep.full) || {}
   const written = (keep && keep.written) || {}
   const slots = Array.from(cap.querySelectorAll('[data-fold-priority]')).map(function (el) {
@@ -51,7 +55,7 @@ export const runCapFold = function (cap, keep) {
   //   量不到不等于放不下，照「量到多少就判多少」写下去反而会把「未知」变成一条错结论（真机回归就是这么来的）。
   //   但首帧要落在**起始态**上：胶囊第一次画出来、还没有过任何一次有效测量时，品牌那一段是收起的
   //   （其余各段照原样）—— 这正是维护者要的「默认折叠」，见本文件上面 keep.started 那一段。
-  const roomW = capFoldRoom(cap)
+  const roomW = capFoldRoom(capRow)
   if (roomW === null) {
     keep.foldGuardKey = ''
     if (!keep.started) applyCapFoldStart(cap, slots, keep)
@@ -93,18 +97,42 @@ export const runCapFold = function (cap, keep) {
   if (typeof keep.foldGuardTier === 'number' && (keep.foldGuardEl === cap || keep.foldGuardKey === guardKey)) tier = Math.max(0, Math.min(keep.foldGuardTier, last))
   const start = tier
   writeTier(start)
-  if (capFoldFits(cap)) {
+  const startMeasure = capFoldMeasure(capRow)
+  // 2026-10-13 真机（票「真机竖屏验收」）后的定案：**横滑形态下这一台不再收字**。
+  //   真机上看到的症状：手机竖屏（412pt）这条条本来宽到一千多像素，可它量的是「可见行」，
+  //   窄屏上可见宽不到 400px，于是阶梯照老规矩一路收到底 —— 12 段字全变成图标，只剩几颗图标与数字。
+  //   而票面写的窄屏形态是「整条转横滑、字不丢」：字该滑出去（拖回来还在），不该被收掉。
+  //   所以：可见行有 468px 以上可用宽、且**完整一行**都放不下时，这一趟直接把字全部摊开（第 0 档）
+  //   并保持——让溢出发生在滑窗里（.dsws-barcell 的 overflow-x:auto），而不是发生在字上。
+  //   桌面线（可见行 < 468px 那一头不存在）与旧宿主行为不变：宽度富余时仍旧第 0 档、不进这里。
+  const rowScrolls = capFoldRowScrolls(capRow)
+  if (rowScrolls && !startMeasure.fits && startMeasure.foot > 0) {
+    writeTier(0)
+    // 摊开之后立刻把「横滑形态」那一层开关落上：可见行里的各段从此不再被 flex 压扁
+    //   （styles.js 的 .dsws-barcell.dsws-bar-scroll > *）。为什么必须在**这一帧**落、不能等观察器：
+    //   不落的话各段还是 flex:0 1 auto，窄条上被压到 min-content，内容不再溢出 → 观察器算出的
+    //   canLeft/canRight 全假 → barScroll 也就不会补这个 class，字就永远是被压扁的状态（真机症状）。
+    try { capRow.classList.add('dsws-bar-scroll') } catch (e) { /* 无障碍环境：只影响不缩这一层 */ }
+    tier = 0
+    cap.dataset.foldTier = '0'
+    cap.dataset.fold = '0'
+    keep.foldGuardEl = cap
+    keep.foldGuardKey = guardKey
+    keep.foldGuardTier = 0
+    return 0
+  }
+  if (capFoldFits(capRow)) {
     tier = start
     while (tier > 0) {
       writeTier(tier - 1)
-      if (capFoldFits(cap)) tier--
+      if (capFoldFits(capRow)) tier--
       else { writeTier(tier); break }
     }
   } else {
     tier = last
     for (let t = start + 1; t <= last; t++) {
       writeTier(t)
-      if (capFoldFits(cap)) { tier = t; break }
+      if (capFoldFits(capRow)) { tier = t; break }
     }
   }
   cap.dataset.foldTier = String(tier)
@@ -181,20 +209,79 @@ export const applyCapFoldStart = function (cap, slotsIn, keepIn) {
  *   写成那样等于把这条守卫关掉）。
  */
 const capFoldFits = function (cap) {
+  return capFoldMeasure(cap).fits
+}
+/**
+ * 同上的量法，但把两个数一起交出来（2026-10-13 真机后加）：
+ *   · fits —— 摆开后装不装得下（阶梯的放下判断）；
+ *   · foot —— 摆开后的真实脚印（各段矩形宽 + 同行间距），也就是「完整那把尺子有多长」。
+ * 为什么要多交出 foot：横滑模式那条判据（见 runCapFold 里的 capFoldRowScrolls）要问的是
+ *   「连不折叠的完整一行都放不下吗」——那正是 foot > room，与 fits 同一次测量，别量两遍。
+ */
+const capFoldMeasure = function (cap) {
   try {
     const kids = Array.from(cap.children)
     const saved = kids.map(function (el) { return el.style.flex })
     try {
       for (let i = 0; i < kids.length; i++) kids[i].style.flex = '0 0 auto'
       void cap.offsetWidth
-      return cap.scrollWidth <= cap.clientWidth + 1
+      // 2026-10-13（横滑实装后重定口径）：这里量的是**可见行**的内容脚印。
+      //   从前比 cap.scrollWidth 与 cap.clientWidth —— 现在 cap 是可滑容器（.dsws-barcell，
+      //   overflow-x:auto），而可滑容器的 scrollWidth 只报自己的框宽（内容被它自己的滚动区吞了），
+      //   于是「放不下」永远判成「放得下」，阶梯一格都不走（真机上就是品牌那串字硬撑到极窄）。
+      //   所以改成把每个孩子按 flex:0 0 auto 摆开，逐个读它的矩形宽再加间距 —— 这就是真实脚印。
+      let total = 0
+      let gaps = 0
+      let prev = null
+      let sameLine = true
+      for (let i = 0; i < kids.length; i++) {
+        const r = kids[i].getBoundingClientRect()
+        if (!(r.width > 0)) continue
+        if (prev !== null) {
+          if (Math.abs(r.top - prev.top) < 2) { gaps++; if (sameLine) total += r.left - prev.right }
+          else sameLine = false
+        }
+        total += r.width
+        prev = r
+      }
+      if (prev === null) return { fits: true, foot: 0 }
+      const cs = (cap.ownerDocument && cap.ownerDocument.defaultView)
+        ? cap.ownerDocument.defaultView.getComputedStyle(cap) : null
+      const pad = cs ? ((parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0)) : 0
+      const room = cap.clientWidth - pad
+      void gaps
+      return { fits: total <= room + 1, foot: total }
     } finally {
       for (let i = 0; i < kids.length; i++) kids[i].style.flex = saved[i]
     }
   } catch (e) {
     // 量不出来时不改判据：回到「这一条横条自己不溢出」这一条老路（宁可少收一点，也不要因为一次异常一路收到最后）
-    return cap.scrollWidth <= cap.clientWidth + 1
+    return { fits: cap.scrollWidth <= cap.clientWidth + 1, foot: 0 }
   }
+}
+/**
+ * 这一条现在是不是「整条转横滑」的形态：可见行（.dsws-barcell）已经有 468px 以上的可用宽。
+ *
+ * 468px 是研究票实测的阈值（票「窄屏阈值取证：载荷最小宽、各宽度停档与截断点」：胶囊外框 468 / 容器 500 起
+ *   才轮到收字）。判据挂在**可见行自己的宽**上，不挂视口宽与设备型号 —— 右侧栏把列挤窄之后视口没变，
+ *   但这条横条确实变窄了，那时候同样该走滑。
+ */
+const CAP_BAR_SCROLL_MIN_W = 468
+const capFoldRowScrolls = function (cap) {
+  try {
+    const doc = cap.ownerDocument
+    const win = doc && doc.defaultView
+    const cs = win ? win.getComputedStyle(cap) : null
+    const pad = cs ? ((parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0)) : 0
+    if ((cap.clientWidth - pad) >= CAP_BAR_SCROLL_MIN_W) return true
+    // 2026-10-13 真机补的一条：手机上这条条的可用宽只有 370–400px（列就是手机那点宽），
+    //   按 468 那条判不到，而它恰恰是最该走横滑的形态。研究票里「胶囊 468 起才轮到收字」说的是
+    //   **桌上那条宽条**；手机竖屏是「一条装不下、就整条滑」的那一档（原型那三条设备线里手机线本来就是
+    //   按视口宽 ≤ 679 分的）。所以这里补一条与设备线同口径的判据：视口宽 ≤ 679 就算横滑形态。
+    //   桌面窗口（≥1024）与平板线不动：那里窄条的可用宽天然在 468 以上，照旧按实测宽判。
+    const vw = win && (win.innerWidth || (doc.documentElement && doc.documentElement.clientWidth))
+    return (Number(vw) || 0) > 0 && vw <= 679
+  } catch (e) { return false }
 }
 /**
  * 这一条现在有多少**可用宽**：返回内容盒宽（孩子真正能摆下的那点宽）；量不到时返回 null（未知）。
@@ -219,8 +306,19 @@ const capFoldRoom = function (cap) {
     const cs = win.getComputedStyle(cap)
     if (!cs || cs.display === 'none' || cs.visibility === 'hidden') return null
     const rect = cap.getBoundingClientRect()
+    // 2026-10-13：可见行还没上屏（宽高为 0）就是「量不到」——首帧不许据此判「放得下」。
     if (!(rect.width > 0) || !(rect.height > 0)) return null
     const pad = (parseFloat(cs.paddingLeft) || 0) + (parseFloat(cs.paddingRight) || 0)
+    // 2026-10-13：这里量的是**可见行**（.dsws-barcell）的内容盒。它外头那层胶囊被藏起来时
+    //   （门禁 I2 的 display:none 那一趟），行内的 display 仍是 flex、clientWidth 也可能非 0，
+    //   所以要顺着包含块往上确认「这一行真的在版面上」，不然会把「没上屏」当成「可用宽很富余」。
+    if (cap.clientWidth - pad <= 0) return null
+    let node = cap
+    while (node && node.nodeType === 1) {
+      const pcs = win.getComputedStyle(node)
+      if (pcs && (pcs.display === 'none' || pcs.visibility === 'hidden')) return null
+      node = node.parentElement
+    }
     const room = cap.clientWidth - pad
     if (!(room > 0)) return null
     return room

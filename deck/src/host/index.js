@@ -1,5 +1,5 @@
 /**
- * 合并包（@local/dsh-github-resident-v2）· Host 半 / Deck 半边（数据层实现 · T3 #345）
+ * 合并包（@sunsetrne/dsh-github-resident-v2）· Host 半 / Deck 半边（数据层实现 · T3 #345）
  * 这是宿主入口：装配动态加载的各个工作模块与几十条宿主电话；实现都在各自文件里（#723 起刷新机制的 装配在 ./refresh/wiring.js），本文件只负责装配与注册。
  * 这套装配分组的「从哪来、为什么留在这里、搬走的实现去了哪」见 docs/design/837-host-index-wiring-ledger.md。
  */
@@ -7,7 +7,7 @@
 // ===== 规范方言（dynamic dialect）：harness 为自由变量；pkg entry 提供 shim =====
 export default {
   // 合并后归户到单包身份（真源 tools/merge/merge-identity.ts 的 MERGED_PACKAGE_NAME；本文件在 deck/ 内不能运行期 import 那份 .ts，字面由 tests/merge/host/identity-parity 逐项核对）。槽位 id / 右栏 tab 类型 id / localStorage 键**不跟着改**，那些是用户既有布局的把手。
-  name: '@local/dsh-github-resident-v2', // connection + llm + sessionQuery：webServer 仍不加（#596）；llm 给首轮摘要调模型用，sessionQuery 给读首轮两段用（读而不激活），缺任何一个对应功能静默降级（#746）。
+  name: '@sunsetrne/dsh-github-resident-v2', // connection + llm + sessionQuery：webServer 仍不加（#596）；llm 给首轮摘要调模型用，sessionQuery 给读首轮两段用（读而不激活），缺任何一个对应功能静默降级（#746）。
   inject: ['connection', 'llm', 'sessionQuery'],
   apply(ctx) {
     // 2026-10-12 gh 解析点归一：Resident 半边把**它那份唯一的 gh 解析器**以服务 `ghResolver` 借给本半边

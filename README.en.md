@@ -2,13 +2,13 @@
 
 [中文](README.md) ｜ **English**
 
-> **1.7.0 merged test package:** keeps `@local/dsh-github-resident-v2` and includes 17 `gh_*` tools, 10 `deck_*` tools, 27 bundled skills, the composer toolbar and the right sidebar. The imported Deck snapshot is 1.8.0-rc.7, newer than the device's standalone 1.7.51 installation.
+> **1.7.0 merged test package:** keeps `@sunsetrne/dsh-github-resident-v2` and includes 17 `gh_*` tools, 10 `deck_*` tools, 27 bundled skills, the composer toolbar and the right sidebar. The imported Deck snapshot is 1.8.0-rc.7, newer than the device's standalone 1.7.51 installation.
 >
 > Disable the standalone `dsh-mattpocock-skills-deck` bundle (including its tools component) before importing this package to upgrade Resident, then restart DSH. Verify tools, skills and panels before removing the disabled standalone Deck through Plugin Manager. Do not delete a linked plugin directory first or clear shared data. This is a local package, not an npm release; the installer resolves `yaml` and `dsh-plugin-update`. Offline installation and live-device visual acceptance are not claimed.
 
 A resident GitHub identity bundle for [DeepSeek Harness](https://github.com/deepseek-ai): install it once and every session in the current profile gets a ready set of `gh_*` tools — commit, push, open PRs, manage the gh CLI and its credentials — **without a preinstalled gh on the host and without a manual gh install step**.
 
-> Package `@local/dsh-github-resident-v2` ｜ Plugin name `github-resident` ｜ Profile row id `include:github-resident-v2`
+> Package `@sunsetrne/dsh-github-resident-v2` ｜ Plugin name `github-resident` ｜ Profile row id `include:github-resident-v2`
 
 ## What it does
 

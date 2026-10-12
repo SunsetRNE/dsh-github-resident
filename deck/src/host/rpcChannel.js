@@ -26,7 +26,7 @@ function replyEnvelope(rpcId, result) {
 /** 合并包的身份：本文件向上找到的第一份同名 package.json 就是「服务这一份」（字面真源 tools/merge/merge-identity.ts
  *  的 MERGED_PACKAGE_NAME；deck/ 内不能运行期 import 那份 .ts，字面由 tests/merge/host/identity-parity 逐项核对）。
  *  旧包名候选**不留**：那份装的是旧 Deck，答出来的服务版本就不是本包。 */
-const MANIFEST_NAME = '@local/dsh-github-resident-v2'
+const MANIFEST_NAME = '@sunsetrne/dsh-github-resident-v2'
 let servingVersion = null
 
 /**

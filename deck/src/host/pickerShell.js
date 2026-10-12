@@ -1,3 +1,5 @@
+import * as ElectronMod from 'electron'
+import * as ElectronMod2 from 'electron'
 // src/host/pickerShell.js —— 文件夹打开与原生选择器（H6 #450 从 host/index.js 823–853/1030–1133 搬出，纯结构、行为零变化）。
 // 以后谁改它：改打开文件夹或原生目录/文件选择器的人。预估约150行，超 350 打回。
 // 接线：由 index.js 动态 import 加载；本文件不引用其他新文件。
@@ -29,7 +31,7 @@ export function createPickerShell(deps) {
     try {
       // 1) 尝试 Electron dialog（DSH Desktop 主进程）
       let electron = null
-      try { electron = typeof require === 'function' ? require('electron') : null } catch(_){}
+      try { electron = typeof require === 'function' ? ElectronMod : null } catch(_){}
       if (electron && electron.dialog && typeof electron.dialog.showOpenDialogSync === 'function') {
         try {
           const picked = electron.dialog.showOpenDialogSync({ properties: ['openDirectory'], defaultPath: initial || cwd })
@@ -57,7 +59,7 @@ export function createPickerShell(deps) {
     const initial = args && args.initial ? String(args.initial) : cwd
     try {
       let electron = null
-      try { electron = typeof require === 'function' ? require('electron') : null } catch(_){}
+      try { electron = typeof require === 'function' ? ElectronMod2 : null } catch(_){}
       if (electron && electron.dialog && typeof electron.dialog.showOpenDialogSync === 'function') {
         try {
           const picked = electron.dialog.showOpenDialogSync({ properties: ['openFile'], defaultPath: initial || cwd })

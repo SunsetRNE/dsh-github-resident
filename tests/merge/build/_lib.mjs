@@ -109,7 +109,7 @@ export function packRepo(root) {
 
 /**
  * 解包 + 在临时 fixture 里做出一份**真实的 npm 安装布局**：
- *   <fixture>/node_modules/@local/dsh-github-resident-v2/**   ← tarball 解出来的内容
+ *   <fixture>/node_modules/@sunsetrne/dsh-github-resident-v2/**   ← tarball 解出来的内容
  *   <fixture>/node_modules/{yaml,dsh-plugin-update}           ← 声明的运行时依赖（从本仓已装副本真拷贝）
  * 然后 exports 解析、import、相对导入图都按「装好的包」来验证，绝不借用旁边的源码目录。
  */

@@ -85,7 +85,12 @@ check('tarball 解出的包目录存在', existsSync(pkgDir), pkgDir)
 
 const pkg = readJson(join(pkgDir, 'package.json'))
 check('包名 = 合并身份', pkg.name === MERGED_PACKAGE_NAME, pkg.name)
-check('private 标记仍在（本地 private 包，不得伪称 npm 可更新）', pkg.private === true, String(pkg.private))
+check('根 package.json 不再带 private（@SunsetRNE 改名后要能 npm publish）', pkg.private === undefined, String(pkg.private))
+// 2026-10-13：npm 只收**全小写**的包名（`@SunsetRNE/...` 会被拒：「缺少合法的 npm 插件名称」）。
+//   把这条写进门禁，别再靠人记 —— 名字里一个大写字母就要重打一次包。
+check('包名合法：全小写、带 scope、段与段之间没有空段（npm 发布前置）',
+  typeof pkg.name === 'string' && /^@[a-z0-9][a-z0-9._-]*\/[a-z0-9][a-z0-9._-]*$/.test(pkg.name) && pkg.name === pkg.name.toLowerCase(),
+  String(pkg.name))
 
 for (const rel of [
   'dist/host.js',

@@ -7,7 +7,7 @@
  * 样式只用主题 token（--dsw-alias-*），局部 <style> 随组件挂载/卸载。
  */
 window.__ModuleLoader__.load({
-  id: '@local/dsh-github-resident-v2',
+  id: '@sunsetrne/dsh-github-resident-v2',
   factory(require) {
     const React = require('react');
     const h = React.createElement;
@@ -241,7 +241,7 @@ window.__ModuleLoader__.load({
               DeckUpdate ? h(DeckUpdate, null) : null)),
           h('p', { className: 'ghreg-answer' },
             '更新：检查更新走宿主 dsh-plugin-update 的入口件（就是上面那颗按钮）。'
-            + '本包是本地 private 包，更新走源码重新安装/构建，不从 npm 更新，也不会装回旧的 Deck 包。'),
+            + '本包自 v1.7.1 起是可发布的 npm 包（@sunsetrne/dsh-github-resident-v2）：走 npm 更新或源码重装都行，都不会装回旧的 Deck 包。'),
           reg.phase === 'unsupported'
             ? h('p', { className: 'ghreg-answer' }, '宿主未重启：/registry 返回 404，重启后刷新本页。')
             : null,

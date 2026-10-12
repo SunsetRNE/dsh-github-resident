@@ -34,7 +34,7 @@ const UpdateEntryHost = (props) => {
       // 宿主适配器按包默认值校验一遍；这里只传值，不拼电话名字面量）。
       // 合并后：`pluginId` 是更新包的**本地状态命名空间**，必须是去 scope 的合法标识
       // （`dsh-github-resident-v2`），与 Host 侧 `updateFromPackage.js` 的 `UPDATE_PLUGIN_ID` 逐字一致；
-      // 真正的 npm 包身份（含 scope 的 `@local/dsh-github-resident-v2`）由宿主显式作为
+      // 真正的 npm 包身份（含 scope 的 `@sunsetrne/dsh-github-resident-v2`）由宿主显式作为
       // `targetPackageName` 传下去。两者不能混用：带 `/` 的值会被更新包的 assertPluginId 在加载期拒绝。
       // 写回旧 Deck 包名会被宿主判为不匹配，更糟的是可能把用户装回旧 Deck —— 合并后明令禁止。
       entry = bundle.mountUpdateEntry(el, {

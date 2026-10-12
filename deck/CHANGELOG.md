@@ -1,3 +1,17 @@
+## 2026-10-13 · v1.8.0-rc.8 / 合并包 1.7.2：真机「字被图标替代」修复 + 构建装配坑补齐
+
+- **这是什么**：一次工作树内的真机修复版。宿主加载的是**合并包** `dist/*`（`package.json` 的 exports 指向它），
+  而 `npm run build:deck` 只重建 `deck/client.js`、不重建 `dist`，所以先前那轮改动在真机上一直看不到。
+- **改了什么**：
+  - `deck/src/client/statusbar/capFoldMachine.js`：横滑形态（可见行可用宽 ≥468px 或视口 ≤679px）下阶梯不再收字；
+    完整一行放不下时直接摊开第 0 档并落 `dsws-bar-scroll`，让溢出发生在滑窗而不是字上。
+  - `deck/src/client/statusbar/barScroll.js`：有可滑量时给 `.dsws-barcell` 加 `dsws-bar-scroll`。
+  - `deck/src/client/kernel/styles.js`：`.dsws-barcell.dsws-bar-scroll` 下各段 `flex:0 0 auto;min-width:auto`（选择器压过 `.dsws-capsule .dsws-capsule-word` 的 (0,2,0)）。
+- **版本号**：合并包 `1.7.1 → 1.7.2`，deck 包 `1.8.0-rc.7 → 1.8.0-rc.8`。
+- **验证**：`npm run build` 全量装配（dist/host.js 3881 B、dist/client.js 1934109 B）；
+  `verify-capsule-narrow` 210 PASS / 0 FAIL；`verify-640-dock-width-browser` 全用例 PASS。
+- **影响**：真机上那个「只剩图标与数字」的形态应当消失（12 段字全在、右端钉住、字滑出去拖回来还在）。
+
 ## 2026-10-11 · v1.8.0-rc.7 候选版：版本号推进版（相对 rc.6 无功能改动）
 
 - **这是什么**：1.8 系列的第七个候选版，正式发到 npm（`latest`）。相对 `rc.6` 没有任何功能改动，唯一的目的是再推进一个全新版本号并验证升级链路：装着 `rc.6` 的机器查更新能不能正常收到 `rc.7`、点安装能不能一次装上、装完面板版本号对不对。

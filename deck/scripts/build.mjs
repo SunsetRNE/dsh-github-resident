@@ -595,6 +595,7 @@ const LEAF_MODULES = [
   { id: 'StatusMenus', file: 'src/client/statusbar/StatusMenus.js' },
   { id: 'StatusBackend', file: 'src/client/statusbar/StatusBackend.js' },
   { id: 'capFold', file: 'src/client/statusbar/capFold.js' }, // #725 新增：状态栏胶囊那条横条的逐字折叠阶梯（纯函数，无组件）
+  { id: 'barScroll', file: 'src/client/statusbar/barScroll.js' }, // 2026-10-13 新增：这条横条的横滑窗（滑动的判定、箭头显隐、量尺寸）
   { id: 'capFoldMachine', file: 'src/client/statusbar/capFoldMachine.js' }, // #725 新增：同一处的阶梯机（读写胶囊那一段 DOM；判据在上一项，接线在 statusBar）
   { id: 'bannerChain', file: 'src/client/statusbar/bannerChain.js' }, // #663 新增：状态栏那条横幅按引导链清单决定出哪一条、那颗按钮点了做什么
   { id: 'logDangerConfirm', file: 'src/client/statusbar/LogDangerConfirm.js' }, // #954 高危险动作的就近确认框与留痕横幅（从 StatusLogMenu 搬出，那份叶子贴 350 行粒度红线）

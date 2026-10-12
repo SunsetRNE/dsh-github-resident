@@ -33,7 +33,7 @@ import { fileURLToPath } from 'node:url'
 // —— 合并后的身份（2026-10-11）——
 // 目标包（要检查/安装的那个包）**必须**是合并包自己：更新包对 `pluginId` 有硬约束
 // （assertPluginId 拒绝含 '/' 的值，见 dsh-plugin-update/dist/config.js），所以合并包名
-// `@local/dsh-github-resident-v2` 当 pluginId 会在**模块加载期**直接抛错。这里把两件事拆开：
+// `@sunsetrne/dsh-github-resident-v2` 当 pluginId 会在**模块加载期**直接抛错。这里把两件事拆开：
 //   - pluginId（本地状态命名空间，用去 scope 的合法标识）
 //   - targetPackageName / manifest 名字（真正的包身份，用完整的合并包名）
 // 旧 Deck 的包名只留作「漂移守卫」的对照值，**任何一条读/装路径都不再指向它**。
@@ -50,11 +50,14 @@ export const UPDATE_PHONE_PREFIX = 'wf'
 // 不会再被报「使用范围或插件位置认不出」。代价是跑稳定版的人也可能收到预发布推送——
 // 这是拍板时已知并接受的，见 CHANGELOG 里 v1.8.0-rc.2 一节。
 export const UPDATE_RELEASE_CHANNEL = 'prerelease'
-// 本地 private 包的事实（面板文案与失败路径要如实说，不许伪称 npm 可更新）：
-// 本包不发 npm，`private: true`，更新只能走源码/重新安装。
-export const UPDATE_LOCAL_PRIVATE = true
+// 发布事实（2026-10-13 改名后重定）：本包自 v1.7.1 起是**可发布**的 npm 包
+//   （`@sunsetrne/dsh-github-resident-v2`，根 package.json 里**没有** private 标记），
+//   所以更新走 npm 安装这条正路；下面两个常量留在导出面是为了「如实说」这条规矩本身，
+//   取值按当前发布状态写死，改状态时这一步必须一起改（门禁 pack-contract 会盯住根 package.json）。
+//   历史：v1.7.0 及以前是本地 private 包，更新只能走源码重装。
+export const UPDATE_LOCAL_PRIVATE = false
 export const UPDATE_LOCAL_PRIVATE_HINT =
-  '本包为本地 private 包（' + MERGED_PACKAGE_NAME + '）：更新走源码重新安装，不通过 npm 安装。'
+  '本包（' + MERGED_PACKAGE_NAME + '）自 v1.7.1 起可从 npm 安装更新；本地源码构建仍可用源码重装覆盖。'
 // 更新包自报的默认目标包名（要检查更新的那个包是谁）与官方源与默认前缀，
 // 供门禁核对「默认值与旧字面一致」。取值只从已安装包的配置面算出来，不在本文件另写字面。
 // targetPackageName 必须显式传——不传就落到更新包自带的旧 Deck 默认值，那是「装回旧 Deck」的根因。

@@ -2,7 +2,7 @@
  * tests/merge/host/deck-bridge-shared.test.mjs —— 「宿主那半边与 /tools 行模块共享同一个 exec-cell 实例」+ 正向代执行路径。
  *
  * 为什么这条非有不可：宿主半边按包根动态 import `<pkg>/deck/src/host/index.js`，而 agent 行由
- * cordis.patch.yml 的 `@local/dsh-github-resident-v2/tools` 经 `exports["./tools"]` 解析。只要这两条落点
+ * cordis.patch.yml 的 `@sunsetrne/dsh-github-resident-v2/tools` 经 `exports["./tools"]` 解析。只要这两条落点
  * 指向**不同目录**（历史上是 host 读 deck/src、/tools 读 deck/package/lib），`deck/src/shared/deck-tools/exec-cell.js`
  * 就会被 Node 当成**两个模块实例**（`exec-cell.js` 里的 cell 是模块局部变量，不是 global）。后果：
  *   宿主 `publishDeckTable()` 放进的表，行里的 `peekDeckTable()` 永远看不到 → 每一笔 deck_* 调用静默退回

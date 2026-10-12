@@ -137,7 +137,7 @@
         'tip.sendingComment': '正在提交评论',
         'tip.unsupportedAction': '不支持的动作类型，请检查后端声明',
         'cfg.status': '配置',
-        'cfg.sub': '这是本插件的配置页：工作区绑定是只读总览，底部是作者的其他插件。', 'cfg.updateInRegistry': '检查更新已并入「设置 → 仓库登记库」页的状态区。本包是本地 private 包：更新走源码重新安装/构建，不从 npm 更新，也不会装回旧的 Deck 包。',
+        'cfg.sub': '这是本插件的配置页：工作区绑定是只读总览，底部是作者的其他插件。', 'cfg.updateInRegistry': '检查更新已并入「设置 → 仓库登记库」页的状态区。本包自 v1.7.1 起是可发布的 npm 包（@sunsetrne/dsh-github-resident-v2）：走 npm 更新或源码重装都行，都不会装回旧的 Deck 包。',
         // 2026-09-21：「打开位置」整项已删 —— 面板现在只有 DSH 原生右侧边栏一条路，
         //   原 cfg.openIn / openInDesc / openInLabel / openInNative / openInSidebar / openInHint / openInSavedHint 七个键一并撤掉。
         'cfg.dbgTitle': '调试 / 诊断日志',

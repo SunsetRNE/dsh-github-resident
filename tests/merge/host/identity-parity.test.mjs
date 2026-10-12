@@ -28,7 +28,7 @@ check(Array.isArray(HOST_INJECT) && HOST_INJECT.length === 4, '真源 MERGED_HOS
 const pkg = readJson('package.json')
 const exportTarget = (key) => String((pkg.exports || {})[key] || '').replace(/^\.\//, '')
 check(pkg.name === MERGED, '根 package.json name === 真源（实际 ' + pkg.name + '）')
-check(pkg.private === true, '根 package.json private === true（本地包，不发 npm）')
+check(pkg.private === undefined, '根 package.json 无 private 标记（可发布包：@SunsetRNE 改名后走 npm publish）')
 check(pkg.exports['.'] === './dist/host.js', 'exports["."] 指向 dist/host.js')
 check(exportTarget('./tools') === identity.DECK_TOOLS_ROW_SOURCE, 'exports["./tools"] 与真源 DECK_TOOLS_ROW_SOURCE 一致（清单=' + exportTarget('./tools') + '，真源=' + identity.DECK_TOOLS_ROW_SOURCE + '）')
 check(pkg.exports['./deck'] === './deck/src/host/index.js', 'exports["./deck"] 保留原始宿主半边（回滚/兼容）')

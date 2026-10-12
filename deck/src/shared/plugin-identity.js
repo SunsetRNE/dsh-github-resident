@@ -12,7 +12,7 @@
 //   2. 本文件：**运行时**宿主侧真源（随包发布，客户端构建期注入的那份叫 DSW_IDENTITY，见 deck/scripts/build.mjs）。
 //   3. 客户端界面上的名字（「GitHub 常驻」）是词条，不是身份：它住在 kernel/locale-panel.js 的 panel.title。
 // 接线：零依赖，谁都能 import（客户端半边不会 import 它——客户端身份由构建期注入，客户端没有运行时 import）。
-export const MERGED_PACKAGE_NAME = '@local/dsh-github-resident-v2'
+export const MERGED_PACKAGE_NAME = '@sunsetrne/dsh-github-resident-v2'
 
 /** 去 scope 的插件标识：更新包的本地状态命名空间（带 `/` 会被 assertPluginId 在加载期拒绝）。 */
 export const UPDATE_PLUGIN_ID = MERGED_PACKAGE_NAME.replace(/^@[^/]+\//, '')

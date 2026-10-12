@@ -196,7 +196,7 @@ async function actEmit(cx, st, mutate) {
   })
 }
 
-section('3. 仓库登记库页真挂载：根包版本 + 本地 private 说明 + Deck 区块同页')
+section('3. 仓库登记库页真挂载：根包版本 + 发布状态说明 + Deck 区块同页')
 {
   const view = await renderTo(RegistryComp, null)
   const html = view.html()
@@ -204,8 +204,8 @@ section('3. 仓库登记库页真挂载：根包版本 + 本地 private 说明 +
   check('版本号来自根 package.json（含 ' + MERGED_VERSION + '）', has(html, MERGED_VERSION.replace(/^v/, '')))
   check('不显示 Deck 上游版本 1.8.0-rc.7', !has(html, '1.8.0-rc.7'))
   check('状态区有「插件版本」一行（唯一更新入口的位置）', has(html, '插件版本'))
-  check('如实说明本包是本地 private、更新走源码重装', has(html, '本地 private') && has(html, '源码重新安装'))
-  check('如实说明不从 npm 更新、不装回旧 Deck', has(html, '不从 npm 更新') && has(html, '不会装回旧的 Deck'))
+  check('如实说明发布状态（v1.7.1 起可 npm 安装）与源码重装两条路', has(html, 'v1.7.1 起是可发布的 npm 包') && has(html, '源码重装'))
+  check('如实说明更新两条路（npm / 源码）且不装回旧 Deck', has(html, 'npm 更新') && has(html, '不会装回旧的 Deck'))
   check('许可状态区渲染（读的是同一份 /registry 快照）', has(html, 'ghreg-ask') || has(html, '登记库已建立') || has(html, '未许可') || has(html, '许可'))
   check('Deck 交出的设置区块渲染在同一页里（mergeEmbed 交接）', has(html, 'dsws-embed') || has(html, 'dsws-cfg-group'))
   check('Deck 区块的标题渲染出来（同源组件）', has(html, '工作区总览') || has(html, 'cfg.wsTitle') || has(html, 'dsws-cfg-gtitle'))

@@ -18,7 +18,7 @@
 export const RDOM = (function () {
   try { if (typeof ReactDOM !== 'undefined' && ReactDOM && ReactDOM.createPortal) return ReactDOM } catch (e) { /* noop */ }
   try { if (typeof window !== 'undefined' && window.ReactDOM && window.ReactDOM.createPortal) return window.ReactDOM } catch (e) { /* noop */ }
-  try { if (typeof require === 'function') { const m = require('react-dom'); if (m && m.createPortal) return m } } catch (e) { /* noop */ }
+  try { if (typeof require === 'function') { const r = require('react-dom'); if (r && r.createPortal) return r } } catch (e) { /* noop */ }
   return null
 })()
 
