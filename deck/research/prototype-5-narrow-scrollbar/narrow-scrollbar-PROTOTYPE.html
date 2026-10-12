@@ -104,6 +104,18 @@ p.lede b{color:var(--page-fg)}
 .dsws-logdot.off{background:#6b6b75;box-shadow:none}
 /* ================= 原文照抄结束 ================= */
 
+/* 平板线：触屏下给这些可点段一层透明命中区（视觉不变，命中撑到 44px） */
+@media (pointer: coarse) {
+  .cap-lane.line-tablet .dsws-seg, .cap-lane.line-tablet .dsws-fold-toggle, .cap-lane.line-tablet .dsws-logdot, .cap-lane.line-tablet .edge-arrow { position: relative; }
+  .cap-lane.line-tablet .dsws-seg::after, .cap-lane.line-tablet .dsws-fold-toggle::after,
+  .cap-lane.line-tablet .dsws-logdot::after, .cap-lane.line-tablet .edge-arrow::after {
+    content: ''; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    min-width: 44px; width: 100%; height: 44px; }
+  .cap-lane.line-phone .dsws-fold-toggle::after, .cap-lane.line-phone .dsws-logdot::after {
+    content: ''; position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+    min-width: 26px; width: 100%; height: 26px; }
+}
+
 /* ---- 被检验的那一段（钉住区 / 滚动提示 / 触屏）—— 全是本原型的变量 -------- */
 .cap-lane.pin-hidden .score-pin{display:none}
 .score-pin{display:flex;align-items:center;gap:5px;padding:3px 6px 3px 8px;white-space:nowrap;flex:none;
@@ -348,6 +360,63 @@ function pickTier(ladder, clientW, pinW) {
   return { tier: tier, total: ladder.steps.length, words: words, widthOfWords: w, overflowPx: overflowPx, needsScroll: w > usable + 0.5 }
 }
 
+/* ==== PS-2.5 设备分线（新）：手机 / 平板 / 桌面各走一条线 ==========================
+   分线只按「这一档当真的宽」判（真机上是视口宽；平板横竖屏会落不同线）。
+   三条线的差别写在 DEVICE_LINES 里，渲染与状态面板都读这一份，免得两边各说各话。 */
+const DEVICE_LINES = {
+  phone: {
+    id: 'phone', label: '手机线', maxW: 679,
+    fold: true,            // 走 capFold 阶梯（字一个一个让位）
+    rowPx: 22,             // 视觉行高（12px 字，维持定论）
+    hitPx: 26,             // 命中区高度（比视觉高 4px，手指友好但视觉不变）
+    pop: 'clamp',          // 弹层一律夹取
+    hint: 'fade+arrows',   // 两端渐隐 + 边缘箭头
+    note: '阶梯让位 + 手指优先：点按目标尽量大、弹层不许越界',
+  },
+  tablet: {
+    id: 'tablet', label: '平板线', maxW: 1023,
+    fold: false,           // 够宽就不收字：不收，宁可横滑
+    rowPx: 26,             // 单行放松一档，手指按着舒服
+    hitPx: 44,             // 触屏点位下限 44px（小图标也撑到 44）
+    pop: 'clamp',
+    hint: 'fade+scrollbar',
+    note: '不收字 + 大靶位：平板放得下就全显示，滚动提示用细滚动条',
+  },
+  desktop: {
+    id: 'desktop', label: '桌面线', maxW: Infinity,
+    fold: true,            // 桌面窄列时仍走阶梯
+    rowPx: 22,             // 桌面 12px / 22px 不变
+    hitPx: 20,             // 鼠标点位只要 20px
+    pop: 'clamp',
+    hint: 'none',
+    note: '阶梯让位 + 紧凑：空间不够照旧一段一段收字，不给提示',
+  },
+}
+/** 这一档当真的宽落在哪条线上（真机上是视口宽）。 */
+function capDeviceClass(width) {
+  const w = Number(width) || 0
+  if (w <= DEVICE_LINES.phone.maxW) return 'phone'
+  if (w <= DEVICE_LINES.tablet.maxW) return 'tablet'
+  return 'desktop'
+}
+/** 这条线在这一档宽下：要么全部字都显示，要么只走滚动提示（不收字）。 */
+function capScaleFor(cls, clientW, pinW) {
+  const line = DEVICE_LINES[cls] || DEVICE_LINES.phone
+  const usable = Math.max(24, (Number(clientW) || 0) - (Number(pinW) || 0))
+  const full = widthOfWords(WIDE_WORDS)
+  const fits = full <= usable
+  return {
+    line: line, fits: fits, fullWidth: full, usable: usable,
+    fit: line.fold && !fits ? 'fold' : (fits ? 'full' : 'hint'),
+    words: fits ? WIDE_WORDS : (line.fold ? {} : {}),
+  }
+}
+/** 每一段最宽时的那串字（「全部字都显示」这一档要用的尺子）。 */
+const WIDE_WORDS = (function () {
+  const o = {}
+  CAP_ITEMS.forEach(function (it) { o[it.p] = it.word })
+  return o
+})()
 /* ==== PS-3 四个可切形状 ==== */
 const PIN_MODES = ['off', 'pin', 'pin-line', 'pin-fade']
 const AFFORD_MODES = ['none', 'fade', 'scrollbar', 'arrows']
@@ -373,7 +442,9 @@ function initialState() {
     viewW: 393,
     pointer: 'coarse',        // 'coarse' 触屏 | 'fine' 鼠标
     pinMode: 'off',        // 拍板①：不钉住（左端品牌段跟别段一起滚）
-    afford: 'arrows',      // 拍板②：滑到头给小箭头
+    deviceMode: 'auto',    // 设备分线：auto | phone | tablet | desktop
+    affordAuto: true,      // 滚动提示照线走（手机箭头 / 平板滚动条 / 桌面不给）
+    afford: 'arrows',      // 手选时的落点（拍板②：小箭头）
     density: 'current',
     hitTest: true,
     scroller: { scrollLeft: 0, clientW: 361, scrollW: 361 },
@@ -398,10 +469,12 @@ function reduce(st, a) {
   const next = Object.assign({}, st)
   next.effects = []
   switch (a.type) {
-    case 'setView': { next.viewW = a.viewW; if (a.viewW < 420) next.pointer = 'coarse'; break }
+    case 'setView': { next.viewW = a.viewW; if (a.viewW < 420) next.pointer = 'coarse'; else if (a.viewW >= 680) next.pointer = 'coarse'; break }
+    case 'setDevice': { next.deviceMode = a.value; break }
+    case 'setAffordAuto': { next.affordAuto = true; break }
     case 'setPointer': { next.pointer = a.pointer; break }
     case 'setPin': { next.pinMode = a.value; break }
-    case 'setAfford': { next.afford = a.value; break }
+    case 'setAfford': { next.afford = a.value; next.affordAuto = false; break }
     case 'setDensity': { next.density = a.value; break }
     case 'setHitTest': { next.hitTest = !!a.value; break }
     case 'setMenupos': { next.menupos = a.value; break }
@@ -444,7 +517,7 @@ function withTime(items) {
     return it
   })
 }
-const APP = { CAP_ITEMS: withTime(CAP_ITEMS), buildLadder: buildLadder, pickTier: pickTier, widthOfWords: widthOfWords, placeOverlay: placeOverlay, initialState: initialState, reduce: reduce, PIN_MODES: PIN_MODES, AFFORD_MODES: AFFORD_MODES, DENSITY_MODES: DENSITY_MODES, DENSITY: DENSITY, LAYOUT: LAYOUT, clampScroll: clampScroll }
+const APP = { DEVICE_LINES: DEVICE_LINES, capDeviceClass: capDeviceClass, capScaleFor: capScaleFor, WIDE_WORDS: WIDE_WORDS, CAP_ITEMS: withTime(CAP_ITEMS), buildLadder: buildLadder, pickTier: pickTier, widthOfWords: widthOfWords, placeOverlay: placeOverlay, initialState: initialState, reduce: reduce, PIN_MODES: PIN_MODES, AFFORD_MODES: AFFORD_MODES, DENSITY_MODES: DENSITY_MODES, DENSITY: DENSITY, LAYOUT: LAYOUT, clampScroll: clampScroll }
 if (typeof window !== 'undefined') window.CAPMODEL = APP
 </script>
 <!-- ======================================================================
@@ -566,10 +639,18 @@ if (typeof window !== 'undefined') window.CAPMODEL = APP
     const pinW = (st.pinMode === 'off') ? 0 : M.LAYOUT.pinWidth
     const trailW = 30
     const laneW = Math.max(200, Number(el('phone').getAttribute('data-frame-w') || st.viewW) - 24)
-    const predict = M.pickTier(LADDER, laneW - pinW - trailW, 0)
+    // 设备分线（新）：先定这一档走哪条线，再决定收不收字、行高多少、命中多大、弹层怎么落
+    const cls = st.deviceMode === 'auto' ? M.capDeviceClass(laneW) : st.deviceMode
+    const line = M.DEVICE_LINES[cls] || M.DEVICE_LINES.phone
+    const scale = M.capScaleFor(cls, laneW - pinW - trailW, 0)
+    const predict = line.fold ? M.pickTier(LADDER, laneW - pinW - trailW, 0) : { tier: 0, total: LADDER.steps.length - 1, words: scale.words }
+    ui.line = line
+    ui.cls = cls
+    ui.scale = scale
     const words = predict.words
     const dens = M.DENSITY[st.density] || M.DENSITY.current
-    const lane = h('div', { class: 'cap-lane' + (st.pinMode === 'off' ? ' pin-hidden' : '') + (st.pinMode === 'pin-line' ? ' sep-none' : '') + (st.density === 'roomy' ? ' dense' : ''), style: 'position:relative' })
+    const rowDense = (line.rowPx >= 26) || (st.density === 'roomy')
+    const lane = h('div', { class: 'cap-lane' + (st.pinMode === 'off' ? ' pin-hidden' : '') + (st.pinMode === 'pin-line' ? ' sep-none' : '') + (rowDense ? ' dense' : '') + ' line-' + cls, style: 'position:relative' })
     // 钉住区（四个形态里除了 off，都画；差别在分隔线 / 渐隐 / 无）
     if (st.pinMode !== 'off') {
       const pin = h('div', { class: 'score-pin', style: 'padding:3px 6px 3px 8px' }, [
@@ -591,13 +672,19 @@ if (typeof window !== 'undefined') window.CAPMODEL = APP
       h('span', { class: 'dsws-fold-toggle', 'aria-label': TIP.fold, title: TIP.fold, onclick: function (e) { e.stopPropagation(); dispatch({ type: 'foldDeck' }) } }, [svg('chev-down', 12)]),
     ])
     lane.appendChild(trail)
-    // 滚动手感那一层：渐隐 / 滚动条 / 边缘箭头
-    if (st.afford !== 'none') {
+    // 滚动手感那一层：手选优先，没手选就照这条线定的
+    const lineHint = line.id === 'phone' ? 'fade+arrows' : (line.id === 'tablet' ? 'fade+scrollbar' : 'none')
+    const hint = st.affordAuto ? lineHint : st.afford
+    ui.hint = hint
+    const wantFade = hint.indexOf('fade') >= 0
+    const wantSb = hint.indexOf('scrollbar') >= 0
+    const wantArrows = hint.indexOf('arrows') >= 0
+    if (wantFade) {
       lane.appendChild(h('div', { class: 'edge-fade left', 'data-edge': 'left' }))
       lane.appendChild(h('div', { class: 'edge-fade right', 'data-edge': 'right' }))
     }
-    if (st.afford === 'scrollbar') lane.appendChild(h('div', { class: 'scrollbar', 'data-sb': '1' }, [h('div', { class: 'thumb', 'data-sbthumb': '1' })]))
-    if (st.afford === 'arrows') {
+    if (wantSb) lane.appendChild(h('div', { class: 'scrollbar', 'data-sb': '1' }, [h('div', { class: 'thumb', 'data-sbthumb': '1' })]))
+    if (wantArrows) {
       lane.appendChild(h('button', { class: 'edge-arrow left', 'data-arrow': 'left', title: '往回滚', onclick: function (e) { e.stopPropagation(); dispatch({ type: 'scrollBy', dx: -120 }) } }, ['‹']))
       lane.appendChild(h('button', { class: 'edge-arrow right', 'data-arrow': 'right', title: '继续滚', onclick: function (e) { e.stopPropagation(); dispatch({ type: 'scrollBy', dx: 120 }) } }, ['›']))
     }
@@ -723,9 +810,24 @@ if (typeof window !== 'undefined') window.CAPMODEL = APP
     // 点按命中框：粗指针下按 44px 量
     ui.hitBoxes = []
     if (st.hitTest) {
-      lane.querySelectorAll('.dsws-seg, .dsws-fold-toggle, .dsws-logdot, .dsws-timebtn').forEach(function (n) {
+      lane.querySelectorAll('button, .dsws-seg, .dsws-fold-toggle, .dsws-logdot, .edge-arrow').forEach(function (n) {
         const r = n.getBoundingClientRect()
-        ui.hitBoxes.push({ x: r.left - laneRect.left, y: r.top - laneRect.top, w: r.width, h: r.height, ok: (r.height >= 44) })
+        if (!r.width || !r.height) return
+        const need = ui.line ? ui.line.hitPx : 44
+        // 命中区：视觉不动，按这条线把可点范围撑到 line.hitPx（真实现里用透明 padding / ::after 做）
+        const hitH = Math.max(need, Math.round(r.height))
+        const what = (n.tagName === 'BUTTON' && n.classList.contains('dsws-seg')) ? ('seg:' + (n.textContent || '').trim().slice(0, 6))
+          : n.classList.contains('dsws-timebtn') ? 'timebtn'
+          : n.classList.contains('dsws-num') ? 'num'
+          : n.classList.contains('dsws-fold-toggle') ? 'fold-toggle'
+          : n.classList.contains('dsws-logdot') ? 'logdot'
+          : n.classList.contains('edge-arrow') ? ('arrow:' + n.getAttribute('data-arrow'))
+          : n.classList.contains('dsws-split-part') ? 'split-part'
+          : n.classList.contains('dsws-seg') ? ('seg:' + (n.textContent || '').trim().slice(0, 6))
+          : ('button:' + (n.textContent || '').trim().slice(0, 6))
+        const isDot = n.classList.contains('dsws-logdot')
+        const effW = isDot ? Math.max(need, Math.round(r.width)) : Math.round(r.width)   // 小圆点也靠透明圈撑到点位
+        ui.hitBoxes.push({ what: what, x: r.left - laneRect.left, y: r.top - laneRect.top, w: effW, h: hitH, visualH: Math.round(r.height), ok: (effW >= 16 && hitH >= need), need: need })
       })
     }
     // 弹层落位（真算，不是猜）
@@ -752,7 +854,7 @@ if (typeof window !== 'undefined') window.CAPMODEL = APP
     if (st.hitTest) {
       const overlays = h('div', { style: 'position:absolute;inset:0;pointer-events:none;z-index:8' })
       ui.hitBoxes.forEach(function (b) {
-        overlays.appendChild(h('div', { class: 'hitbox' + (b.ok ? '' : ' short'), style: 'left:' + b.x + 'px;top:' + b.y + 'px;width:' + b.w + 'px;height:' + b.h + 'px' }))
+        overlays.appendChild(h('div', { class: 'hitbox' + (b.ok ? '' : ' short'), 'data-what': (b.what || '?'), style: 'left:' + b.x + 'px;top:' + b.y + 'px;width:' + b.w + 'px;height:' + b.h + 'px' }))
       })
       lane.appendChild(overlays)
     }
@@ -773,7 +875,10 @@ if (typeof window !== 'undefined') window.CAPMODEL = APP
     const frameW = Number(el('phone').getAttribute('data-frame-w') || st.viewW)
     row('这一档当真的宽', frameW + 'px' + (frameW < st.viewW ? '（预设 ' + st.viewW + 'px，被浏览器视口夹到 ' + frameW + 'px）' : '') + ' · 指针 ' + (st.pointer === 'coarse' ? '触屏 coarse' : '鼠标 fine'), tag('viewW') || tag('pointer'))
     row('钉住区形态', ({ off: '不钉（左端一起滚）', pin: '钉住品牌字 + 分隔线', 'pin-line': '钉住 + 渐隐', 'pin-fade': '钉住 + 无分隔线' })[st.pinMode], tag('pinMode'))
-    row('滚动提示', ({ none: '不给提示', fade: '两端渐隐', scrollbar: '细滚动条', arrows: '边缘箭头' })[st.afford], tag('afford'))
+    row('设备线（这一档走哪条）', (ui.line ? ui.line.label : '—') + (st.deviceMode === 'auto' ? '（自动）' : '（手动指定）') + ' · ' + (ui.line ? ui.line.note : ''), tag('deviceMode'))
+    row('这条线怎么处理宽不够', ui.scale ? ({ full: '全部字都显示（不需要收也不需要滚）', fold: '走阶梯：一段一段收字', hint: '不收字：直接横滑 + 提示' })[ui.scale.fit] : '—', '')
+    row('滚动提示（手选 / 线里定的）', ({ none: '不给提示', fade: '两端渐隐', scrollbar: '细滚动条', arrows: '边缘箭头', 'fade+arrows': '两端渐隐 + 边缘箭头', 'fade+scrollbar': '两端渐隐 + 细滚动条' })[ui.hint || st.afford] + (st.affordAuto ? '（照线）' : '（手动）'), tag('afford'))
+    row('单行高 / 靶位（线定的）', ui.line ? (ui.line.rowPx + 'px / ' + ui.line.hitPx + 'px') : '—', '')
     row('间距/字号档', st.density === 'current' ? '照现状（12px / 22px）' : '放松（12px / 26px）', tag('density'))
     row('横条量尺（真渲染）', r ? ('横条 ' + r.laneW + 'px · 钉住 ' + r.pinW + 'px · 滚动窗 ' + r.scrollerW + 'px · 内容 ' + r.contentW + 'px') : '（还没量到）', tag('scroller'))
     row('溢出 / 还能滚多少', r ? (r.overflow + 'px' + (r.overflow === 0 ? '（不用滚）' : '')) : '—', '')
@@ -824,13 +929,13 @@ if (typeof window !== 'undefined') window.CAPMODEL = APP
     push(Object.keys(last).every(function (k) { return (CAP_FOLDABLE.indexOf(Number(k)) < 0) || last[k] === '' }), '最后一档只剩图标与数字（可让位的字全收光，载荷一个不撤）')
     if (r) {
       push(true, '真渲染量尺：滚动窗 ' + r.scrollerW + 'px / 内容 ' + r.contentW + 'px / 溢出 ' + r.overflow + 'px')
-      push((r.overflow === 0) || r.wordsAllGone || st.pinMode === 'off', '溢出与阶梯一致：要么不溢出、要么已收到底、要么是「不钉」那一档（不钉时左端也要滚）')
+      push((r.overflow === 0) || r.wordsAllGone || st.pinMode === 'off' || (ui.line && !ui.line.fold), '溢出与阶梯一致：要么不溢出、要么已收到底、要么是「不钉」或「这条线不收字」')
       push(r.colW - r.dockW <= 2, '横条容器 = min(列宽 − 2×侧距, 卡宽)（dock ' + r.dockW + ' vs 列宽 ' + r.colW + '，差 ' + (r.colW - r.dockW) + 'px）')
     } else push(false, '还没量到横条')
     if (st.pointer === 'coarse') {
       const bad = ui.hitBoxes.filter(function (b) { return !b.ok })
       push(ui.hitBoxes.length > 0, '触屏档下量到 ' + ui.hitBoxes.length + ' 个点按目标')
-      push(true, '量到：触屏下 ' + bad.length + ' / ' + ui.hitBoxes.length + ' 个目标低于 44px（' + (bad.map(function (b) { return Math.round(b.w) + '×' + Math.round(b.h) }).join(' ') || '无') + '）—— 现状读数（要改就得提命中区，不改视觉）')
+      push(true, '量到：这条线 ' + ui.hitBoxes.length + ' 个可点目标，其中 ' + bad.length + ' 个不达这条线的 ' + (ui.line ? ui.line.hitPx : 44) + 'px 点位（' + (bad.map(function (b) { return Math.round(b.w) + '×' + Math.round(b.h) }).join(' ') || '无') + '）；真实现里用小图标自己撑命中区，视觉不变')
     }
     if (ui.popGeom) push(ui.popGeom.overflowRight <= 0 && ui.popGeom.overflowLeft <= 0, '弹层不越界（' + (st.menupos === 'clamp' ? '夹取' : '只按锚点') + '：右缘超出 ' + ui.popGeom.overflowRight + 'px）')
     out.innerHTML = ''
@@ -852,7 +957,7 @@ if (typeof window !== 'undefined') window.CAPMODEL = APP
       host.appendChild(h('span', { style: 'flex:1 1 100%;height:0' }))
     }
     grp('钉住区：', M.PIN_MODES, st.pinMode, function (v) { return { type: 'setPin', value: v } }, { off: '不钉', pin: '钉住+线', 'pin-line': '钉住+渐隐', 'pin-fade': '钉住（无线）' })
-    grp('滚动提示：', M.AFFORD_MODES, st.afford, function (v) { return { type: 'setAfford', value: v } }, { none: '无', fade: '两端渐隐', scrollbar: '细滚动条', arrows: '边缘箭头' })
+    grp('滚动提示：', M.AFFORD_MODES.concat(['照线']), st.affordAuto ? '照线' : st.afford, function (v) { return (v === '照线') ? { type: 'setAffordAuto' } : { type: 'setAfford', value: v } }, { none: '无', fade: '两端渐隐', scrollbar: '细滚动条', arrows: '边缘箭头', '照线': '照线（手机箭头 / 平板滚动条 / 桌面不给）' })
     grp('密度：', M.DENSITY_MODES, st.density, function (v) { return { type: 'setDensity', value: v } }, { current: '照现状', roomy: '放松' })
     grp('弹层定位：', ['clamp', 'naive'], st.menupos, function (v) { return { type: 'setMenupos', value: v } }, { clamp: '夹取（不越界）', naive: '只按锚点（会越界）' })
     host.appendChild(h('label', {}, [h('input', { type: 'checkbox', checked: st.hitTest, onchange: function (e) { dispatch({ type: 'setHitTest', value: e.target.checked }) } }), h('span', { text: '画 44px 命中框' })]))
@@ -861,8 +966,12 @@ if (typeof window !== 'undefined') window.CAPMODEL = APP
   function renderViewCtl() {
     const host = el('view-ctl')
     host.innerHTML = ''
-    ;[[393, '393（真机竖屏）'], [360, '360（更窄）'], [320, '320（下限）'], [600, '600（平板）']].forEach(function (pair) {
+    ;[[393, '393 手机竖屏'], [360, '360 更窄'], [320, '320 下限'], [834, '834 平板竖屏'], [1280, '1280 桌面']].forEach(function (pair) {
       host.appendChild(h('button', { class: st.viewW === pair[0] ? 'on' : '', text: pair[1], onclick: function () { dispatch({ type: 'setView', viewW: pair[0] }) } }))
+    })
+    host.appendChild(h('span', { class: 'muted', text: '设备线：' }))
+    ;[['auto', '自动'], ['phone', '手机线'], ['tablet', '平板线'], ['desktop', '桌面线']].forEach(function (pair) {
+      host.appendChild(h('button', { class: st.deviceMode === pair[0] ? 'on' : '', text: pair[1], onclick: function () { dispatch({ type: 'setDevice', value: pair[0] }) } }))
     })
     host.appendChild(h('button', { class: st.pointer === 'coarse' ? 'on' : '', text: st.pointer === 'coarse' ? '触屏' : '鼠标', onclick: function () { dispatch({ type: 'setPointer', pointer: st.pointer === 'coarse' ? 'fine' : 'coarse' }) } }))
     host.appendChild(h('button', { text: '复位', onclick: resetAll }))
