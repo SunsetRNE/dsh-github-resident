@@ -1,0 +1,12 @@
+const { chromium } = require('playwright')
+const PROTO=process.env.PROTO || require('path').join(__dirname,'..','narrow-scrollbar-PROTOTYPE.html')
+;(async()=>{
+ const b=await chromium.launch({executablePath:process.env.HOME+'/.cache/ms-playwright/chromium-1208/chrome-linux/chrome',args:['--no-sandbox','--disable-dev-shm-usage']})
+ const p=await b.newPage({viewport:{width:412,height:900},deviceScaleFactor:2,hasTouch:true,isMobile:true})
+ const errs=[]; p.on('pageerror',e=>errs.push(e.message))
+ await p.goto('file://'+PROTO); await p.waitForTimeout(300)
+ const m=await p.evaluate(()=>({bodyW:document.body.scrollWidth, winW:window.innerWidth, phone:document.getElementById('phone').getBoundingClientRect().width, lane:document.querySelector('.cap-lane').getBoundingClientRect().width, self:Array.from(document.querySelectorAll('#selftest span')).filter(s=>s.className==='fail').length}))
+ console.log('412px 视口：', JSON.stringify(m), '错误', errs.length?errs:'无')
+ await p.screenshot({path:'/root/local-dsh-github-resident-v2/deck/research/prototype-5-narrow-scrollbar/shot-09-412-real-phone-view.png'})
+ await b.close()
+})()

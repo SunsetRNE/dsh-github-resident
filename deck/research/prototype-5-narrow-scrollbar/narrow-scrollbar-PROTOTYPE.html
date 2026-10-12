@@ -1,0 +1,988 @@
+<!DOCTYPE html>
+<html lang="zh-Hans">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>原型 #5 · 窄屏横滑条（钉住区 / 滚动手感 / 触屏点开）</title>
+<style>
+/* ==========================================================================
+   原型（throwaway）· 票 SunsetRNE/dsh-github-resident#5
+   问题：窄屏（393px）下这条横条长什么样、摸起来怎样。
+   页面外壳是抛的；下面标了「原文照抄」的 CSS/几何是从真代码里抠出来的，不是手抄的印象。
+   ========================================================================== */
+:root{
+  --dsw-alias-bg-layer-1:#10131a; --dsw-alias-bg-layer-2:#16181d;
+  --dsw-alias-border-l1:#2a2d35; --dsw-alias-label-primary:#e6edf3;
+  --dsw-alias-label-secondary:#a1a1aa; --dsw-alias-label-caption:#8b8b95;
+  --dsw-alias-interactive-bg-hover:rgba(255,255,255,.08);
+  --page-bg:#0a0a0c; --page-fg:#e6edf3; --accent:#58a6ff; --accent-dim:rgba(88,166,255,.14);
+  --ok:#4ade80; --warn:#f59e0b; --bad:#f87171; --vio:#c084fc;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--page-bg);color:var(--page-fg);
+  font:14px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI","Noto Sans SC","PingFang SC",sans-serif;}
+.wrap{max-width:1180px;margin:0 auto;padding:22px 18px 64px}
+h1{font-size:19px;margin:0 0 6px;letter-spacing:.2px}
+h2{font-size:15px;margin:0 0 10px}
+h3{font-size:13px;margin:0 0 8px;color:var(--dsw-alias-label-caption);font-weight:600}
+p.lede{margin:0 0 4px;color:var(--dsw-alias-label-secondary);font-size:13px}
+p.lede b{color:var(--page-fg)}
+.badge{display:inline-block;font-size:11px;padding:1px 7px;border-radius:99px;border:1px solid var(--warn);
+  color:var(--warn);vertical-align:2px;margin-left:6px}
+.muted{color:var(--dsw-alias-label-caption);font-size:12px}
+.card{background:#0f1116;border:1px solid var(--dsw-alias-border-l1);border-radius:12px;padding:14px;margin:14px 0}
+.cols{display:flex;gap:16px;flex-wrap:wrap;align-items:flex-start}
+.col-l{flex:0 0 auto}
+.col-r{flex:1 1 380px;min-width:340px}
+/* ---- 手机框：393px 竖屏，量出来的每条都用它 ------------- */
+.phone{width:min(var(--phone-w,393px),100vw);border:1px solid #262a33;border-radius:18px;background:#0c0e13;padding:10px 0 14px;
+  box-shadow:0 10px 40px rgba(0,0,0,.5)}
+.phone-cap{font-size:11px;color:var(--dsw-alias-label-caption);padding:0 12px 8px;display:flex;justify-content:space-between}
+.screen{padding:0 12px}
+.composer-hint{height:74px;border:1px solid #1d2129;border-radius:10px;background:#0b0d12;margin-top:8px;
+  display:flex;align-items:flex-end;padding:8px 10px;color:#5c6270;font-size:12px}
+/* ---- 真代码形状：外层 wrapper（#640 几何） ------------- */
+.dsws-dock{display:flex;flex-direction:column;align-items:center;gap:4px;position:relative;min-width:0;
+  width:calc(100% - 2 * var(--dsh-composer-side-clearance,0px));
+  max-width:var(--dsh-composer-card-max-width,100%);margin-left:auto;margin-right:auto;
+  padding:3px 0 0;overflow:hidden}
+.dsws-banner{display:flex;flex-wrap:wrap;align-items:center;gap:8px;row-gap:6px;border-radius:8px;
+  padding:6px 10px;font-size:12px;margin:6px 0;cursor:pointer;max-width:560px;
+  background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.45);color:#fbbf24}
+.dsws-banner-text{flex:1 0 auto;min-width:72px;overflow-wrap:anywhere;line-height:1.35}
+.dsws-banner-act{flex:0 1 auto;max-width:100%;white-space:normal;text-align:left;line-height:1.35;
+  font-size:11px;padding:2px 8px;border-radius:6px;background:none;color:inherit;
+  border:1px solid rgba(245,158,11,.6);cursor:pointer;font-family:inherit}
+.dsws-banner-fold-x{border:1px solid rgba(245,158,11,.6);color:inherit;background:none;border-radius:6px;
+  padding:1px 6px;margin-left:12px;display:inline-flex;align-items:center;cursor:pointer}
+/* 收起态：10px 灰字按钮（原文） */
+.dsws-folded-btn{display:inline-flex;align-items:center;gap:4px;font-size:10px;padding:0 8px;line-height:1.2;
+  border:none;border-radius:99px;color:var(--dsw-alias-label-caption);background:none;cursor:pointer;font-family:inherit}
+.dsws-folded-wrap{display:flex;justify-content:center;align-self:center}
+
+/* ================= 原文照抄：kernel/styles.js 的胶囊与分段 ================= */
+.cap-lane{display:flex;width:100%;max-width:var(--dsh-composer-card-max-width,100%);
+  background:var(--dsw-alias-bg-layer-1,#10131a);border:1px solid var(--dsw-alias-border-l1,#2a2d35);
+  border-radius:14px;overflow:hidden}
+.cap-scroller{flex:1 1 auto;min-width:0;overflow-x:auto;overflow-y:hidden;display:flex;
+  scrollbar-width:none;overscroll-behavior-x:contain;touch-action:pan-x}
+.cap-scroller::-webkit-scrollbar{height:0;display:none}
+.cap-phantom{display:flex;align-items:center;gap:2px 6px;padding:3px 6px;white-space:nowrap;min-width:100%}
+.dsws-capsule{width:100%;box-sizing:border-box;display:flex;flex-wrap:nowrap;white-space:nowrap;
+  justify-content:space-between;align-items:center;gap:2px 6px;background:var(--dsw-alias-bg-layer-1,#10131a);
+  border:1px solid var(--dsw-alias-border-l1,#2a2d35);border-radius:14px;padding:3px 6px;font-size:12px;
+  color:var(--dsw-alias-label-secondary,#a1a1aa);cursor:pointer;user-select:none}
+.dsws-capsule .dsws-capsule-word{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:99px;
+  font-weight:600;color:var(--dsw-alias-label-primary,#e6edf3);flex:0 1 auto;min-width:0;max-width:max-content;
+  justify-content:flex-start;column-gap:5px}
+.dsws-capsule .dsws-capsule-word:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.08))}
+.dsws-capsule .dsws-seg{flex:none}
+.dsws-capsule .dsws-timebtn{flex:none}
+.dsws-capsule [data-fold-priority].dsws-folded{display:none}
+.dsws-seg{cursor:pointer;padding:2px 7px;border-radius:99px;border:1px solid transparent;display:inline-flex;
+  align-items:center;gap:4px;font-family:inherit;font-size:12px;background:none}
+.dsws-seg:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.08));
+  border-color:var(--dsw-alias-border-l1,#2a2d35)}
+.dsws-num{display:inline-block;min-width:5ch;text-align:center;font-variant-numeric:tabular-nums;
+  font-family:var(--ds-font-family-code,Consolas,Menlo,monospace);font-size:11px;line-height:1.5;white-space:nowrap}
+.dsws-timebtn{cursor:pointer;padding:2px 7px;border-radius:99px;border:1px dashed transparent;
+  color:var(--dsw-alias-label-caption,#8b8b95);white-space:nowrap;font-variant-numeric:tabular-nums;
+  display:inline-flex;align-items:center;gap:4px;font-family:inherit;font-size:12px;background:none}
+.dsws-timebtn:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.08));
+  border-color:var(--dsw-alias-border-l1,#2a2d35);color:var(--dsw-alias-label-primary,#e6edf3)}
+.dsws-split{display:inline-flex;align-items:center;border:1px solid transparent;border-radius:99px;flex:none;overflow:hidden}
+.dsws-split:hover{border-color:var(--dsw-alias-border-l1,#2a2d35)}
+.dsws-split .dsws-split-part{display:inline-flex;align-items:center;gap:4px;padding:2px 7px;cursor:pointer;background:none;border:none;font-family:inherit;font-size:12px}
+.dsws-split .dsws-split-part:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.08))}
+.dsws-split .dsws-split-div{width:1px;height:14px;background:var(--dsw-alias-border-l1,#2a2d35);flex:none;opacity:0;transition:opacity .12s}
+.dsws-split:hover .dsws-split-div{opacity:1}
+.dsws-fold-toggle{display:inline-flex;align-items:center;padding:2px 2px;border-radius:6px;
+  color:var(--dsw-alias-label-caption,#8b8b95);cursor:pointer;flex:none;background:none;border:none}
+.dsws-fold-toggle:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.08));color:var(--dsw-alias-label-primary,#e6edf3)}
+.dsws-logdot{width:10px;height:10px;border-radius:99px;flex:none;cursor:pointer;display:inline-block;
+  vertical-align:middle;background:#4ade80;box-shadow:0 0 6px rgba(74,222,128,.6)}
+.dsws-logdot.off{background:#6b6b75;box-shadow:none}
+/* ================= 原文照抄结束 ================= */
+
+/* ---- 被检验的那一段（钉住区 / 滚动提示 / 触屏）—— 全是本原型的变量 -------- */
+.cap-lane.pin-hidden .score-pin{display:none}
+.score-pin{display:flex;align-items:center;gap:5px;padding:3px 6px 3px 8px;white-space:nowrap;flex:none;
+  background:var(--dsw-alias-bg-layer-1,#10131a);color:var(--dsw-alias-label-primary,#e6edf3);font-weight:600}
+.score-pin .pin-word{display:inline-flex;align-items:center;gap:5px;padding:2px 8px;border-radius:99px}
+.score-pin .pin-word:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.08))}
+.sep-line{border-left:1px solid var(--dsw-alias-border-l1,#2a2d35);align-self:stretch;margin:2px 0}
+.sep-shadow{box-shadow:6px 0 8px -6px rgba(0,0,0,.75)}
+.sep-fade{width:18px;align-self:stretch;flex:none;
+  background:linear-gradient(to right,rgba(16,19,26,.95),rgba(16,19,26,0));margin-left:-18px;pointer-events:none}
+.cap-lane.sep-none .sep-line,.cap-lane.sep-none .cap-trail-fade{display:none}
+/* 密度档「放松」：单行高从 22px 撑到 26px（要维护者拍的那一条） */
+.cap-lane.dense .dsws-seg,.cap-lane.dense .dsws-timebtn,.cap-lane.dense .dsws-split .dsws-split-part,.cap-lane.dense .pin-word{padding-top:4px;padding-bottom:4px}
+.cap-lane.dense .dsws-num{line-height:1.9}
+.cap-lane.sep-none.sep-shadow-on .score-pin{box-shadow:6px 0 8px -6px rgba(0,0,0,.75)}
+.edge-fade{position:absolute;top:1px;bottom:1px;width:26px;pointer-events:none;display:none;z-index:3}
+.edge-fade.on{display:block}
+.edge-fade.left{left:0;background:linear-gradient(to right,rgba(16,19,26,.92),rgba(16,19,26,0));border-radius:14px 0 0 14px}
+.edge-fade.right{right:0;background:linear-gradient(to left,rgba(16,19,26,.92),rgba(16,19,26,0));border-radius:0 14px 14px 0}
+.edge-arrow{position:absolute;top:50%;transform:translateY(-50%);width:26px;height:26px;border-radius:99px;
+  border:1px solid var(--dsw-alias-border-l1,#2a2d35);background:#171a21;color:var(--page-fg);cursor:pointer;
+  display:none;align-items:center;justify-content:center;z-index:4;font-size:12px;padding:0}
+.edge-arrow.on{display:inline-flex}
+.edge-arrow.left{left:4px}
+.edge-arrow.right{right:4px}
+.scrollbar{position:absolute;left:8px;right:8px;bottom:2px;height:3px;border-radius:99px;display:none;z-index:3}
+.scrollbar.on{display:block}
+.scrollbar .thumb{height:3px;border-radius:99px;background:rgba(255,255,255,.28)}
+.pill{display:inline-flex;align-items:center;gap:4px;height:34px;padding:0 6px;border-radius:14px;flex:none}
+.hitbox{position:absolute;border:1px dashed var(--ok);border-radius:6px;pointer-events:none;z-index:9}
+.hitbox.short{border-color:var(--bad)}
+.hitlabel{position:absolute;z-index:10;font:10px/1.4 monospace;color:var(--ok);background:rgba(0,0,0,.75);
+  padding:0 3px;border-radius:3px;pointer-events:none;white-space:nowrap}
+.pop{position:absolute;z-index:2147483000;padding:4px;background:var(--dsw-alias-bg-layer-2,#16181d);
+  border:1px solid var(--dsw-alias-border-l1,#2a2d35);border-radius:8px;box-shadow:0 8px 30px rgba(0,0,0,.45)}
+.pop .row{display:inline-flex;align-items:center;gap:6px;padding:4px 8px;border-radius:4px;cursor:pointer;font-size:12px;white-space:nowrap;border:none;background:none;font-family:inherit;color:var(--dsw-alias-label-primary,#e6edf3)}
+.pop.dense .row{padding:10px 10px;min-height:40px}
+.pop .row.take{color:#c084fc}.pop .row.take:hover{background:rgba(192,132,252,.15)}
+.pop .row.bug{color:#f87171}.pop .row.bug:hover{background:rgba(248,113,113,.15)}
+.pop .row.vio{color:#c084fc}.pop .row.vio:hover{background:rgba(192,132,252,.15)}
+.pop .row.map{color:#58a6ff}.pop .row.map:hover{background:rgba(88,166,255,.15)}
+
+/* ---- 右边：状态面板 / 控件 --------------------------------------------- */
+table.state{width:100%;border-collapse:collapse;font-size:12px;font-variant-numeric:tabular-nums}
+table.state th,table.state td{text-align:left;padding:4px 6px;border-bottom:1px solid #171a20;vertical-align:top}
+table.state th{color:var(--dsw-alias-label-caption);font-weight:600;width:44%}
+td.v-bad{color:var(--bad)}td.v-ok{color:var(--ok)}td.v-warn{color:var(--warn)}
+.chg{background:var(--accent-dim);outline:1px solid rgba(88,166,255,.4)}
+.ctl{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin:6px 0}
+.ctl button,.wstep button{font:inherit;font-size:12px;padding:5px 10px;border-radius:8px;cursor:pointer;
+  border:1px solid var(--dsw-alias-border-l1);background:#151922;color:var(--page-fg)}
+.ctl button:hover,.wstep button:hover{border-color:var(--accent);color:#cfe6ff}
+.ctl button.on{background:var(--accent-dim);border-color:var(--accent);color:#cfe6ff}
+.ctl button:disabled{opacity:.45;cursor:default}
+.ctl label{font-size:12px;color:var(--dsw-alias-label-caption);display:inline-flex;align-items:center;gap:4px}
+.tabs{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 10px}
+.tabs button{font:inherit;font-size:12px;padding:5px 11px;border-radius:99px;cursor:pointer;
+  border:1px solid var(--dsw-alias-border-l1);background:#12151c;color:var(--page-fg)}
+.tabs button.on{border-color:var(--accent);background:var(--accent-dim);color:#cfe6ff;font-weight:600}
+.wstep{display:flex;flex-direction:column;gap:6px;margin:10px 0 0}
+.wstep .line{display:flex;gap:8px;align-items:flex-start;font-size:12px}
+.wstep .n{flex:none;width:16px;color:var(--dsw-alias-label-caption);font-variant-numeric:tabular-nums}
+.wstep .done{color:var(--ok)}
+.wstep .todo{color:var(--dsw-alias-label-secondary)}
+.wstep button.cur{border-color:var(--accent);background:var(--accent-dim);color:#cfe6ff}
+.warnline{font-size:12px;color:var(--warn)}
+.selftest{font:11px/1.7 monospace;white-space:pre-wrap}
+.selftest .pass{color:var(--ok)}.selftest .fail{color:var(--bad)}
+details summary{cursor:pointer;font-size:12px;color:var(--dsw-alias-label-caption)}
+code{background:#151922;padding:1px 4px;border-radius:4px;font-size:11px}
+/* 手机/窄视口：把手机框脱壳，只留那条横条与状态面板，页面不再横向溢出 */
+@media (max-width:760px){
+  .wrap{padding:14px 10px 40px;max-width:100%}
+  h1{font-size:17px}
+  .cols{display:block}
+  .card{padding:11px;border-radius:10px;margin:10px 0}
+  .phone{width:auto!important;border:none;border-radius:0;background:none;box-shadow:none;padding:0}
+  .phone-cap{padding:0 0 6px}
+  .screen{padding:0}
+  .composer-hint{height:52px}
+  .col-r{min-width:0;margin-top:12px}
+  table.state th{width:40%}
+  table.state th,table.state td{padding:3px 4px;font-size:11.5px}
+  .tabs button{padding:5px 9px}
+  .selftest{font-size:10.5px}
+}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>原型 #5 · 窄屏横滑条：钉住区 / 滚动手感 / 触屏点开<span class="badge">原型 · 用完即弃</span></h1>
+  <p class="lede">这是<b>一张摆到台面上的摆件</b>，不是实现：真 CSS 片段照抄，不接插件运行时，状态全在内存里。</p>
+  <p class="lede">要回答的一件事：<b>393px 竖屏上，这条横条怎么滚、钉不钉左边、点开一个菜单算不算点得中，同时仍要推进「顺手」。</b>
+  「顺手」在这里只能靠摸：左边手机框里那一条是<b>按一套状态模型真跑</b>的，右边面板每次操作都把全部相关状态摊开（改过的格子会亮一下）。</p>
+
+  <div class="card">
+    <h2>① 摆件：393px 竖屏里那条横条</h2>
+    <div class="cols">
+      <div class="col-l">
+        <div class="phone" id="phone">
+          <div class="phone-cap"><span>视口 <b id="cap-w">393</b>px 竖屏（真几何）</span><span id="cap-touch">触屏 · coarse</span></div>
+          <div class="screen">
+            <div class="dsws-dock" id="dock"><!-- 由 app 渲染 --></div>
+            <div class="composer-hint">输入框（宿主卡片）· 用来对齐左右边</div>
+          </div>
+        </div>
+      </div>
+      <div class="col-r">
+        <h3>当前状态（每一步都整块重画）</h3>
+        <div id="state-panel"></div>
+        <h3 style="margin-top:12px">形状开关（只切显示，不改状态模型）</h3>
+        <div class="ctl" id="shape-ctl"></div>
+        <h3 style="margin-top:12px">宽度 / 触屏</h3>
+        <div class="ctl" id="view-ctl"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>② 自由操作（随便按，顺序不限）</h2>
+    <div class="ctl" id="free-ctl"></div>
+    <p class="muted">每次点击都会把状态推到新的一格，右边面板立刻重画。</p>
+  </div>
+
+  <div class="card">
+    <h2>③ 引导式走查（四条，一条一个标签页）</h2>
+    <div class="tabs" id="tabs"></div>
+    <div id="wt-body"></div>
+  </div>
+
+  <div class="card">
+    <h2>④ 几何自检（页面自己量的数）</h2>
+    <div id="selftest" class="selftest"></div>
+  </div>
+
+  <div class="card">
+    <h2>⑤ 这一页的假设与边界</h2>
+    <p class="muted">· 判据全在页面里那个纯函数模块（没有 DOM、没有事件），页面只是它的外壳 —— 答案定下来之后，那一层可以直接搬进实现。</p>
+    <p class="muted">· 「钉住」这一条有四个候选形态（左端不钉 / 钉住光牌 / 钉住+分隔线 / 钉住+渐隐），它们只在<b>真渲染出来的宽</b>上才看得出差别。</p>
+    <p class="muted">· 页面里的宽度、滚动位置、命中框都是这个浏览器当场量的；不等于真机（字体会不一样）。</p>
+    <p class="muted">· 手机浏览器里（视口 &lt; 520px）手机框会自动脱壳，只剩那条横条 + 状态面板；要连框一起看请用桌面浏览器打开，或把手机横过来。</p>
+  </div>
+</div>
+
+<!-- ======================================================================
+     纯逻辑模块：状态模型 + 阶梯 + 弹层落位。不引用 document / window / 事件。
+     这一层就是「答案定下来之后可以搬走」的那部分。
+     ====================================================================== -->
+<script id="pure-module">
+/* ==== PS-1 这条横条上有什么（号码 = data-fold-priority，小号先让位）==== */
+const CAP_ITEMS = [
+  { p: 1,  kind: 'word', id: 'brand',  key: 'panel.title', word: 'MattSkills' },
+  { p: 2,  kind: 'word', id: 'refresh', key: 'nav.refresh', word: '更新' },
+  { p: 3,  kind: 'char', id: 'date',   word: '' },
+  { p: 4,  kind: 'word', id: 'env',    key: 'nav.env', word: '环境' },
+  { p: 5,  kind: 'char', id: 'envnum', word: '5/9' },
+  { p: 6,  kind: 'char', id: 'time',   word: '' },
+  { p: 7,  kind: 'word', id: 'fixate', key: 'nav.word', word: '沉淀' },
+  { p: 8,  kind: 'word', id: 'handoff', key: 'nav.handoff', word: '交接' },
+  { p: 9,  kind: 'word', id: 'take',   key: 'nav.takeable', word: '可接' },
+  { p: 10, kind: 'word', id: 'bug',    key: 'nav.bug', word: '故障' },
+  { p: 11, kind: 'word', id: 'triage', key: 'nav.triage', word: '诊断' },
+  { p: 12, kind: 'char', id: 'serial', word: '#5' },
+]
+/* 让位次序（2026-09-27 定终版）：1 用 char 一个字一个字让，收完才轮到 2..12，号码小的先让。
+   号码 1 就是品牌那一段 —— 它是第一个让位的，但宽的时候一定看得见（这一条决定了「钉住区」该怎么钉）。 */
+const CAP_CUT = { 1: 'char', 2: 'word', 3: 'char', 4: 'word', 5: 'char', 6: 'char', 7: 'word', 8: 'word', 9: 'word', 10: 'word', 11: 'word', 12: 'char' }
+const CAP_START_FOLDED = ['1']
+/* 阶梯里「能收走的字」= 只有 kind:'word' 的那几段；图标、数字、收起∨、日志点都是载荷，永不撤。
+   数字段（envnum/time/date/serial）在本原型里当载荷画（真实现里它们是带号码的可折叠串，见 capFold.js）。 */
+const CAP_FOLDABLE = CAP_ITEMS.filter(function (it) { return it.kind === 'word' }).map(function (it) { return it.p }).sort(function (a, b) { return a - b })
+
+const LAYOUT = {
+  pad: 12,        // 胶囊左右 padding 3px 6px ×2 + 边框 ×2
+  laneGap: 6,     // 段间距
+  pinWidth: 96,   // 「钉住品牌」占掉的宽（罗盘 14 + 字 + 内距，实测见自检）
+  minTarget: 44,  // 触屏点按下限
+}
+
+/* ==== PS-2 阶梯：每一档每一段画什么（纯函数）==== */
+function capCutOnce(text, cut) {
+  const s = String(text === null || text === undefined ? '' : text)
+  if (s === '') return ''
+  if (cut !== 'word') return s.slice(0, -1)
+  const parts = s.split(/\s+/)
+  if (parts.length <= 1) return ''
+  parts.pop()
+  return parts.join(' ')
+}
+function buildLadder() {
+  const cur = {}
+  CAP_ITEMS.forEach(function (it) { cur[it.p] = (CAP_START_FOLDED.indexOf(String(it.p)) >= 0) ? '' : it.word })
+  const startStep = Object.assign({}, cur)                            // 首帧：品牌那一段是收起的（CAP_FOLD_START_FOLDED）
+  const steps = []
+  CAP_ITEMS.forEach(function (it) { cur[it.p] = it.word })            // 第 0 档：每一段都是完整的那串字（宽了就一定看得见）
+  steps.push(Object.assign({}, cur))
+  CAP_FOLDABLE.forEach(function (p) {
+    const cut = CAP_CUT[p] || 'word'
+    while (cur[p] !== '') { cur[p] = capCutOnce(cur[p], cut); steps.push(Object.assign({}, cur)) }
+  })
+  return { steps: steps, ids: CAP_FOLDABLE, start: startStep }
+}
+/* 装上图标、数字、载荷（不参与让位）之后，这一档实际有多少字宽。 */
+function widthOfWords(words) {
+  const CH = 8.2, ASCII = 6.2
+  let w = LAYOUT.pad + 2   // 左右 padding + 边框
+  CAP_FOLDABLE.forEach(function (p) {
+    const t = (words[p] === undefined) ? '' : String(words[p])
+    if (t === '') { w += 34; return }                       // 字收光了，只剩图标那一档的宽
+    let t2 = 0
+    for (const ch of t) t2 += (ch.charCodeAt(0) < 256 ? ASCII : CH)
+    w += t2 + 14 + LAYOUT.laneGap                          // 字 + 那一段自己的左右内距 + 段间距
+  })
+  w += 3 * (6.2 + 14 + LAYOUT.laneGap)                     // 三枚载荷：日志点 10 / 收起∨ 12 / 数字区 5ch
+  return w
+}
+/**
+ * 用「可用宽 clientW」选档（纯函数；不量 DOM）。
+ * 第 0 档放得下就用第 0 档；否则一档一档往下收，直到放得下（或收到最后一档）。
+ * 返回 { tier, steps 总数, words, overflowPx, needsScroll }
+ */
+function pickTier(ladder, clientW, pinW) {
+  const usable = Math.max(24, (Number(clientW) || 0) - (Number(pinW) || 0))
+  let tier = ladder.steps.length - 1
+  for (let i = 0; i < ladder.steps.length; i++) {
+    if (widthOfWords(ladder.steps[i]) <= usable) { tier = i; break }
+  }
+  const words = Object.assign({}, ladder.steps[tier])
+  const w = widthOfWords(words)
+  const overflowPx = Math.max(0, Math.round((w - usable) * 100) / 100)
+  return { tier: tier, total: ladder.steps.length, words: words, widthOfWords: w, overflowPx: overflowPx, needsScroll: w > usable + 0.5 }
+}
+
+/* ==== PS-3 四个可切形状 ==== */
+const PIN_MODES = ['off', 'pin', 'pin-line', 'pin-fade']
+const AFFORD_MODES = ['none', 'fade', 'scrollbar', 'arrows']
+const DENSITY_MODES = ['current', 'roomy']
+const DENSITY = { current: { segH: 22, pad: 2 }, roomy: { segH: 26, pad: 4 } }
+
+/* ==== PS-4 弹层落位：窄屏下不许越界（真代码 placeStatusOverlay 加夹取）==== */
+function placeOverlay(anchor, viewportW, popW, align, margin, gap) {
+  const m = (margin === undefined) ? 8 : margin
+  const g = (gap === undefined) ? 4 : gap
+  const w = Math.min(popW, viewportW - 2 * m)
+  let left
+  if (align === 'center') left = anchor.x + anchor.w / 2 - w / 2
+  else if (align === 'right') left = anchor.x + anchor.w - w
+  else left = anchor.x
+  const clampedLeft = Math.max(m, Math.min(Math.round(left), viewportW - m - w))
+  return { left: clampedLeft, bottom: anchor.bottom + g, width: w, clamped: Math.abs(clampedLeft - left) > 0.5 }
+}
+
+/* ==== PS-5 状态机 ==== */
+function initialState() {
+  return {
+    viewW: 393,
+    pointer: 'coarse',        // 'coarse' 触屏 | 'fine' 鼠标
+    pinMode: 'pin',
+    afford: 'fade',
+    density: 'current',
+    hitTest: true,
+    scroller: { scrollLeft: 0, clientW: 361, scrollW: 361 },
+    menupos: 'clamp',         // 'clamp' 夹取 | 'naive' 只按锚点左缘
+    openMenu: null,           // null | 'takeable' | 'bug'
+    menuEphemeral: false,     // '点开' 派生出来的临时菜单（没有悬停家）
+    armed: null,              // 要点第二次才生效的那颗（'capsule'）
+    capsuleHot: false,
+    effects: [],              // 这一档新产生的一次性效果：'panel' 'new-session'
+    banner: 'none',           // 'none' | 'warn'
+    deckFolded: false,
+    serial: 5,
+    bugN: 2,
+    logDot: true,
+  }
+}
+function clampScroll(st, v) {
+  const max = Math.max(0, (Number(st.scroller.scrollW) || 0) - (Number(st.scroller.clientW) || 0))
+  return Math.max(0, Math.min(Math.round(Number(v) || 0), Math.round(max)))
+}
+function reduce(st, a) {
+  const next = Object.assign({}, st)
+  next.effects = []
+  switch (a.type) {
+    case 'setView': { next.viewW = a.viewW; if (a.viewW < 420) next.pointer = 'coarse'; break }
+    case 'setPointer': { next.pointer = a.pointer; break }
+    case 'setPin': { next.pinMode = a.value; break }
+    case 'setAfford': { next.afford = a.value; break }
+    case 'setDensity': { next.density = a.value; break }
+    case 'setHitTest': { next.hitTest = !!a.value; break }
+    case 'setMenupos': { next.menupos = a.value; break }
+    case 'setLogDot': { next.logDot = !!a.value; break }
+    case 'measure': { next.scroller = Object.assign({}, st.scroller, a.scroller); break }
+    case 'scroll': { next.scroller = Object.assign({}, st.scroller, { scrollLeft: clampScroll(st, a.scrollLeft) }); next.openMenu = null; break }
+    case 'scrollBy': { next.scroller = Object.assign({}, st.scroller, { scrollLeft: clampScroll(st, (Number(st.scroller.scrollLeft) || 0) + a.dx) }); break }
+    case 'scrollTo': {
+      const sw = Number(st.scroller.scrollW) || 0, cw = Number(st.scroller.clientW) || 0
+      const v = (a.where === 'left') ? 0 : (a.where === 'right' ? sw : Math.round((sw - cw) / 2))
+      next.scroller = Object.assign({}, st.scroller, { scrollLeft: clampScroll(st, v) })
+      break
+    }
+    case 'openMenu': {
+      if (st.openMenu === a.menu && !a.force) { next.openMenu = null; next.armed = null }   // 点自己 = 收起
+      else { next.openMenu = a.menu; next.menuEphemeral = !!a.ephemeral; next.armed = null }
+      break
+    }
+    case 'closeMenu': { next.openMenu = null; next.menuEphemeral = false; if (!st.armed) next.armed = null; break }
+    case 'tapCapsule': {
+      if (st.openMenu) { next.openMenu = null; next.menuEphemeral = false; next.armed = null; next.capsuleHot = false; break } // 第一下只收菜单
+      if (st.armed === 'capsule') { next.armed = null; next.effects = ['panel']; break }
+      next.armed = 'capsule'; break
+    }
+    case 'tapSegment': { next.openMenu = null; next.armed = null; next.effects = ['filter:' + a.id]; break }
+    case 'foldDeck': { next.deckFolded = true; next.openMenu = null; break }
+    case 'expandDeck': { next.deckFolded = false; break }
+    case 'setBanner': { next.banner = a.value; break }
+    case 'reset': { return initialState() }
+    default: break
+  }
+  return next
+}
+/* 时钟那一串：本原型写死，免得每次重画都跳数字（真实现里它一直在变）。 */
+const DEMO_TIME = { date: ' 10-12', time: ' 22:31' }
+function withTime(items) {
+  return items.map(function (it) {
+    if (it.p === 3) return Object.assign({}, it, { word: DEMO_TIME.date })
+    if (it.p === 6) return Object.assign({}, it, { word: DEMO_TIME.time })
+    return it
+  })
+}
+const APP = { CAP_ITEMS: withTime(CAP_ITEMS), buildLadder: buildLadder, pickTier: pickTier, widthOfWords: widthOfWords, placeOverlay: placeOverlay, initialState: initialState, reduce: reduce, PIN_MODES: PIN_MODES, AFFORD_MODES: AFFORD_MODES, DENSITY_MODES: DENSITY_MODES, DENSITY: DENSITY, LAYOUT: LAYOUT, clampScroll: clampScroll }
+if (typeof window !== 'undefined') window.CAPMODEL = APP
+</script>
+<!-- ======================================================================
+     页面外壳（throwaway）：把这套状态模型画成一条能摸的横条 + 一个状态面板。
+     下面没有一行逻辑判据 —— 判据都在上面那个纯模块里。
+     ====================================================================== -->
+<script id="app-shell">
+(function () {
+  const M = window.CAPMODEL
+  const h = (tag, attrs, kids) => {
+    const el = document.createElement(tag)
+    if (attrs) for (const k in attrs) {
+      const v = attrs[k]
+      if (v === null || v === undefined || v === false) continue
+      if (k === 'style') el.setAttribute('style', v)
+      else if (k === 'text') el.textContent = v
+      else if (k.slice(0, 2) === 'on') el.addEventListener(k.slice(2), v)
+      else el.setAttribute(k, v === true ? '' : v)
+    }
+    ;(kids || []).forEach(function (c) { if (c) el.appendChild(c) })
+    return el
+  }
+  const ICONS = {
+    compass: 'M12 2a10 10 0 100 20 10 10 0 000-20zm3.5 6.5L13 13l-4.5 2.5L11 11z',
+    'chev-down': 'M6 9l6 6 6-6', 'chev-up': 'M6 15l6-6 6 6',
+    target: 'M12 4a8 8 0 100 16 8 8 0 000-16zm0 5.6a2.4 2.4 0 100 4.8 2.4 2.4 0 000-4.8z',
+    alert: 'M12 3l9 16H3zM12 9v5M12 17h.01', search: 'M10.5 4a6.5 6.5 0 104.1 11.5L20 20|M10.5 4a6.5 6.5 0 100 13 6.5 6.5 0 000-13z',
+    note: 'M5 4h14v16H5zM8 9h8M8 13h8M8 17h5', refresh: 'M20 12a8 8 0 11-2.3-5.6M20 4v5h-5',
+    handoff: 'M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8zM14 3v5h5',
+    x: 'M6 6l12 12M18 6L6 18', check: 'M4 12l5 5L20 6', dot: 'M12 7.5a4.5 4.5 0 100 9 4.5 4.5 0 000-9z',
+    bug: 'M12 4a4 4 0 014 4v1h2v4h-2v3a4 4 0 01-8 0v-3H6V9h2V8a4 4 0 014-4z',
+    map: 'M3 6l6-3 6 3 6-3v15l-6 3-6-3-6 3zM9 3v15M15 6v15',
+  }
+  function svg(name, size, color) {
+    const el = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
+    el.setAttribute('viewBox', '0 0 24 24'); el.setAttribute('width', size); el.setAttribute('height', size)
+    el.setAttribute('fill', 'none'); el.setAttribute('stroke', 'currentColor'); el.setAttribute('stroke-width', '1.8')
+    el.setAttribute('stroke-linecap', 'round'); el.setAttribute('stroke-linejoin', 'round')
+    el.setAttribute('style', 'display:inline-block;vertical-align:-2px;flex:none' + (color ? ';color:' + color : ''))
+    String(ICONS[name] || '').split('|').forEach(function (d) {
+      const p = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+      p.setAttribute('d', d); el.appendChild(p)
+    })
+    return el
+  }
+
+  const LADDER = M.buildLadder()
+  const TAKE_ITEMS = [{ id: '#5', t: '横滑条形态原型：钉住区、滚动手感、触屏点开', kind: 'prototype' }, { id: '#6', t: '落地：窄屏横滑 + 触屏点开 + 新门禁', kind: 'task' }]
+  const BUG_ITEMS = [{ id: '#4', t: '窄屏阈值取证：载荷最小宽、停档与截断点' }]
+  const SEG_COLOR = { take: '#4ade80', bug: '#f87171', triage: '#f59e0b', fixate: '#c084fc', handoff: '#58a6ff', env: '#4ade80' }
+  const TIP = {
+    take: '可接 = 未认领可执行的任务数', bug: '过滤：open + bug 标签', triage: '过滤：needs-triage',
+    fixate: '沉淀：把这一句写进会话', handoff: '交接：把这轮交给新会话', env: '环境检查', refresh: '刷新快照', brand: '打开面板 / 收起面板',
+    fold: '收起整个功能区', logdot: '日志',
+  }
+
+  let st = M.initialState()
+  let ui = { tab: 0, step: 0, touched: [], hitBoxes: [], readout: null, notes: {} }
+
+  const el = function (id) { return document.getElementById(id) }
+
+  /* ---------- 面板里那些小控件 ---------- */
+  function resetTouched() { ui.touched = [] }
+  function dispatch(a, why) {
+    const before = st
+    st = M.reduce(st, a)
+    const ch = []
+    for (const k in st) {
+      if (k === 'effects') continue
+      if (JSON.stringify(st[k]) !== JSON.stringify(before[k])) ch.push(k)
+    }
+    ui.touched = ch
+    if (why) ui.notes[why] = true
+    render()
+  }
+  function resetAll() { st = M.initialState(); resetTouched(); render() }
+
+  /* ---------- 渲染：那条横条 ---------- */
+  function segNode(it, st, word) {
+    const color = SEG_COLOR[it.id] || '#a1a1aa'
+    const label = (word === undefined) ? it.word : word
+    const kids = [svg(it.icon || 'dot', it.iconsz || 12, color)]
+    if (label !== '') kids.push(h('span', { text: label }))
+    const n = h('span', { class: 'dsws-seg', style: 'color:' + color + ';display:inline-flex;align-items:center;gap:4px' }, kids)
+    n.addEventListener('click', function (e) { e.stopPropagation(); dispatch({ type: 'tapSegment', id: it.id }) })
+    n.addEventListener('mouseenter', function () { if (it.id === 'take' || it.id === 'bug') openOnHover(it.id) })
+    n.addEventListener('mouseleave', function () { if (it.id === 'take' || it.id === 'bug') scheduleClose() })
+    return h('span', { class: 'seg-anchor', 'data-seg': it.id, style: 'position:relative;display:inline-flex' }, [n])
+  }
+  let closeTimer = null
+  function openOnHover(id) { if (closeTimer) { clearTimeout(closeTimer); closeTimer = null } if (st.openMenu !== id || st.menuEphemeral) dispatch({ type: 'openMenu', menu: id, ephemeral: false }) }
+  function scheduleClose() { if (closeTimer) clearTimeout(closeTimer); closeTimer = setTimeout(function () { closeTimer = null; if (st.openMenu && st.pointer === 'fine') dispatch({ type: 'closeMenu' }) }, 160) }
+
+  function renderDock() {
+    const dock = el('dock')
+    dock.innerHTML = ''
+    if (st.deckFolded) {
+      dock.setAttribute('style', 'display:flex;flex:none;justify-content:center;align-self:center;width:auto;max-width:var(--dsh-composer-card-max-width,100%);padding:3px 0 0')
+      dock.appendChild(h('div', { class: 'dsws-folded-wrap' }, [
+        h('button', { class: 'dsws-folded-btn', onclick: function () { dispatch({ type: 'expandDeck' }) } }, [svg('chev-up', 10), h('span', { text: '展开 GitHub 常驻' })]),
+      ]))
+      return
+    }
+    dock.setAttribute('style', '')
+    if (st.banner === 'warn') {
+      dock.appendChild(h('div', { class: 'dsws-banner' }, [
+        svg('alert', 13), h('span', { class: 'dsws-banner-text', text: '该工作区尚未初始化' }),
+        h('button', { class: 'dsws-banner-act', text: '帮我执行初始化' }),
+        h('button', { class: 'dsws-banner-fold-x', 'aria-label': '收起整个功能区', onclick: function (e) { e.stopPropagation(); dispatch({ type: 'foldDeck' }) } }, [svg('x', 11)]),
+      ]))
+    }
+    dock.appendChild(renderLane())
+  }
+
+  function renderLane() {
+    const pinW = (st.pinMode === 'off') ? 0 : M.LAYOUT.pinWidth
+    const trailW = 30
+    const laneW = Math.max(200, Number(el('phone').getAttribute('data-frame-w') || st.viewW) - 24)
+    const predict = M.pickTier(LADDER, laneW - pinW - trailW, 0)
+    const words = predict.words
+    const dens = M.DENSITY[st.density] || M.DENSITY.current
+    const lane = h('div', { class: 'cap-lane' + (st.pinMode === 'off' ? ' pin-hidden' : '') + (st.pinMode === 'pin-line' ? ' sep-none' : '') + (st.density === 'roomy' ? ' dense' : ''), style: 'position:relative' })
+    // 钉住区（四个形态里除了 off，都画；差别在分隔线 / 渐隐 / 无）
+    if (st.pinMode !== 'off') {
+      const pin = h('div', { class: 'score-pin', style: 'padding:3px 6px 3px 8px' }, [
+        h('span', { class: 'pin-word', title: TIP.brand }, [svg('compass', 14), h('span', { text: words[1] === '' ? '' : 'MattSkills' })]),
+      ])
+      lane.appendChild(pin)
+      if (st.pinMode === 'pin') lane.appendChild(h('div', { class: 'sep-line' }))
+      if (st.pinMode === 'pin-line') lane.appendChild(h('div', { class: 'sep-line' }))
+      if (st.pinMode === 'pin-fade') lane.appendChild(h('div', { class: 'cap-trail-fade sep-fade' }))
+    }
+    const scroller = h('div', { class: 'cap-scroller', 'data-scroller': '1' })
+    const phantom = h('div', { class: 'cap-phantom' })
+    ;[2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12].forEach(function (p) { renderItem(p, words, phantom) })
+    scroller.appendChild(phantom)
+    lane.appendChild(scroller)
+    // 尾部：日志点 + 收起∨（已定钉住），以及载荷数字（在滚动区里）
+    const trail = h('div', { style: 'display:flex;align-items:center;gap:2px 6px;padding:3px 6px;flex:none' }, [
+      st.logDot ? h('span', { class: 'dsws-logdot', title: TIP.logdot, onclick: function (e) { e.stopPropagation() } }) : h('span', { class: 'dsws-logdot off', title: TIP.logdot, style: 'visibility:hidden' }),
+      h('span', { class: 'dsws-fold-toggle', 'aria-label': TIP.fold, title: TIP.fold, onclick: function (e) { e.stopPropagation(); dispatch({ type: 'foldDeck' }) } }, [svg('chev-down', 12)]),
+    ])
+    lane.appendChild(trail)
+    // 滚动手感那一层：渐隐 / 滚动条 / 边缘箭头
+    if (st.afford !== 'none') {
+      lane.appendChild(h('div', { class: 'edge-fade left', 'data-edge': 'left' }))
+      lane.appendChild(h('div', { class: 'edge-fade right', 'data-edge': 'right' }))
+    }
+    if (st.afford === 'scrollbar') lane.appendChild(h('div', { class: 'scrollbar', 'data-sb': '1' }, [h('div', { class: 'thumb', 'data-sbthumb': '1' })]))
+    if (st.afford === 'arrows') {
+      lane.appendChild(h('button', { class: 'edge-arrow left', 'data-arrow': 'left', onclick: function (e) { e.stopPropagation(); dispatch({ type: 'scrollBy', dx: -120 }) } }, ['‹']))
+      lane.appendChild(h('button', { class: 'edge-arrow right', 'data-arrow': 'right', onclick: function (e) { e.stopPropagation(); dispatch({ type: 'scrollBy', dx: 120 }) } }, ['›']))
+    }
+    // 胶囊那一层：点开右栏与吸附
+    lane.addEventListener('click', function (e) {
+      if (e.target.closest && (e.target.closest('[data-seg]') || e.target.closest('.dsws-fold-toggle') || e.target.closest('.edge-arrow'))) return
+      dispatch({ type: 'tapCapsule' })
+    })
+    return lane
+  }
+  function segAnchor(id, node) {
+    return h('span', { class: 'seg-anchor', 'data-seg': id, style: 'position:relative;display:inline-flex' }, [node])
+  }
+  /* 一段要么由 segNode 画（字 + 图标 + 悬停开菜单），要么由这里画（时间串 / 数字区这类载荷）。 */
+  function renderItem(p, words, host) {
+    const spec = M.CAP_ITEMS.filter(function (x) { return x.p === p })[0]
+    if (!spec) return
+    const folded = (words[p] === '' || words[p] === undefined)
+    const hidden = function (n) { return h('span', { class: 'dsws-folded' }, [n]) }   // 收起来的段：整块 display:none，但位置留着
+    const anchorOf = function (id, node) { return (st.pinMode === 'off' && id === 'brand') ? segAnchor(id, node) : segAnchor(id, node) }
+    if (p === 2) return host.appendChild(segAnchor('refresh', h('button', { class: 'dsws-timebtn', title: TIP.refresh }, [svg('refresh', 11), folded ? hidden(null) : h('span', { text: '更新' })])))
+    if (p === 3) return host.appendChild(h('span', { class: 'dsws-timebtn', title: TIP.refresh, text: words[3] || '' }))
+    if (p === 4) return host.appendChild(segAnchor('env', h('span', { class: 'dsws-seg', style: 'color:var(--ok)' }, [svg('check', 14), folded ? hidden(null) : h('span', { text: '环境' })])))
+    if (p === 5) return host.appendChild(h('span', { class: 'dsws-num', text: '5/9' }))
+    if (p === 6) return host.appendChild(h('span', { class: 'dsws-timebtn', text: words[6] || '' }))
+    if (p === 12) return host.appendChild(segAnchor('serial', h('span', { class: 'dsws-seg', style: 'color:#c084fc', title: TIP.fixate }, [svg('note', 12), h('span', { text: '沉淀' })])))
+    // 9 可接 / 10 故障：悬停开菜单（鼠标），触屏下由「点开」开（segNode 里那颗按钮本身没有点击动作时也开）
+    if (p === 9) {
+      const n = h('span', { class: 'dsws-seg', style: 'color:#4ade80;display:inline-flex;align-items:center;gap:4px' }, [svg('target', 12, '#4ade80'), folded ? hidden(null) : h('span', { text: '可接' }), h('span', { class: 'dsws-num', text: '2' })])
+      n.addEventListener('click', function (e) { e.stopPropagation(); dispatch({ type: 'openMenu', menu: 'takeable' }) })
+      n.addEventListener('mouseenter', function () { openOnHover('takeable') })
+      n.addEventListener('mouseleave', scheduleClose)
+      return host.appendChild(segAnchor('takeable', n))
+    }
+    if (p === 10) {
+      const n = h('span', { class: 'dsws-seg', style: 'color:#f87171;display:inline-flex;align-items:center;gap:4px' }, [svg('bug', 12, '#f87171'), folded ? hidden(null) : h('span', { text: '故障' }), h('span', { class: 'dsws-num', text: '2' })])
+      n.addEventListener('click', function (e) { e.stopPropagation(); dispatch({ type: 'openMenu', menu: 'bug' }) })
+      n.addEventListener('mouseenter', function () { openOnHover('bug') })
+      n.addEventListener('mouseleave', scheduleClose)
+      return host.appendChild(segAnchor('bug', n))
+    }
+    if (p === 11) return host.appendChild(segNode(M.CAP_ITEMS.filter(function (x) { return x.p === 11 })[0], st, words[11]))
+    if (p === 7) return host.appendChild(segNode(M.CAP_ITEMS.filter(function (x) { return x.p === 7 })[0], st, words[7]))
+    if (p === 8) return host.appendChild(h('span', { class: 'dsws-split', 'data-seg': 'handoff', title: TIP.handoff }, [
+      h('button', { class: 'dsws-split-part', style: 'color:#58a6ff' }, [svg('handoff', 12), folded ? hidden(null) : h('span', { text: '交接' })]),
+      h('span', { class: 'dsws-split-div' }),
+      h('button', { class: 'dsws-split-part', style: 'color:#8b8b95;opacity:.55' }, [svg('handoff', 12)]),
+    ]))
+  }
+
+  /* ---------- 渲染：量一遍真实几何、落位弹层、点按命中框 ---------- */
+  function measureAndDecorate() {
+    const dock = el('dock'), lane = dock.querySelector('.cap-lane')
+    if (!lane) { ui.readout = null; renderSelftest(); return }
+    const sc = lane.querySelector('[data-scroller]')
+    const phantomEl = lane.querySelector('.cap-phantom')
+    const pinNode = lane.querySelector('.score-pin')
+    const laneRect = lane.getBoundingClientRect()
+    if (sc) {
+      const realClient = Math.round(sc.clientWidth)
+      const realScroll = Math.round(phantomEl ? phantomEl.scrollWidth : sc.scrollWidth)
+      st.scroller = { scrollLeft: M.clampScroll(st, sc.scrollLeft), clientW: realClient, scrollW: realScroll }
+      const max = Math.max(0, realScroll - realClient)
+      // 渐隐 / 滚动条 / 箭头：只按真实滚动位置画
+      lane.querySelectorAll('[data-edge]').forEach(function (n) {
+        const side = n.getAttribute('data-edge')
+        const on = (side === 'left') ? sc.scrollLeft > 1 : (sc.scrollLeft < max - 1)
+        n.className = 'edge-fade ' + side + (on ? ' on' : '')
+      })
+      const sb = lane.querySelector('[data-sb]')
+      if (sb) {
+        sb.className = 'scrollbar on'
+        const thumb = lane.querySelector('[data-sbthumb]')
+        const frac = (realScroll > 0) ? realClient / realScroll : 1
+        const trackW = realClient - 16
+        thumb.setAttribute('style', 'width:' + Math.max(18, Math.round(trackW * frac)) + 'px;margin-left:' + Math.round((trackW - Math.max(18, trackW * frac)) * (max ? sc.scrollLeft / max : 0)) + 'px')
+        sb.setAttribute('style', 'left:' + (laneRect.width - realClient - 8) + 'px;right:auto;width:' + trackW + 'px')
+      }
+      lane.querySelectorAll('[data-arrow]').forEach(function (n) {
+        const side = n.getAttribute('data-arrow')
+        const on = (side === 'left') ? sc.scrollLeft > 1 : (sc.scrollLeft < max - 1)
+        n.className = 'edge-arrow ' + side + (on ? ' on' : '')
+      })
+      // 鼠标滚轮 / 触屏拖动：把真实滚动位置同步进状态（只改一个字段，不整块重画）
+      if (!sc.__wired) {
+        sc.__wired = true
+        sc.addEventListener('scroll', function () {
+          st.scroller = { scrollLeft: Math.round(sc.scrollLeft), clientW: Math.round(sc.clientWidth), scrollW: Math.round(sc.scrollWidth) }
+          const max2 = Math.max(0, st.scroller.scrollW - st.scroller.clientW)
+          lane.querySelectorAll('[data-edge]').forEach(function (n) {
+            const side = n.getAttribute('data-edge')
+            const on = (side === 'left') ? sc.scrollLeft > 1 : (sc.scrollLeft < max2 - 1)
+            n.className = 'edge-fade ' + side + (on ? ' on' : '')
+          })
+          lane.querySelectorAll('[data-arrow]').forEach(function (n) {
+            const side = n.getAttribute('data-arrow')
+            const on = (side === 'left') ? sc.scrollLeft > 1 : (sc.scrollLeft < max2 - 1)
+            n.className = 'edge-arrow ' + side + (on ? ' on' : '')
+          })
+          renderState()
+        })
+      }
+      // 这一档的量尺读数：模型预测 vs 真渲染
+      const laneContent = laneRect.width
+      const predict = M.pickTier(LADDER, laneContent - (pinNode ? Math.round(pinNode.getBoundingClientRect().width) : 0) - 30, 0)
+      ui.readout = {
+        laneW: Math.round(laneContent),
+        dockW: Math.round((lane.parentElement ? lane.parentElement.getBoundingClientRect().width : laneContent)),
+        colW: Math.round((function () {
+          const col = lane.parentElement && lane.parentElement.parentElement
+          if (!col) return laneContent
+          const cs = getComputedStyle(col)
+          return col.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0)
+        })()),
+        pinW: pinNode ? Math.round(pinNode.getBoundingClientRect().width) : 0,
+        scrollerW: realClient, contentW: realScroll,
+        overflow: Math.max(0, Math.round((realScroll - realClient) * 10) / 10),
+        atLeft: sc.scrollLeft <= 1, atRight: sc.scrollLeft >= Math.max(0, realScroll - realClient) - 1,
+        tier: predict.tier, tierTotal: predict.total, words: predict.words,
+        wordsAllGone: M.CAP_ITEMS.filter(function (x) { return x.kind === 'word' }).every(function (x) { return !predict.words[x.p] }),
+      }
+    }
+    // 点按命中框：粗指针下按 44px 量
+    ui.hitBoxes = []
+    if (st.hitTest) {
+      lane.querySelectorAll('.dsws-seg, .dsws-fold-toggle, .dsws-logdot, .dsws-timebtn').forEach(function (n) {
+        const r = n.getBoundingClientRect()
+        ui.hitBoxes.push({ x: r.left - laneRect.left, y: r.top - laneRect.top, w: r.width, h: r.height, ok: (r.height >= 44) })
+      })
+    }
+    // 弹层落位（真算，不是猜）
+    const open = st.openMenu
+    const anchorNode = lane.querySelector('.seg-anchor[data-seg="' + open + '"]')
+    if (open && anchorNode) {
+      const ar = anchorNode.getBoundingClientRect()
+      const popW = (open === 'takeable') ? 168 : 100
+      const anchor = { x: ar.left - laneRect.left, w: ar.width, bottom: laneRect.bottom - ar.bottom + 4 }
+      const naive = { left: Math.round(anchor.x), clamped: false, width: popW }
+      const clamped = M.placeOverlay(anchor, Math.round(laneRect.width), popW, 'left', 8, 4)
+      const pos = (st.menupos === 'clamp') ? clamped : naive
+      const rows = (open === 'takeable') ? TAKE_ITEMS.map(function (it) {
+        return h('button', { class: 'row take', onclick: function (e) { e.stopPropagation(); dispatch({ type: 'closeMenu' }, 'new-session') } }, [svg('map', 12, '#c084fc'), h('span', { text: it.id + ' ' + it.t })])
+      }) : BUG_ITEMS.map(function (it) {
+        return h('button', { class: 'row bug', onclick: function (e) { e.stopPropagation(); dispatch({ type: 'closeMenu' }, 'new-session') } }, [svg('bug', 12, '#f87171'), h('span', { text: '新增 BUG 单' })])
+      })
+      const pop = h('div', { class: 'pop' + (st.density === 'roomy' ? ' dense' : ''), 'data-pop': open, style: 'left:' + pos.left + 'px;bottom:' + anchor.bottom + 'px;width:' + pos.width + 'px' }, rows)
+      lane.appendChild(pop)
+      const pr = pop.getBoundingClientRect()
+      ui.popGeom = { left: Math.round(pr.left - laneRect.left), right: Math.round(pr.right - laneRect.left), laneW: Math.round(laneRect.width), overflowRight: Math.round(pr.right - laneRect.right), overflowLeft: Math.round(laneRect.left - pr.left), clamped: !!pos.clamped, menupos: st.menupos }
+    } else { ui.popGeom = null }
+    // 命中框与标注
+    if (st.hitTest) {
+      const overlays = h('div', { style: 'position:absolute;inset:0;pointer-events:none;z-index:8' })
+      ui.hitBoxes.forEach(function (b) {
+        overlays.appendChild(h('div', { class: 'hitbox' + (b.ok ? '' : ' short'), style: 'left:' + b.x + 'px;top:' + b.y + 'px;width:' + b.w + 'px;height:' + b.h + 'px' }))
+      })
+      lane.appendChild(overlays)
+    }
+  }
+
+  /* ---------- 渲染：右边状态面板 ---------- */
+  function renderState() {
+    const r = ui.readout
+    const host = el('state-panel')
+    host.innerHTML = ''
+    const t = h('table', { class: 'state' })
+    const row = function (k, v, cls) {
+      const tr = h('tr', {}, [h('th', { text: k }), h('td', { class: cls || '', text: String(v) })])
+      t.appendChild(tr)
+      return tr
+    }
+    const tag = function (key) { return ui.touched.indexOf(key) >= 0 ? ' v-ok' : '' }
+    const frameW = Number(el('phone').getAttribute('data-frame-w') || st.viewW)
+    row('这一档当真的宽', frameW + 'px' + (frameW < st.viewW ? '（预设 ' + st.viewW + 'px，被浏览器视口夹到 ' + frameW + 'px）' : '') + ' · 指针 ' + (st.pointer === 'coarse' ? '触屏 coarse' : '鼠标 fine'), tag('viewW') || tag('pointer'))
+    row('钉住区形态', ({ off: '不钉（左端一起滚）', pin: '钉住品牌字 + 分隔线', 'pin-line': '钉住 + 渐隐', 'pin-fade': '钉住 + 无分隔线' })[st.pinMode], tag('pinMode'))
+    row('滚动提示', ({ none: '不给提示', fade: '两端渐隐', scrollbar: '细滚动条', arrows: '边缘箭头' })[st.afford], tag('afford'))
+    row('间距/字号档', st.density === 'current' ? '照现状（12px / 22px）' : '放松（12px / 26px）', tag('density'))
+    row('横条量尺（真渲染）', r ? ('横条 ' + r.laneW + 'px · 钉住 ' + r.pinW + 'px · 滚动窗 ' + r.scrollerW + 'px · 内容 ' + r.contentW + 'px') : '（还没量到）', tag('scroller'))
+    row('溢出 / 还能滚多少', r ? (r.overflow + 'px' + (r.overflow === 0 ? '（不用滚）' : '')) : '—', '')
+    row('滚动位置', r ? ('在' + (r.atLeft ? '左端' : r.atRight ? '右端' : '中间') + ' · scrollLeft ' + st.scroller.scrollLeft + 'px') : '—', tag('scroller'))
+    row('阶梯停档', r ? ('第 ' + r.tier + ' / ' + (r.tierTotal - 1) + ' 档' + (r.tier === r.tierTotal - 1 ? '（收到底）' : '')) : '—', '')
+    row('被收走的字', r ? (r.wordsAllGone ? '全部字都收光了（只剩图标与数字）' : Object.keys(r.words).filter(function (k) { return r.words[k] === '' }).map(function (k) { return ({ 1: '品牌', 2: '更新', 4: '环境', 7: '沉淀', 8: '交接', 9: '可接', 10: '故障', 11: '诊断' })[k] || k }).join('、') || '一个都没收走') : '—', '')
+    row('打开中的菜单', st.openMenu ? (st.openMenu === 'takeable' ? '可接菜单' : '故障菜单') + (st.menuEphemeral ? '（点开的）' : '（悬停开的）') : '没有', tag('openMenu'))
+    row('弹层位置 / 越界', ui.popGeom ? ((st.menupos === 'clamp' ? '夹取后 left ' : '只按锚点 left ') + ui.popGeom.left + 'px · 右缘超出横条 ' + ui.popGeom.overflowRight + 'px' + (ui.popGeom.overflowRight > 0 ? ' ⚠' : '')) : '（没开菜单）', '')
+    row('胶囊那一下（冒泡）', st.armed === 'capsule' ? ('已武装：第 2 下才开右栏' + (st.openMenu ? '（菜单开着，第 1 下只收菜单）' : '')) : '未武装', st.armed === 'capsule' ? 'v-warn' : '')
+    row('横幅 / 收起态', st.banner === 'warn' ? '黄条在' : '没黄条', tag('banner'))
+    row('功能区', st.deckFolded ? '收起态（只剩一句 10px 灰字）' : '展开', tag('deckFolded'))
+    row('日志点', st.logDot ? '在（绿）' : '不在', tag('logDot'))
+    row('这一档产生过', (st.effects && st.effects.length) ? st.effects.join(' / ') : '（无新效果）', '')
+    host.appendChild(t)
+    if (r) {
+      const problems = []
+      if (r.overflow > 0 && !r.wordsAllGone) problems.push('还溢出 ' + r.overflow + 'px 但字没收到底 —— 阶梯与真实宽对不上')
+      if (st.pointer === 'coarse' && ui.hitBoxes.some(function (b) { return !b.ok })) problems.push('有 ' + ui.hitBoxes.filter(function (b) { return !b.ok }).length + ' 个点按目标低于 44px（虚线框看得到）')
+      if (ui.popGeom && ui.popGeom.overflowRight > 0) problems.push('弹层右缘越出横条 ' + ui.popGeom.overflowRight + 'px')
+      if (ui.popGeom && ui.popGeom.overflowLeft > 0) problems.push('弹层左缘越出横条 ' + ui.popGeom.overflowLeft + 'px')
+      if (problems.length) {
+        host.appendChild(h('p', { class: 'warnline', text: '⚠ ' + problems.join('；') }))
+      } else {
+        host.appendChild(h('p', { class: 'muted', text: '这一档没有量出来的毛病。' }))
+      }
+      const words = Object.keys(r.words).filter(function (k) { return ({ 1: 1, 2: 1, 4: 1, 7: 1, 8: 1, 9: 1, 10: 1, 11: 1 })[k] })
+      host.appendChild(h('p', { class: 'muted', text: '这一档还看得见的字：' + (words.filter(function (k) { return r.words[k] }).map(function (k) { return ({ 1: '品牌', 2: '更新', 4: '环境', 7: '沉淀', 8: '交接', 9: '可接', 10: '故障', 11: '诊断' })[k] }).join('、') || '（一个都没有）') }))
+    }
+    renderSelftest()
+  }
+
+  /* ---------- 渲染：自检（页面自己量的数） ---------- */
+  function renderSelftest() {
+    const out = el('selftest')
+    const lines = []
+    const push = function (ok, msg) { lines.push((ok ? 'PASS  ' : 'FAIL  ') + msg); return ok }
+    const r = ui.readout
+    push(LADDER.steps.length >= 10, '阶梯 ' + LADDER.steps.length + ' 档（第 0 档 = 九段全展开；品牌段 10 个字符 = 前 10 档）')
+    const starts = LADDER.steps
+    let monotone = true
+    for (let i = 1; i < starts.length; i++) {
+      const a = Object.keys(starts[i - 1]).filter(function (k) { return starts[i - 1][k] }), b = Object.keys(starts[i]).filter(function (k) { return starts[i][k] })
+      if (b.length > a.length + 1) monotone = false
+    }
+    push(monotone, '相邻两档之间最多只少一个单位（递推没跳档）')
+    push(starts[0][1] === 'MattSkills', '第 0 档品牌整串在（宽了就一定看得见）')
+    const last = starts[starts.length - 1]
+    push(Object.keys(last).every(function (k) { return (CAP_FOLDABLE.indexOf(Number(k)) < 0) || last[k] === '' }), '最后一档只剩图标与数字（可让位的字全收光，载荷一个不撤）')
+    if (r) {
+      push(true, '真渲染量尺：滚动窗 ' + r.scrollerW + 'px / 内容 ' + r.contentW + 'px / 溢出 ' + r.overflow + 'px')
+      push((r.overflow === 0) || r.wordsAllGone || st.pinMode === 'off', '溢出与阶梯一致：要么不溢出、要么已收到底、要么是「不钉」那一档（不钉时左端也要滚）')
+      push(r.colW - r.dockW <= 2, '横条容器 = min(列宽 − 2×侧距, 卡宽)（dock ' + r.dockW + ' vs 列宽 ' + r.colW + '，差 ' + (r.colW - r.dockW) + 'px）')
+    } else push(false, '还没量到横条')
+    if (st.pointer === 'coarse') {
+      const bad = ui.hitBoxes.filter(function (b) { return !b.ok })
+      push(ui.hitBoxes.length > 0, '触屏档下量到 ' + ui.hitBoxes.length + ' 个点按目标')
+      push(true, '量到：触屏下 ' + bad.length + ' / ' + ui.hitBoxes.length + ' 个目标低于 44px（' + (bad.map(function (b) { return Math.round(b.w) + '×' + Math.round(b.h) }).join(' ') || '无') + '）—— 现状读数（要改就得提命中区，不改视觉）')
+    }
+    if (ui.popGeom) push(ui.popGeom.overflowRight <= 0 && ui.popGeom.overflowLeft <= 0, '弹层不越界（' + (st.menupos === 'clamp' ? '夹取' : '只按锚点') + '：右缘超出 ' + ui.popGeom.overflowRight + 'px）')
+    out.innerHTML = ''
+    lines.forEach(function (l) {
+      const ok = l.slice(0, 4) === 'PASS'
+      out.appendChild(h('span', { class: ok ? 'pass' : 'fail', text: l + '\n' }))
+    })
+  }
+
+  /* ---------- 控件 ---------- */
+  function renderShapeCtl() {
+    const host = el('shape-ctl')
+    host.innerHTML = ''
+    const grp = function (label, modes, cur, act, labels) {
+      host.appendChild(h('span', { class: 'muted', text: label }))
+      modes.forEach(function (m) {
+        host.appendChild(h('button', { class: m === cur ? 'on' : '', text: labels[m] || m, onclick: function () { dispatch(act(m)) } }))
+      })
+      host.appendChild(h('span', { style: 'flex:1 1 100%;height:0' }))
+    }
+    grp('钉住区：', M.PIN_MODES, st.pinMode, function (v) { return { type: 'setPin', value: v } }, { off: '不钉', pin: '钉住+线', 'pin-line': '钉住+渐隐', 'pin-fade': '钉住（无线）' })
+    grp('滚动提示：', M.AFFORD_MODES, st.afford, function (v) { return { type: 'setAfford', value: v } }, { none: '无', fade: '两端渐隐', scrollbar: '细滚动条', arrows: '边缘箭头' })
+    grp('密度：', M.DENSITY_MODES, st.density, function (v) { return { type: 'setDensity', value: v } }, { current: '照现状', roomy: '放松' })
+    grp('弹层定位：', ['clamp', 'naive'], st.menupos, function (v) { return { type: 'setMenupos', value: v } }, { clamp: '夹取（不越界）', naive: '只按锚点（会越界）' })
+    host.appendChild(h('label', {}, [h('input', { type: 'checkbox', checked: st.hitTest, onchange: function (e) { dispatch({ type: 'setHitTest', value: e.target.checked }) } }), h('span', { text: '画 44px 命中框' })]))
+    host.appendChild(h('label', {}, [h('input', { type: 'checkbox', checked: st.logDot, onchange: function (e) { dispatch({ type: 'setLogDot', value: e.target.checked }) } }), h('span', { text: '日志点在' })]))
+  }
+  function renderViewCtl() {
+    const host = el('view-ctl')
+    host.innerHTML = ''
+    ;[[393, '393（真机竖屏）'], [360, '360（更窄）'], [320, '320（下限）'], [600, '600（平板）']].forEach(function (pair) {
+      host.appendChild(h('button', { class: st.viewW === pair[0] ? 'on' : '', text: pair[1], onclick: function () { dispatch({ type: 'setView', viewW: pair[0] }) } }))
+    })
+    host.appendChild(h('button', { class: st.pointer === 'coarse' ? 'on' : '', text: st.pointer === 'coarse' ? '触屏' : '鼠标', onclick: function () { dispatch({ type: 'setPointer', pointer: st.pointer === 'coarse' ? 'fine' : 'coarse' }) } }))
+    host.appendChild(h('button', { text: '复位', onclick: resetAll }))
+  }
+  function renderFreeCtl() {
+    const host = el('free-ctl')
+    host.innerHTML = ''
+    const add = function (label, fn) { host.appendChild(h('button', { text: label, onclick: fn })) }
+    add('滚到左端', function () { dispatch({ type: 'scrollTo', where: 'left' }) })
+    add('滚到中间', function () { dispatch({ type: 'scrollTo', where: 'mid' }) })
+    add('滚到右端', function () { dispatch({ type: 'scrollTo', where: 'right' }) })
+    add('向左滚 120px', function () { dispatch({ type: 'scrollBy', dx: -120 }) })
+    add('向右滚 120px', function () { dispatch({ type: 'scrollBy', dx: 120 }) })
+    add('点开「可接」菜单（点第二次才收起）', function () { dispatch({ type: 'openMenu', menu: 'takeable', force: true }) })
+    add('点开「故障」菜单', function () { dispatch({ type: 'openMenu', menu: 'bug', force: true }) })
+    add('收起菜单', function () { dispatch({ type: 'closeMenu' }) })
+    add('点胶囊（第 2 下开右栏）', function () { dispatch({ type: 'tapCapsule' }) })
+    add('点「可接」本身（过滤）', function () { dispatch({ type: 'tapSegment', id: 'take' }) })
+    add('出黄条', function () { dispatch({ type: 'setBanner', value: 'warn' }) })
+    add('收黄条', function () { dispatch({ type: 'setBanner', value: 'none' }) })
+    add('收起整个功能区', function () { dispatch({ type: 'foldDeck' }) })
+    add('展开功能区', function () { dispatch({ type: 'expandDeck' }) })
+  }
+
+  /* ---------- 引导式走查 ---------- */
+  const WT = [
+    {
+      id: 'L1', tab: 'L1 钉住区', intro: '左端品牌段钉不钉、钉住之后分隔线/渐隐要不要。看的是：钉住之后滚动窗少了多少宽、字让位让到哪一档、宽条上品牌字还在不在。',
+      steps: [
+        { note: '从现状起步：钉住 + 分隔线，393px。', say: '先看不钉：左端『罗盘 + 品牌字』跟别段一起滚走，滚到右端之后左边空出来一块。', act: { type: 'setPin', value: 'off' }, then: { type: 'scrollTo', where: 'right' } },
+        { say: '钉住它：品牌字不动，滚的是它右边那一段。注意滚动窗少了约 96px。', act: { type: 'setPin', value: 'pin' } },
+        { say: '分隔线换成渐隐（钉住区与滚动区之间那道「软边」）。', act: { type: 'setPin', value: 'pin-line' } },
+        { say: '干脆什么都不加：只靠位置与底色区分。', act: { type: 'setPin', value: 'pin-fade' } },
+        { say: '把这档推到宽视口：品牌整串字应该看得见（第 0 档）。', act: { type: 'setView', viewW: 600 } },
+        { ask: '钉住区：钉 / 不钉？分隔线、阴影、渐隐三者选哪个？', verdicts: ['钉住 + 分隔线', '钉住 + 渐隐', '钉住，什么都不加', '不钉（左端一起滚）'] },
+      ],
+    },
+    {
+      id: 'L2', tab: 'L2 滚动手感', intro: '滚到两端有没有提示；点按目标够不够 44px。看的是：渐隐/滚动条/箭头三种提示在两端各自的显隐，以及触屏下虚线命中框的高度。',
+      steps: [
+        { note: '起点：393px，两端渐隐，滚在中间（左右两边都该有提示）。', say: '滚到右端：右边那层渐隐应该灭掉（说明「到头了」）。', act: { type: 'scrollTo', where: 'right' } },
+        { say: '换成细滚动条：能看出「还剩多少没滚」，但只有 3px 高，触屏摸不到。', act: { type: 'setAfford', value: 'scrollbar' } },
+        { say: '换成边缘箭头：给一个能点的目标（26px，仍然不到 44px —— 这是要维护者拍的一条）。', act: { type: 'setAfford', value: 'arrows' } },
+        { say: '回左端看另一头。', act: { type: 'scrollTo', where: 'left' } },
+        { ask: '两端提示选哪种？点按下限要不要按 44px 走？', verdicts: ['两端渐隐', '细滚动条', '边缘箭头', '不给提示', '按 44px 提命中区（视觉不变）', '接受现状（目标更小）'] },
+      ],
+    },
+    {
+      id: 'L3', tab: 'L3 触屏点开', intro: '触屏没有悬停，这俩菜单只能「点开」。看的是：点开/关闭规则、弹层在窄宽下会不会越出横条、以及跟「点胶囊开右栏」的冒泡关系。',
+      steps: [
+        { note: '起点：393px 触屏，弹层夹取定位。', say: '点一下「可接」：菜单开。点第二下：收起。菜单开着时点别处：只收菜单、不开右栏（拦掉那次冒泡）。', act: { type: 'openMenu', menu: 'takeable', force: true }, then: { type: 'openMenu', menu: 'takeable' } },
+        { say: '把定位改成「只按锚点左缘」：窄屏下它会往右越出横条 —— 这就是要夹取的理由。', act: { type: 'setMenupos', value: 'naive' }, then: { type: 'openMenu', menu: 'takeable', force: true } },
+        { say: '换回夹取。', act: { type: 'setMenupos', value: 'clamp' } },
+        { say: '激活胶囊那一下：第 1 下只是「武装」，第 2 下才开右栏。', act: { type: 'tapCapsule' } },
+        { say: '再点一下，右栏才开。', act: { type: 'tapCapsule' } },
+        { say: '行高放松一档，看菜单行是否够点。', act: { type: 'setDensity', value: 'roomy' }, then: { type: 'openMenu', menu: 'bug', force: true } },
+        { ask: '点开的规则（再点收起 / 点外收起 / 只收菜单不冒泡）与弹层定位？', verdicts: ['点开再点收起', '点外任意处收起', '第一下只收菜单（不冒泡）', '夹取定位（不越界）', '菜单行按 40px 高'] },
+      ],
+    },
+    {
+      id: 'L4', tab: 'L4 高度/横幅', intro: '单行高度、字号、间距在窄屏下动不动；黄条与收起态同时出现时怎么排。',
+      steps: [
+        { note: '起点：393px，照现状密度。', say: '出黄条：黄条在上面一行，横条在下面一行，中间 4px。', act: { type: 'setBanner', value: 'warn' } },
+        { say: '把行高放松一档：横条从 22px 撑到 26px（黄条还在上面）。', act: { type: 'setDensity', value: 'roomy' } },
+        { say: '点黄条上那个叉：一键收起整个功能区（黄条与横条一起没了，只剩一句 10px 灰字）。', act: { type: 'foldDeck' } },
+        { say: '再展开回来。', act: { type: 'expandDeck' } },
+        { say: '收到 320px：黄条折行、横条收到最后一档。', act: { type: 'setView', viewW: 320 }, then: { type: 'scrollTo', where: 'mid' } },
+        { ask: '窄屏下高度/字号/间距、以及黄条+收起态的排法？', verdicts: ['单行不变（12px / 22px）', '放松一档（26px）', '黄条与横条间隔 6px', '收起态保持一句 10px 灰字'] },
+      ],
+    },
+  ]
+
+  function renderTabs() {
+    const host = el('tabs')
+    host.innerHTML = ''
+    WT.forEach(function (w, i) {
+      host.appendChild(h('button', { class: i === ui.tab ? 'on' : '', text: w.tab, onclick: function () { ui.tab = i; ui.step = 0; st = M.initialState(); resetTouched(); render() } }))
+    })
+  }
+  function applySetup(setup) {
+    if (!setup) return
+    for (const k in setup) st[k] = setup[k]
+  }
+  function renderWalkthrough() {
+    const w = WT[ui.tab]
+    const host = el('wt-body')
+    host.innerHTML = ''
+    host.appendChild(h('p', { class: 'muted', text: w.intro }))
+    if (w.steps[ui.step] && w.steps[ui.step].note) host.appendChild(h('p', { class: 'muted', text: '起点：' + w.steps[ui.step].note }))
+    const steps = h('div', { class: 'wstep' })
+    w.steps.forEach(function (s, i) {
+      const done = i < ui.step
+      const cur = i === ui.step
+      const line = h('div', { class: 'line' }, [
+        h('span', { class: 'n' + (done ? ' done' : ''), text: done ? '✓' : String(i + 1) }),
+        h('span', { class: done ? 'done' : 'todo', text: s.say }),
+      ])
+      steps.appendChild(line)
+      if (cur) {
+        const btns = h('div', { class: 'ctl', style: 'margin:2px 0 8px 24px' })
+        if (s.act) btns.appendChild(h('button', { class: 'cur', text: '按这一步 →', onclick: function () { dispatch(s.act, 'step' + i); if (s.then) dispatch(s.then); ui.step = Math.min(i + 1, w.steps.length - 1); render() } }))
+        if (s.verdicts) {
+          s.verdicts.forEach(function (v) {
+            btns.appendChild(h('button', { text: '定论：' + v, onclick: function (e) { e.target.className = 'on'; ui.step = Math.min(i + 1, w.steps.length - 1); render() } }))
+          })
+        }
+        steps.appendChild(btns)
+      }
+    })
+    host.appendChild(steps)
+    if (ui.step >= w.steps.length - 1) host.appendChild(h('p', { class: 'muted', text: '这条走查到最后一步了：上面那几个「定论」按下去就是维护者的取舍，写回本票正文。' }))
+  }
+
+  /* ---------- 装配 ---------- */
+  function render() {
+    el('cap-w').textContent = String(st.viewW)
+    el('cap-touch').textContent = st.pointer === 'coarse' ? '触屏 · coarse' : '鼠标 · fine'
+    const vwCap = Math.max(240, Math.round(window.innerWidth) - 20)   // 手机竖屏：框不许比视口宽
+    const frameW = Math.min(st.viewW, vwCap)
+    el('phone').setAttribute('style', '--phone-w:' + frameW + 'px')
+    el('phone').setAttribute('data-frame-w', String(frameW))
+    renderDock()
+    measureAndDecorate()
+    renderState()
+    renderShapeCtl()
+    renderViewCtl()
+    renderFreeCtl()
+    renderTabs()
+    renderWalkthrough()
+  }
+  render()
+})()
+</script>
+
+</body>
+</html>
