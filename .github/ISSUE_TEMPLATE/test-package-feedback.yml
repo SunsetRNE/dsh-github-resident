@@ -1,0 +1,88 @@
+name: 试装包反馈（v1.7.0 合并包）
+description: 试装 @local/dsh-github-resident-v2 1.7.0 合并测试包后的问题、疑问与建议
+title: "[试装] "
+labels: ["test-package", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢试装。请尽量填全 —— **设备 / 界面宽度与方向 / 复现步骤**这三样缺了，我们只能反过来问你。
+
+        已知问题（不必重复报）：输入框上方功能条在窄屏（手机竖屏）下会挤、右端控件可能被截；触屏上「可接 / 故障」的悬停菜单打不开。这两条正是本次改造的靶子，欢迎补充你在真机上看到的具体宽度与表现。
+
+  - type: input
+    id: version
+    attributes:
+      label: 插件版本与安装方式
+      description: 插件管理器里显示的版本；从 tgz 导入还是源码包
+      placeholder: 1.7.0 / 从 local-dsh-github-resident-v2-1.7.0.tgz 导入
+    validations:
+      required: true
+
+  - type: input
+    id: device
+    attributes:
+      label: 设备与系统
+      placeholder: 例如 LENOVO TB321FU / Android 16；或 Windows 11 + Chrome 140
+    validations:
+      required: true
+
+  - type: input
+    id: viewport
+    attributes:
+      label: 界面宽度与方向
+      description: 浏览器窗口宽度，或直接写「竖屏 / 横屏」
+      placeholder: 例如 竖屏 412px / 桌面 1700px
+    validations:
+      required: true
+
+  - type: textarea
+    id: what
+    attributes:
+      label: 现象（期望 vs 实际）
+      placeholder: |
+        期望：……
+        实际：……
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: 复现步骤
+      placeholder: |
+        1. …
+        2. …
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: 出问题的区域
+      options:
+        - 输入框上方功能条（可接 / 故障 / 诊断 / 沉淀 / 交接 / 环境 / 时间）
+        - 右侧面板 / 票列表 / 地图
+        - 设置页 / 插件管理器
+        - GitHub 工具（gh_*）
+        - Deck 工具（deck_*）
+        - 技能（/ 斜杠）
+        - 说不清 / 其它
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志或控制台报错（可选）
+      description: 浏览器控制台、DSH 日志里与本问题相关的行
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我已确认上面的截图 / 日志里没有 token、私有仓库地址等敏感信息
+          required: true
