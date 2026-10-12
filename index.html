@@ -1,0 +1,13 @@
+<!doctype html><meta charset="utf-8"><title>dsh-github-resident · 分发包</title>
+<body style="font:14px/1.7 system-ui;max-width:640px;margin:40px auto;padding:0 16px">
+<h1>dsh-github-resident · 分发包</h1>
+<p>这里是插件的自托管分发点（GitHub Pages）。机器读 <a href="index.json">index.json</a>，人点下面这个：</p>
+<ul id="l"></ul>
+<script>
+fetch('index.json').then(r=>r.json()).then(j=>{
+  document.getElementById('l').innerHTML =
+    '<li><a href="'+j.tarball+'">'+j.tarball+'</a> — '+j.bytes+' 字节 · v'+j.version+' · sha256 '+j.sha256.slice(0,16)+'…</li>'
+    + '<li>安装：<code>'+j.install+'</code></li>';
+}).catch(()=>{});
+</script>
+</body>
