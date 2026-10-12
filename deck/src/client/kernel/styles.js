@@ -171,15 +171,12 @@
       '.dsws-banner.bad{background:rgba(248,113,113,.12);border:1px solid rgba(248,113,113,.45);color:#f87171}',
       '.dsws-banner.warn{background:rgba(245,158,11,.12);border:1px solid rgba(245,158,11,.45);color:#fbbf24}',
       '.dsws-banner.ok{background:rgba(74,222,128,.1);border:1px solid rgba(74,222,128,.35);color:#4ade80}',
-      // 正文这一格：能收（min-width:0）但不许收到读不成句 —— 200px 起，放得下就长满余量。
-      '.dsws-banner-text{flex:1 1 200px;min-width:0;overflow-wrap:anywhere;line-height:1.35}',
+      // 正文这一格：底数取**内容宽**（flex-basis:auto），放得下就长满余量，窄了也不许收到读不成句
+      //   （min-width 72px ≈ 六个汉字一行的下限）。底数取 auto 这一条是桌面档的命门：底数取 0 或取固定
+      //   像素值时，黄条那种「按内容收窄」的宽度算下来正好只多出十几个像素，正文会回头被压成两行。
+      '.dsws-banner-text{flex:1 0 auto;min-width:72px;overflow-wrap:anywhere;line-height:1.35}',
       // 横幅里那颗主按钮：窄屏下它可能独占一行，标签要能在自己框内折行，且不许宽出黄条。
       '.dsws-banner-act{flex:0 1 auto;max-width:100%;white-space:normal;text-align:left;line-height:1.35}',
-      // 状态栏那条横幅（黄条/蓝条/探测中）独占一行宽：**按内容收窄是窄屏读不成句的根** ——
-      //   黄条的宽度原来由内容决定（≈413px），于是「图标 + 可读的正文 + 长按钮」永远只差一点放不下，
-      //   挤也挤不出余量。撑到 560 上限之后，桌面档那三种横幅都还是**一行**（实测一行需 505px ≤ 内宽 538），
-      //   窄屏则让长按钮整颗落到第二行。面板里那条同名横幅（NamingFailBanner）不挂这个类，保持原样。
-      '.dsws-banner-dock{width:100%;box-sizing:border-box}',
       // #669（2026-09-21）：横幅上那颗收起控件是图形叉（类名 dsws-banner-fold-x）。同一天一度改成带字的「收起」
       //   （类名 dsws-banner-collapse），维护者要求还原成叉，类名跟着写回来。
       '.dsws-banner-fold-x:hover{opacity:.8}',

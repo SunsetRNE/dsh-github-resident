@@ -180,8 +180,8 @@ window.__BANNER__ = function () {
     foldX: pick(b.querySelector('.dsws-banner-fold-x')),
   }
 }
-// 反证（自带）：在克隆件上把正文那格打回改造前的写法（flex:1，没有 200px 底线），
-//   上面那把「正文拿到半宽以上 + 没被压成一列」的尺子必须当场报红 —— 抓不住就是假绿。真节点一个字不碰。
+// 反证（自带）：在克隆件上把这条横幅打回改造前的写法 —— 不许折行（flex-wrap:nowrap）+ 正文 flex:1，
+//   上面那把「正文拿到半宽以上 + 没被压成一列」的尺子必须当场报红；抓不住就是假绿。真节点一个字不碰。
 window.__SQUEEZE__ = function () {
   const b = document.querySelector('.dsws-banner')
   if (!b) return { error: 'no banner' }
@@ -190,6 +190,7 @@ window.__SQUEEZE__ = function () {
   clone.style.visibility = 'hidden'
   clone.style.left = '-10000px'
   clone.style.width = Math.round(b.getBoundingClientRect().width) + 'px'
+  clone.style.flexWrap = 'nowrap'          // 改造前：这条横幅不许折行
   b.parentElement.appendChild(clone)
   const t = clone.querySelector('.dsws-banner-text')
   if (t) { t.style.flex = '1'; t.style.overflowWrap = 'normal' }
