@@ -2,23 +2,25 @@
   "schema": "dsh-github-resident/artifact-index",
   "schemaVersion": 1,
   "package": "@sunsetrne/dsh-github-resident-v2",
-  "version": "1.7.3",
-  "publishedAt": "2026-10-12T20:27:18Z",
-  "sourceRef": "ea64262 + 身份源统一(@sunsetrne·六处) + 更新修复(profile探测/main) + merge 版本守卫修复",
-  "tarball": "sunsetrne-dsh-github-resident-v2-1.7.3.tgz",
-  "url": "https://sunsetrne.github.io/dsh-github-resident/sunsetrne-dsh-github-resident-v2-1.7.3.tgz",
-  "sha256": "61e7d4b3a3c3fad289bc46531827bbd9966b0e890402d3a1f9cca283950c4384",
-  "bytes": 2797427,
-  "install": "npm i https://sunsetrne.github.io/dsh-github-resident/sunsetrne-dsh-github-resident-v2-1.7.3.tgz",
+  "version": "1.7.4",
+  "publishedAt": "2026-10-12T20:55:07Z",
+  "sourceRef": "工作区 WIP 线（含 statusbar/barScroll 横滑窗）+ ea64262 更新修复 + 门禁修复",
+  "tarball": "sunsetrne-dsh-github-resident-v2-1.7.4.tgz",
+  "url": "https://sunsetrne.github.io/dsh-github-resident/sunsetrne-dsh-github-resident-v2-1.7.4.tgz",
+  "sha256": "1724588708976064072b07c3938dd35cfdc40c958c01cc3feb4f12f23bffe5ca",
+  "bytes": 2832488,
+  "install": "npm i https://sunsetrne.github.io/dsh-github-resident/sunsetrne-dsh-github-resident-v2-1.7.4.tgz",
   "previous": [
     {
+      "version": "1.7.3",
+      "superseded": true
+    },
+    {
       "version": "1.7.2",
-      "tarball": "sunsetrne-dsh-github-resident-v2-1.7.2.tgz",
       "deprecated": true
     },
     {
       "version": "1.7.0",
-      "tarball": "local-dsh-github-resident-v2-1.7.0.tgz",
       "deprecated": true
     }
   ],
@@ -35,6 +37,13 @@
       "tarball": "local-dsh-github-resident-v2-1.7.0.tgz",
       "sha256": "8a54ead3a214f78bef18722f3029d7ff0cb828a63f58d54039496cac55cf350d",
       "reason": "包名仍是旧名 @local/…，仅作通道自检样本，勿作更新源"
+    }
+  ],
+  "superseded": [
+    {
+      "version": "1.7.3",
+      "tarball": "sunsetrne-dsh-github-resident-v2-1.7.3.tgz",
+      "reason": "不含 WIP 界面修复（滚动工具栏等）；可作回滚件，不推荐日常用"
     }
   ]
 }
