@@ -1,0 +1,221 @@
+// smoke-host-dispatch.test.js — host seam dispatch 端到端验证
+// 验证 harness.handle 注册的 handler 能经 connection.fetch.register('/api/dsws') 那条精确路由被调用：
+//   注册路径是精确路径 /api/dsws（不带端点尾巴），端点名与入参装在请求体 payload 里（#596）；
+//   wf.logGetSwitch → logGetSwitch 端点 → { ok: true, enabled, sampleRate }（#498 退役 wf.ping，探活改走免参开关读电话）
+import { readFileSync } from 'node:fs'
+
+const modRaw = await import('../package/lib/index.js')
+const mod = modRaw.default ?? modRaw
+
+let route = null
+// #266 建号感知冒烟：gh api 索引快照由 stub 返回（测试可控 JSON Lines；按调用序切换新旧快照）
+const GH_BASE = '{"number":1,"title":"既有一","state":"OPEN","updatedAt":"u1"}\n{"number":2,"title":"既有二","state":"CLOSED","updatedAt":"u2"}\n'
+let ghIndexText = GH_BASE
+const subprocess = {
+  async resolveExecutable() { return 'gh' },
+  spawn() {
+    return {
+      stdout: { on: () => {} }, stderr: { on: () => {} }, on: () => {}, terminate: () => {},
+      done: Promise.resolve({ exitCode: 0 }),
+      collected: { stdout: { readFrom: () => ({ text: ghIndexText }) }, stderr: { readFrom: () => ({ text: '' }) } },
+    }
+  },
+}
+// host 的真实 timer 服务双签名：timeout(fn, ms) 节流 / timeout(ms) → Promise（runGh 超时竞速用）
+const timer = {
+  timeout: (a, b) => (typeof a === 'function' ? setTimeout(a, b) : new Promise(function (res) { setTimeout(res, a) })),
+}
+const fsSvc = { readFileSync: () => '', writeFileSync: () => {}, existsSync: () => false, mkdirSync: () => {}, readdirSync: () => [], statSync: () => ({ isDirectory: () => false }) }
+const sleep = (ms) => new Promise(function (res) { setTimeout(res, ms) })
+const platformSvc = { getHome: async () => '', path: { join: (...a) => a.join('/') }, fs: { mkdir: async () => {}, resolve: async (k) => String(k) }, resolveExecutable: async () => 'gh', env: { get: () => undefined } }
+const services = {
+  subprocess, timer, fs: fsSvc, platform: platformSvc,
+  connection: { fetch: { register: (r) => { route = r; return () => {} } } },
+}
+const ctx = { get: (k) => services[k], effect: (fn) => { const r = fn(); return typeof r === 'function' ? r : () => {} } }
+
+;(mod.apply ?? mod.default?.apply)(ctx)
+
+// 注册经 ./rpcChannel.js 动态加载完成（宿主禁止静态 import 的既有约定），等它落地再断言。
+await new Promise(function (resolve) {
+  const t0 = Date.now()
+  const tick = function () {
+    if (route || Date.now() - t0 > 3000) return resolve()
+    setTimeout(tick, 20)
+  }
+  tick()
+})
+
+let failures = 0
+const check = (ok, msg) => { console.log((ok ? '  PASS ' : '  FAIL ') + msg); if (!ok) failures++ }
+check(!!route && typeof route.fetch === 'function', 'connection.fetch.register 收到 /api/dsws 路由')
+check(!!route && route.path === '/api/dsws', `路由路径 = ${route && route.path}`)
+
+// 按 DSH 信封调用一次：client-request 进，server-response 出（返回信封里的 result）。
+// #596：路径是精确路径 /api/dsws，端点名与入参一并装进 body 的 payload（{method, payload}）。
+const dispatchOnce = async function (endpoint, args) {
+  const res = await route.fetch({
+    method: 'POST',
+    url: 'http://127.0.0.1:1/api/dsws',
+    json: async () => ({ type: 'client-request', rpcId: 'dispatch-' + endpoint, method: endpoint, payload: { method: endpoint, payload: args } }),
+  })
+  const env = await res.json()
+  return env && env.result
+}
+
+// 调 dispatch：endpoint 'logGetSwitch'（免参开关读电话，#498 前为 wf.ping → seam 去掉 wf. 前缀）
+{
+  const res = await dispatchOnce('logGetSwitch', {})
+  console.log('  logGetSwitch 结果:', JSON.stringify(res))
+  check(!!res && res.ok === true, 'logGetSwitch dispatch ok=true')
+  const bad = await dispatchOnce('nonexistent', {})
+  check(!!bad && bad.ok === false, '未知端点 ok=false（RpcResult 错误信封）')
+}
+
+// ---- #627 标签配色两条电话：端点名与契约操作名一致，经同一条路由调到宿主处理器 ----
+// 这一跑证明的是「路通」：分派信封成功（说明端点表里有这个处理器，不是「未知端点」），
+// 处理器按契约的工具信封回话（成功给数据、失败给一档错误）。
+// 真实的列标签与改色由后端房间实现（#618/#620），不在这条冒烟里演 ——
+// 所以下面只断言信封的形状，不断言「后端还没实现」：后端做出来之后，这条冒烟不该跟着变红。
+if (route && typeof route.fetch === 'function') {
+  const callHandler = async function (endpoint, args) {
+    const env = await dispatchOnce(endpoint, args)
+    return (env && typeof env.value === 'object' && env.value !== null && ('ok' in env.value)) ? env.value : env
+  }
+  try {
+    const bind = await callHandler('bind', { cwd: process.cwd(), backendId: 'markdown' })
+    check(!!bind && bind.ok === true, '前置：把这一跑的工作区显式绑到 markdown 后端（让后面两条电话有确定的后端可选）')
+
+    const listEnv = await dispatchOnce('listLabels', { cwd: process.cwd() })
+    check(!!listEnv && listEnv.ok === true, 'wf.listLabels 经路由命中处理器（信封成功，不是「未知端点: listLabels」）')
+    const rl = await callHandler('listLabels', { cwd: process.cwd() })
+    console.log('  listLabels 结果:', JSON.stringify(rl))
+    check(!!rl && typeof rl.ok === 'boolean', 'wf.listLabels 回了一个信封（ok 是布尔值）—— 后端实现没实现都不影响这条')
+    check(!!rl && (rl.ok === true ? Array.isArray(rl.labels) : (!!rl.error && typeof rl.error.kind === 'string')), 'wf.listLabels 的信封与 ok 自洽：成功带 labels 数组，失败带 error.kind')
+
+    const writeEnv = await dispatchOnce('setLabelColors', { cwd: process.cwd(), changes: [{ name: 'bug', color: '9d7cd8' }] })
+    check(!!writeEnv && writeEnv.ok === true, 'wf.setLabelColors 经路由命中处理器（信封成功）')
+    const rs = await callHandler('setLabelColors', { cwd: process.cwd(), changes: [{ name: 'bug', color: '9d7cd8' }] })
+    console.log('  setLabelColors 结果:', JSON.stringify(rs))
+    check(!!rs && typeof rs.ok === 'boolean', 'wf.setLabelColors 回了一个信封（ok 是布尔值）—— 后端实现没实现都不影响这条')
+    check(!!rs && (rs.ok === true ? (Array.isArray(rs.applied) && Array.isArray(rs.failed)) : (!!rs.error && typeof rs.error.kind === 'string')), 'wf.setLabelColors 的信封与 ok 自洽：成功带 applied/failed 两个名单，失败带 error.kind')
+
+    const rsBad = await callHandler('setLabelColors', { cwd: process.cwd(), changes: '不是一批改动' })
+    check(!!rsBad && rsBad.ok === false && rsBad.error.kind === 'parse', 'setLabelColors 收到不是一批改动 → 解析档（不必先问后端）')
+  } catch (eLabels) {
+    check(false, '#627 标签配色分发路径异常: ' + String((eLabels && eLabels.message) || eLabels))
+  }
+}
+
+// ---- #265 命名守护新增操作路径（注册/信号/计划单/回报）----
+if (route && typeof route.fetch === 'function') {
+  // loopback dispatch 返回 RpcResult 信封 { ok, value }：处理器原始返回在 .value（ping 断言即信封层）
+  const callHandler = async function (endpoint, args) {
+    const env = await dispatchOnce(endpoint, args)
+    return (env && typeof env.value === 'object' && env.value !== null && ('ok' in env.value)) ? env.value : env
+  }
+  try {
+    const plan0 = await callHandler('namingPlan', {})
+    check(!!plan0 && plan0.ok === true && Array.isArray(plan0.orders), 'namingPlan 空态返回 ok+orders[]')
+
+    const regBad = await callHandler('namingRegister', { sessionId: 'smoke-s2', baselineTitle: '随意标题' })
+    check(!!regBad && regBad.ok === false, 'namingRegister 拒绝非占位基准（占位四式校验在注册表操作内）')
+    const regOk = await callHandler('namingRegister', { sessionId: 'smoke-s1', baselineTitle: '[New] 新建需求', cwd: '', hint: '草稿档线索样例' })
+    check(!!regOk && regOk.ok === true, 'namingRegister 接受占位会话注册')
+    // 编号档（「在新会话打开」那条路）：编号与标题当场已知，收编后守 [#n] 名不被底座首句名盖掉
+    const regNum = await callHandler('namingRegister', { sessionId: 'smoke-s3', baselineTitle: '[#779] 示例标题', cwd: '' })
+    check(!!regNum && regNum.ok === true, 'namingRegister 接受编号档会话注册')
+    await callHandler('namingResult', { sessionId: 'smoke-s3', outcome: 'renamed', title: '[#779] 示例标题' })
+    // 对抗式审查补的两条：零号编号档拒收（收了只会留半登记态，改名时把 [#0] 名冲掉）；重复登记换号要换台账（否则目标名还是旧 issue 名）
+    // 本地 Markdown 后端的地图编号就是 00（数值 0），必须受理且不许把它改写成 [#0]
+    const regLocal = await callHandler('namingRegister', { sessionId: 'smoke-s4', baselineTitle: '[#00] 本地地图', cwd: '' })
+    check(!!regLocal && regLocal.ok === true, 'namingRegister 受理本地地图编号 [#00]（数值 0 合法）')
+    const planLocal = await callHandler('namingPlan', {})
+    const oLocal = (planLocal.orders || []).filter(function (o) { return o.sessionId === 'smoke-s4' })[0]
+    check(!!oLocal && oLocal.kind === 'numbered' && oLocal.numberText === '00', '本地地图订单带走编号原文 00（不被改写成 0）')
+    check(!oLocal || String(oLocal.numberText) === '00', '本地地图目标名保持 [#00] 形状')
+    await callHandler('namingResult', { sessionId: 'smoke-s4', outcome: 'renamed', title: '[#00] 本地地图' })
+    const regNeg = await callHandler('namingRegister', { sessionId: 'smoke-s5', baselineTitle: '[#-1] 负号', cwd: '' })
+    check(!!regNeg && regNeg.ok === false, 'namingRegister 拒绝带负号的伪编号档')
+    const regAgain = await callHandler('namingRegister', { sessionId: 'smoke-s3', baselineTitle: '[#780] 换了一张票', cwd: '' })
+    check(!!regAgain && regAgain.ok === true, 'namingRegister 同一会话重复登记不报错')
+    const planAgain = await callHandler('namingPlan', {})
+    const oAgain = (planAgain.orders || []).filter(function (o) { return o.sessionId === 'smoke-s3' })[0]
+    check(!!oAgain && oAgain.kind === 'numbered' && oAgain.number === 780, '重复登记把编号档换成新编号（防台账陈旧锁死）')
+    await callHandler('namingResult', { sessionId: 'smoke-s3', outcome: 'renamed', title: '[#780] 换了一张票' })
+    // 同一编号、标题变了（issue 标题被改过）：台账同样要跟着换，否则目标名与现名不符 → 被判手改锁死
+    const regRetitle = await callHandler('namingRegister', { sessionId: 'smoke-s3', baselineTitle: '[#780] 标题改过了', cwd: '' })
+    check(!!regRetitle && regRetitle.ok === true, 'namingRegister 同号换标题重复登记不报错')
+    const planRetitle = await callHandler('namingPlan', {})
+    const oRetitle = (planRetitle.orders || []).filter(function (o) { return o.sessionId === 'smoke-s3' })[0]
+    check(!!oRetitle && oRetitle.number === 780 && oRetitle.title === '标题改过了', '同号换标题后台账已换成新标题（目标名不再是旧名）')
+    await callHandler('namingResult', { sessionId: 'smoke-s3', outcome: 'renamed', title: '[#780] 标题改过了' })
+
+    const planHint = await callHandler('namingPlan', {})
+    check(!!planHint && planHint.ok === true && Array.isArray(planHint.orders) && planHint.orders.length === 1 && planHint.orders[0].kind === 'draft' && planHint.orders[0].hint === '草稿档线索样例', 'namingPlan 为带线索占位会话产出 draft 订单')
+    check(planHint.orders && planHint.orders[0] && planHint.orders[0].lock && planHint.orders[0].lock.baselineTitle === '[New] 新建需求', '订单携带值比对锁基准信息')
+
+    await callHandler('namingSignal', { sessionId: 'smoke-s1', hint: '更新的线索' })
+    const planSig = await callHandler('namingPlan', {})
+    check(!!planSig && Array.isArray(planSig.orders) && planSig.orders.length === 1 && planSig.orders[0].hint === '更新的线索', 'namingSignal 更新语义线索并反映到订单')
+
+    const resRename = await callHandler('namingResult', { sessionId: 'smoke-s1', outcome: 'renamed', title: '[草稿] 更新的线索' })
+    check(!!resRename && resRename.ok === true, 'namingResult renamed 回报接受')
+    const planDone = await callHandler('namingPlan', {})
+    check(!!planDone && Array.isArray(planDone.orders) && planDone.orders.length === 0, '草稿档升级后计划单清空（每会话 P1 至多一次）')
+
+    const lockReg = await callHandler('namingRegister', { sessionId: 'smoke-s3', baselineTitle: '[New] New Bug' })
+    await callHandler('namingResult', { sessionId: 'smoke-s3', outcome: 'locked' })
+    const planLock = await callHandler('namingPlan', {})
+    check(lockReg.ok === true && planLock.ok === true && Array.isArray(planLock.orders) && planLock.orders.every(function (o) { return o.sessionId !== 'smoke-s3' }), 'locked 会话永不出单（手改保护）')
+  } catch (eNaming) {
+    check(false, '命名守护分发路径异常: ' + String((eNaming && eNaming.message) || eNaming))
+  }
+}
+
+// ---- #266 建号感知：三操作复原（注册/取消/等待）＋ 索引差值结算 → numbered 订单 ----
+if (route && typeof route.fetch === 'function') {
+  const callHandler = async function (endpoint, args) {
+    const env = await dispatchOnce(endpoint, args)
+    return (env && typeof env.value === 'object' && env.value !== null && ('ok' in env.value)) ? env.value : env
+  }
+  try {
+    // 注册监视（#211 复原名）：占位基准 + repoKey；注册后 800ms 内打索引基线（GH_BASE）
+    const regWatch = await callHandler('registerNewSessionWatcher', { sessionId: 'smoke-266', baselineTitle: '[New] 新建需求', cwd: '', repoKey: 'acme/demo', hint: '新建的修复需求' })
+    check(!!regWatch && regWatch.ok === true, 'registerNewSessionWatcher 受理（注册监视复原）')
+    await sleep(1100)  // 等待基线建档（无归属）
+    const planBase = await callHandler('namingPlan', {})
+    check(!!planBase && Array.isArray(planBase.orders) && planBase.orders.length === 1 && planBase.orders[0].kind === 'draft', '首轮基线仅 draft（存量不当编号）')
+
+    // 等待建号：状态查询 + nudge 结算 —— stub 切到含新号 42 的快照
+    ghIndexText = GH_BASE + '{"number":42,"title":"新建的修复需求","state":"OPEN","updatedAt":"u42"}\n'
+    const awaitA = await callHandler('awaitCreatedIssue', { sessionId: 'smoke-266' })
+    check(!!awaitA && awaitA.ok === true && awaitA.watching === true, 'awaitCreatedIssue 等待中=true（等待建号复原）')
+    await sleep(600)  // nudge 120ms 短窗结算
+    const planNum = await callHandler('namingPlan', {})
+    const numOrder = (planNum && Array.isArray(planNum.orders)) ? planNum.orders.find(function (o) { return o.sessionId === 'smoke-266' }) : null
+    check(!!numOrder && numOrder.kind === 'numbered' && numOrder.number === 42 && numOrder.title === '新建的修复需求', '索引差值 → numbered 订单（新号 42 归属最早候选取样）')
+    const awaitB = await callHandler('awaitCreatedIssue', { sessionId: 'smoke-266' })
+    check(!!awaitB && awaitB.ok === true && awaitB.watching === false, '获号后 awaitCreatedIssue watching=false（不再等待）')
+
+    // numbered 单执行回报 → 落定收敛 → 计划单清空
+    const resR = await callHandler('namingResult', { sessionId: 'smoke-266', outcome: 'renamed', title: '[#42] 新建的修复需求' })
+    check(!!resR && resR.ok === true, 'numbered renamed 回报受理')
+    const planDone = await callHandler('namingPlan', {})
+    check(!!planDone && Array.isArray(planDone.orders) && planDone.orders.every(function (o) { return o.sessionId !== 'smoke-266' }), 'numbered 落定后不再出单')
+
+    // 取消监视：未知 sid 幂等；已注册 sid 移除
+    const cancelNone = await callHandler('cancelNewSessionWatcher', { sessionId: 'smoke-unknown' })
+    check(!!cancelNone && cancelNone.ok === true && cancelNone.cancelled === false, 'cancelNewSessionWatcher 未知 sid 幂等')
+    const regX = await callHandler('registerNewSessionWatcher', { sessionId: 'smoke-prune', baselineTitle: '[New] New Bug', cwd: '', repoKey: 'acme/demo' })
+    const cancelX = await callHandler('cancelNewSessionWatcher', { sessionId: 'smoke-prune' })
+    check(!!regX && regX.ok === true && !!cancelX && cancelX.ok === true && cancelX.cancelled === true, 'cancelNewSessionWatcher 移除受踪账目')
+    const planPrune = await callHandler('namingPlan', {})
+    check(!!planPrune && Array.isArray(planPrune.orders) && planPrune.orders.every(function (o) { return o.sessionId !== 'smoke-prune' }), '取消后不再出单')
+  } catch (eNum) {
+    check(false, '#266 建号感知分发路径异常: ' + String((eNum && eNum.message) || eNum))
+  }
+}
+
+console.log(failures ? `\ndispatch 冒烟失败 ${failures} 项` : '\ndispatch 冒烟全部通过')
+process.exit(failures ? 1 : 0)

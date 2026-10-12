@@ -1,0 +1,101 @@
+# 内核接口冻结清单（kernel contract）
+
+> 状态：✅ 已冻结（G3 · issue #91 拍板 · 2026-08-21；T3 · issue #96 落盘；#444 于 2026-09-05 按实测对齐为 15 模块基准）
+> 用途：阶段 2 内核迁移（T3）的接口基准 —— kernel/* 各模块对外导出表；「同层禁互 import」边界裁定。
+> 对齐说明（#444）：冻结表 10 行、门禁表 11 行、构建清单 15 项曾脱节，现以实测为准统一为 15 拼接模块；另有 2 个非拼接文件见下节，不计入 15。
+> 接口增量（#595 · 2026-09-10）：`kernel/prompts.js` 增 6 个导出（`bodyFormatDefault`、`currentBackendId`、`backendPromptFrom`、`bodyFormatText`、`backendParamsFor`、`promptTextFor`），`kernel/config.js` 增 `TPL_BACKEND_MARKERS`；目的是让「正文格式」这段文案由跟踪器后端各自声明、模板只留标记。口径与来龙去脉见下面「正文格式契约」一节。
+> 机制：与 ctx.js 同模式 —— src/client/index.js 中模块原位置留标记 `// ==== kernel:<name> (spliced by build) ====`，
+> 构建时由 scripts/build.mjs 把模块文件（剥每行行首 `export `）文本拼回标记处，一源两物（_dev / _pkg 双产物同构）。
+
+## cx 对象（G3 冻结 8 字段，不增不减 · #91 Q1）
+
+| 字段 | 含义 | 来源（apply 闭包） |
+|---|---|---|
+| ctx | apply 的 cordis ctx | `apply(ctx)` 参数 |
+| h | React.createElement | 闭包 `h` |
+| rdom | react-dom 访问器（createPortal 用，取不到为 null） | 闭包 `RDOM` |
+| storeSvc | 面板状态服务（shared / stores / makeStore / storeOf / emit / sub / useStore） | kernel/store.js |
+| localeSvc | DSH locale 服务（register / bind） | `ctx.get('locale')` |
+| timer | DSH timer 服务 | `ctx.get('timer')` |
+| api | host 桥（call(endpoint, args) → host.call，带可用性守卫） | kernel/api.js 的 apiCall 包装 |
+| router | 面板开关 / tab 导航（open / toggle） | kernel/router.js 的 openPanel / togglePanel |
+
+## 非拼接文件（不在 15 之内，避免再数错）
+
+- `kernel/ctx.js`：经 `wireCtx` 在 `apply(ctx)` 顶部注入（`DswsCtx`、`createCx`），不走 `KERNEL_MODULES` 拼接标记，门禁见 `tests/verify-ctx.js`。
+- `kernel/tabsfold.js`：折叠纯函数（`TABS_FOLD_HYST`、`TABS_LEVELS`、`tabsLevelDecide`），内联在 `src/client/index.js`，不走拼接标记，门禁见 `tests/verify-tabsfold-leaf.js`。
+
+## kernel/* 模块对外接口表（T3 迁移后 · 每模块一文件 · #444 对齐为 15 模块）
+
+> 迁移顺序（按依赖 · issue #96 Notes）：locale → prompts → icons → styles → store → api → probe → router → config；
+> 实际按物理位置与依赖综合串行迁移，每迁一个模块 build + verify-* 全绿再迁下一个。
+> 消费方式：模块代码经构建拼回 apply 闭包内原位，闭包变量互相可见（函数调用时才解析引用）；
+> 模块文件顶层仅导出声明的常量/函数/纯数据（可被 verify 测试直接 import）。
+
+| 模块文件 | 导出（接口） | 依赖（闭包内引用） | 说明 |
+|---|---|---|---|
+| `kernel/locale-panel.js`（标记名 `localePanel`） | `L_PANEL`（导航、面板、横幅、环境、初始化引导五组，zh/en 双语） | 无 | 字典片段之一（#458 由 `locale.js` 拆出，304 行） |
+| `kernel/locale-flow.js`（标记名 `localeFlow`） | `L_FLOW`（动作、类型、列表、配置、详情、地图、提示七组，zh/en 双语） | 无 | 字典片段之一（#458 由 `locale.js` 拆出，302 行） |
+| `kernel/locale-word.js`（标记名 `localeWord`） | `L_WORD`（技能、检查、浮层、命名、切换、进度、错误、模板、运行十一组，zh/en 双语；技能描述 #879 起另立 `locale-skilldesc.js`） | 无 | 字典片段之一（#458 由 `locale.js` 拆出；#879 把技能描述组搬出后回落到 350 行以内） |
+| `kernel/locale-labels.js`（标记名 `localeLabels`） | `L_LABELS`（#621 标签配色弹窗的文案：入口提示、弹窗标题与四种正文形态、保存四种结果、契约八个错误档位各一句人话、窄面板提示，zh/en 双语） | 无 | 字典片段之四（#621 新增；老的三份片段都在 350 行上限附近，这一票要加四十多条键，故单独一份片段，由 `locale.js` 合并器一起并进 `L`） |
+| `kernel/locale-pages.js`（标记名 `localePages`） | `L_PAGES`（#690 历史票按需翻页的五句：已加载 x / 共 N、这个后端只能在网页上看全部、翻页位置失效已重新开始、没取到再试、更早的页腾出后要重新加载，zh/en 双语） | 无 | 字典片段之五（#690 新增；`locale-flow.js` 已在 350 行上限附近，故照 #621 的做法单独一份片段，由 `locale.js` 合并器一起并进 `L`） |
+| `kernel/locale-skilldesc.js`（标记名 `localeSkilldesc`） | `L_SKILLDESC`（#879 技能描述 27 条中英词条，zh/en 双语） | 无 | 字典片段之七（#879 新增；`locale-word.js` 已贴 350 行上限，照 #621/#690/#842 的做法单独一份片段，由 `locale.js` 合并器一起并进 `L`） |
+| `kernel/locale.js`（标记名 `locale`，合并器） | `L`（`Object.assign` 合并七片段 zh/en，key 一个不改只搬家） | `L_PANEL`/`L_FLOW`/`L_WORD`/`L_LABELS`/`L_PAGES`/`L_VCWRITE`/`L_SKILLDESC`（定义时引用，标记位顺序保证先片段后合并） | tr 绑定（`localeSvc.bind('dsws')`）由 index.js 装配；字典为唯一真源，verify-t3-locale 契约 |
+| `kernel/prompts.js` | `PROMPTS`、`promptLang`、`promptText`、`SETUP_DEFAULT_PROMPT_KEYS`、`setupRunParamsFrom`、`setupRunPrompt`、`NEW_WAYFINDER_DEFAULT_WIRING`、`newWayfinderParamsFrom`、`newWayfinderPrompt`、`bodyFormatDefault`、`currentBackendId`、`backendPromptFrom`、`bodyFormatText`、`backendParamsFor`、`promptTextFor`、`MATT_REPO`、`MAP_EXECUTE_PROMPT`、`COMPLETE_PROMPT`、`BODY_FORMAT`、`NEW_BUG_FIELDS_BODY`、`NEW_BUG_FIELDS_BODY_EN`、`completePrompt`、`inspectPrompt`、`FIXATE_PROMPT` | localeSvc（promptLang）、L/locale 字典与 L 兜底（setupRunParamsFrom）、repoStr（router，调用时） | PROMPTS 注册表契约见 tests/verify-prompts.js；setupRun 占位符由后端声明键（BackendModule.setupPrompt → wf.registry）经 setupRunParamsFrom 填充（#230 · D10 键入 locale，2026-08-28 生效；#230 已删 setupTrackerLine/Choice/BackendNote 三函数）；后 6 个导出是正文格式契约的填空入口，见下面「正文格式契约」一节（#595 · 2026-09-10） |
+| `kernel/icons.js` | `ICON_SCHEMES`、`WORD_SCHEMES`、`Icon`、`Ic` | h（React.createElement 自由变量） | 通用图标集（统一 SVG stroke 风格） |
+| `kernel/styles.js` | `STYLE_TEXT` | 无 | 样式唯一真源；index 标记处保留 `styles.insert(STYLE_TEXT)` 调用 |
+| `kernel/portal.js` | `RDOM`、`portalTop`、`PortalOverlay` | h（自由变量）、`ReactDOM`/`window.ReactDOM`/`require('react-dom')`/`document.body` | 挂顶底座（#380 抽离，平台抽象层，与 styles 同级）；RDOM 三路探测取不到为 null，portalTop 挂 document.body 取不到退化原地不抛，PortalOverlay 统一经 portalTop 挂顶（issue #3 / #22 同理） |
+| `kernel/config.js` | `CFG_KEY`、`cfg`、`saveCfg`、`TPL_KEY`、`templates`、`saveTemplates`、`migrateStartCfg`、`PH`、`TPL_PH`、`TPL_REQUIRED`、`TPL_DEFAULT`、`tplText`、`renderTemplate`、`TPL_BACKEND_MARKERS`、`validateTemplate`、`fixateText` | promptText（prompts） | 配置/模板持久化 + 动作模板引擎（T1 规格 §2-§4）；migrateStartCfg() 调用随模块；`TPL_BACKEND_MARKERS` 登记「内容由后端声明提供」的模板标记（#595 · 2026-09-10，当前值 `['bodyFormat']`，见下面「正文格式契约」一节） |
+| `kernel/store-prefs.js`（标记名 `storePrefs`） | 偏好（`DEFAULT_PANEL_H`、`LIST_PREFS_KEY`、`listPrefs`、`saveListPrefs`、`LABEL_CLICKS_KEY`、`labelClicks`、`saveLabelClicks`）、noRepo 状态机（`NOREPO_DISMISS_PREFIX`、`cwdHash`、`noRepoDismissKey`、`isNoRepoDismissed`、`setNoRepoDismissed`、`cwdBasename`、`isNoRepoNameValid`、`ensureNoRepoCard`）、选中与仓库（`setActiveMap`、`clearActiveMap`、`setActiveIssue`、`clearActiveIssue`、`clearActiveDetail`、`ISSUE_CACHE_TTL`、`selectionByCwd`、`repositoryByCwd`、`SELECTION_BY_CWD_KEY`、`BANNER_FOLD_KEY`、`bannerFoldByCwd`、`isBannerFolded`、`setBannerFolded`、`getCachedSelection`、`setCachedSelection`、`userHintOf`、`keepUserPick`、`baseRevOf`、`userPickSelection`、`adoptBoundRev`、`getCachedRepository`、`setCachedRepository`、`SETUP_LAYOUT_BY_CWD_KEY`、`setupLayoutByCwd`、`getCachedSetupLayout`、`setCachedSetupLayout`、`migrateCachedChoiceToKey`） | keyOf（shared:workspaceKey，调用时）、shared/stores/emit（store-snapshot，调用时） | 会话级状态之偏好与选中（#455 由 `store.js` 第 9–119 行拆出，119 行） |
+| `kernel/store-switch.js`（标记名 `storeSwitch`） | 标签与颜色（`labelOf`、`presentationById`、`setPresentationMap`、`backendColorOf`、`backendBgOf`、`backendBorderOf`、`repoShortName`）、切换确认（`DEFAULT_SWITCH_PROMPT_ZH`、`openSwitchConfirm`、`closeSwitchConfirm`、`loadSwitchCri`、`confirmSwitchConfirm`） | tr（index）、flash（store-snapshot，调用时）、setupRunPrompt/inject/loadSnapshot/loadChain（调用时） | 会话级状态之切换确认（#455 由 `store.js` 第 120–312 行拆出，201 行） |
+| `kernel/store-snapshot.js`（标记名 `storeSnapshot`） | 存储核（`makeStore`、`shared`、`stores`、`storeOf`、`emit`、`sub`、`useStore`）、快照与链缓存（`SNAP_CWD_LRU_MAX`、`snapshotByCwd`、`touchLRUClient`、`getCachedSnapshot`、`getCachedEntry`、`setCachedSnapshot`、`getSnapshotVersion`、`lastProbeAtByCwd`、`getProbeAt`、`touchProbeAt`、`SNAP_DISK_CAP`、`diskPutSnapshot`、`diskGetSnapshot`、`CHAIN_CWD_LRU_MAX`、`chainByCwd`、`getChainCacheKey`、`getCachedChain`、`setCachedChain`、`hydrateFromCache`、`mergeSelection`、`applySnapshotSelection`、`getCwdSync`）、提醒（`NOTICE_COLOR`、`noticeIcon`、`flash`） | keyOf（shared:workspaceKey，调用时）、SYNC（shared:trackerSync，调用时） | 会话级状态之存储核与快照（#455 由 `store.js` 第 313–599 行拆出，295 行） |
+| `kernel/store-derived.js`（标记名 `storeDerived`） | 派生统计（`compute`、`frontierAll`、`openIssuesOf`、`isOccupied`、`occCount`、`frontierCount`、`applyStandaloneBlocks`、`hasLabelOf`、`isTriageLike`、`bugCount`、`triageCount`、`buildColorOf`、`isLightHex`、`rowActionKind`、`actionColorOf`、`rowActionText`、`mkRowAction`、`timeStampStr`）、工单口径与后端计数（`isTicketRow`、`ticketRowsOf`、`deckCountsOf`） | issueUrlFor（link，调用时）、renderTemplate/startText（config/router，调用时） | 会话级状态之派生统计与行级动作（#455 由 `store.js` 第 600–741 行拆出，150 行；#544 增独立票阻塞边合并 `applyStandaloneBlocks`，只读快照 issues 自带边，零请求；#689 增工单口径 `isTicketRow`／`ticketRowsOf` 与后端计数读取 `deckCountsOf`，主列表、KPI、状态栏三处共用同一处判断；#771 增一处分类 `rowActionKind`，四处展示共用它） |
+| `kernel/api-naming.js`（标记名 `apiNaming`） | 交接头（`injectFixate`、`handoffPrompt`、`extractHandoffFile`、`absHandoffPath`、`handoffReadText`）、预设与建会话（`getRowPreset`、`isHealthyPreset`、`isReusableBlank`、`buildCreateOpts`、`createPTCSession`）、命名守护（`NAMING_POLL_MS`、`namingCurrentTitleOf`、`namingHintOf`、`executeNamingOrder`、`reconcileNamingFailure`、`applyNamingFailurePanel`、`namingGuardianKick`、`startNamingGuardianPoll`） | inject（api-io，调用时）、fixateText/renderTemplate（config，调用时）、keyOf（shared:workspaceKey，调用时）、storeOf/emit（store-snapshot，调用时）、evaluateRenameLock/composeDraftTitle/newSessionTitle（shared:namingGuardian，调用时）、promptLang（prompts，调用时）、timeStampStr（store-derived，调用时）、tr（index）、host/timer/ctx（自由变量） | 交接头与命名守护（#457 由 `api.js` 第 9–327 行拆出，327 行；原序第 320–327 行八行交接按钮注释为保三文件各≤350 留在本文件尾，纯注释行为不变；#787 交接记忆与首条草稿搬进会话 store，模块级 `handoffTs`/`handoffFile`/`pendingDraft`/`pendingDraftTargetSid` 四全局删除） |
+| `kernel/api-preset-guard.js`（标记名 `apiPresetGuard`） | 预设守卫（`describeReuseDecision`、`verifyFreshPreset`、`tryQuarantineSession`、`createVerifiedPTCSession`） | getRowPreset/isHealthyPreset（api-naming，调用时） | 预设探针与创建后验编排（#478 由 `api-naming.js` 拆出，防复用闸门关联文件超 350 行粒度） |
+| `kernel/api-workspace.js`（标记名 `apiWorkspace`） | 工作区编号查找（`workspacePathOf`、`workspaceIdOf`、`workspaceNormOf`、`workspaceCollectFromSnap`、`workspaceMatchEntry`、`workspaceTryCreateWid`、`resolveWorkspaceEntry`） | keyOf（shared:workspaceKey，调用时） | 按目录找工作区编号与按需创建（#636 由 `api-new-session.js` 拆出，防新增超标；命中时编号与登记项同路返回，供复用验归属） |
+| `kernel/api-new-session.js`（标记名 `apiNewSession`） | 交接执行（`handoffCwdMatches`、`probeHandoffReady`、`doHandoff`、`doHandoffOpen`）、新会话创建（`openTextInNewSession`，内含薄转发 `ensureWorkspaceId` 调上面的 `resolveWorkspaceEntry`） | handoffPrompt（api-naming，调用时）、resolveWorkspaceEntry（api-workspace，调用时）、inject/copyText（api-io，调用时）、buildCreateOpts/createPTCSession/isReusableBlank（api-naming，调用时）、createVerifiedPTCSession（api-preset-guard，调用时）、namingHintOf/namingCurrentTitleOf/namingGuardianKick（api-naming，调用时）、storeOf/hydrateFromCache/getCachedSnapshot（store-snapshot，调用时）、keyOf/wsKeyOf（shared:workspaceKey，调用时）、tr（index）、host/timer/ctx（自由变量） | 交接执行与新会话创建（#457 由 `api.js` 第 328–666 行拆出；#636 把工作区查找搬进 `api-workspace.js` 后本文件 310 行；#787 交接记忆、防抖计时住会话 store，目录校验 fail-closed，草稿写目标会话 store） |
+| `kernel/api-io.js`（标记名 `apiIo`） | 行级打开（`openInNewSession`）、注入复制（`inject`、`openUrl`、`copyText`）、问题详情（`fetchIssueDetail`、`clearIssueDetailCache`、`fetchIssueComments`、`submitIssueComment`）、历史票按页取（`fetchIssuesPage`，走电话 `wf.issuesPage`，日志点 `issues.page`） | openTextInNewSession（api-new-session，调用时）、scheduleActionProbe（probe-auto，调用时）、rowActionText（store-derived，调用时）、newSessionTitle（shared:namingGuardian，调用时）、issueUrlFor（link，调用时）、emit/flash（store-snapshot，调用时）、tr（index）、host（自由变量） | 行级打开与问题详情（#457 由 `api.js` 第 667–852 行拆出，194 行；#690 增 `fetchIssuesPage`——页数据本身住在 `kernel/issue-pages.js`，本文件只负责把那一页要到手并如实回形状） |
+| `kernel/issue-pages.js`（标记名 `issuePages`） | 页数据（`ISSUE_PAGE_MAX`、`ISSUE_PAGE_LIMIT`、`issuePageFilterOf`、`issuePageKeyOf`、`issuePageBucketRead`、`issuePageBucketOf`、`issuePageRowsOf`、`issuePageStatOf`、`loadIssuePage`） | idOf/effortOf（shared:constants，调用时）、emit（store-snapshot，调用时）、fetchIssuesPage（api-io，调用时） | 历史票的页数据（#690 新增：按「工作区 + 后端 + 仓库 + 视图 + 筛选」分桶、按票身份去重、静默刷新不清空、内存最多留十页；挂在 `st.issuePages` 上，不落磁盘。单独一片是因为 `store-snapshot.js` 已贴 350 行上限） |
+| `kernel/probe-chain.js`（标记名 `probeChain`） | 链自动刷新（`scheduleChainAutoRefresh`、`cancelChainAutoRefresh`）、`loadChain`、链派生（`chainSteps`、`chainStep`、`chainStepStatus`、`chainStepOk`、`chainStepBad`、`readyCount`、`envTotal`、`envLabel`、`setupCheck`）、阻塞者（`openBlockers`、`blockerNames`）、`detectCwd` | getChainCacheKey/getCachedChain/setCachedChain（store-snapshot，调用时）、keyOf（shared:workspaceKey，调用时）、emit（store-snapshot，调用时）、nowStr（probe-snapshot，调用时）、timer/host（自由变量） | 链加载与链派生（#456 由 `probe.js` 第 9–94、96–130 行拆出，130 行） |
+| `kernel/probe-snapshot.js`（标记名 `probeSnapshot`） | 快照去重（`pendingSnapshotByCwd`）、时间小函数（`nowStr`、`timeOf`、`timeOfMs`）、`broadcastCfg`、`broadcastLogSwitch`、`rememberSessionWorkspaceRoot`、缓存先出再上报（`cacheFirstThenAttend`）、`loadSnapshot` | flash/hydrateFromCache/applySnapshotSelection/getCwdSync/setCachedSnapshot/storeOf/shared/stores/emit（store，调用时）、keyOf（shared:workspaceKey，调用时）、setPresentationMap（store-switch，调用时）、reportWorkspaceAttention（attention-heartbeat，调用时）、tr（index）、timer/host（自由变量） | 快照差异与快照加载（#456 由 `probe.js` 第 95、131–403 行拆出，283 行；`pendingSnapshotByCwd` 一行随 `loadSnapshot` 归入本文件，原序第 95 行后移，初始化无依赖行为不变。#707：颜色小函数、`diffSnapshots`、`scheduleFlashClear` 搬去 `probe-snapshot-helpers.js`，本文件加一条「先用旧快照铺满、再上报我在看谁」） |
+| `kernel/probe-snapshot-helpers.js`（标记名 `probeSnapshotHelpers`） | 颜色小函数（`hexA`、`darken`）、数据层增量差异（`diffSnapshots`）、闪烁高亮清除（`_flashClearPending`、`scheduleFlashClear`） | idOf（shared:constants，调用时）、emit（store-snapshot，调用时）、timer（自由变量） | #707 从 `probe-snapshot.js` 拆出（那个文件当时 349 行，`tests/verify-file-granularity.js` 上限 350，#707/#708/#709 都还要改它）：搬出来的是与「下载快照」无关的三样小东西，行为一行未改；两个文件同属一个闭包，互相调用不走 import |
+| `kernel/probe-auto.js`（标记名 `probeAuto`） | 节拍（`PROBE_MS`、`FOCUS_PROBE_MIN_MS`、`lastFocusProbe`、`_actionProbePending`）、`probeNow`、`scheduleActionProbe`、`startAutoProbe`、只服务活跃工作区的那条探测节拍（`_activeProbeAt`、`startActiveProbeLoop`）、手动刷新（`spinAll`、`refreshAll`）、新鲜度（`SNAP_FRESH_MS`、`snapFresh`） | loadSnapshot/diffSnapshots/scheduleFlashClear（probe-snapshot，调用时）、loadChain（probe-chain，调用时）、flash/touchProbeAt/hydrateFromCache/shared/stores/emit（store，调用时）、keyOf（shared:workspaceKey，调用时）、_attentionPlan/attentionVisible/attentionStoreOf（attention-heartbeat，调用时）、tr（index）、timer/host/document（自由变量） | 自动探测与手动刷新（#456 由 `probe.js` 第 405–634 行拆出，239 行；#707 起这条节拍只探「我正在看的那个工作区根」，间隔由宿主的视野模型给，后台工作区一个定时器都不排） |
+| `kernel/attention-heartbeat.js`（标记名 `attentionHeartbeat`） | 窗口标识（`_attentionWindowId`、`attentionWindowId`）、可见性与人类输入（`attentionVisible`、`_attentionHumanAt`、`attentionNoteHuman`）、上报（`reportWorkspaceAttention`、`adoptAttentionPlan`、`attentionRootOf`、`attentionStoreOf`、`attentionKeyOf`）、处境（`_attentionPlan`、`_attentionAckAt`、`ATTENTION_SILENT_MS`、`attentionStandingOf`、`attentionSuspended`）、心跳与监听（`_attentionLastBeatAt`、`attentionBeat`、`startAttentionHeartbeat`、`startAttentionSignals`、`stopAttentionSignals`） | host（自由变量）、log/isEnabled（kernel:log）、wsKeyOf/getCachedSnapshot/hydrateFromCache/shared/stores/emit（store，调用时）、dswsLogHash/dswsLogTrunc（probe-snapshot，调用时）、startActiveProbeLoop（probe-auto，调用时）、tr（index）、timer/document/window（自由变量） | 视野模型的客户端半边（#707 新增：会话切换 / 打开面板 / 窗口获焦时上报一次「我在看谁」；面板可见时每 20 秒一次本地心跳，零配额不出网；窗口标识放 sessionStorage —— 平台不提供窗口身份与焦点信号，放 localStorage 会被同源别的窗口覆盖） |
+| `kernel/probe-stale.js`（标记名 `probeStale`） | 在途复用与「这一次回包还算不算数」的判断（#669 第 5 件）：`_snapPendKey`（去重键 = 工作区键 + 后端 id）、`_snapReuseInFlight`（在途复用，含 #366「force 不复用非 force」那条判据）、`_snapMarkRequest`（发文登记：序号 + 这次问的后端 + 在途键）、`_snapRespStale`（回包判两问）、`_snapSeqN`/`_snapLatestByWs`（每把键上最新一次请求的序号） | pendingSnapshotByCwd（probe-snapshot，调用时）、wsKeyOf（shared:workspaceKey，调用时）、hydrateFromCache/emit（store，调用时）、dswsDedupWin（probe-snapshot，调用时）、log/isEnabled（kernel:log）、tr（index） | #669 第 5 件从 `probe-snapshot.js` 拆出（守卫放进去那个文件会到 359 行、超 350 上限）：真机现场是「选 Markdown → 点确认切换 → 没有任何反应」—— 切换前飞着一次强制重取时，绑定成功之后那次重取被按工作区的去重规则复用掉，面板拿回切换前那份快照。两个文件同属一个闭包，互相调用不走 import |
+| `kernel/router.js` | `DECK_NATIVE_TAB_KIND`、`DECK_NATIVE_TYPE_ID`、`DeckSidebarTab`、`DeckNativeTabTitle`、`afterPanelOpened`、`openInNativeRight`、`openPanel`、`togglePanel`、`repoStr`、`withWayfinderPrefix`、`startText`、`newWayfinderText`、`newBugWayfinderText` | cfg（config）、loadSnapshot/hydrateFromCache/snapFresh（probe）、renderTemplate/completePrompt/BODY_FORMAT/MAP_EXECUTE_PROMPT/promptText（config/prompts） | 面板开关 / tab 导航 / 文本生成（#444 按实测移除已不存在的 `SESSION_TITLE_PREFIX`、`newSessionTitle`；2026-09-21 移除 `openPagePanel`、`openDockPanel`、`sidebarTabDisposer`、`sidebarTabRetry`、`ensureSidebarTab`、`openInSidebar` —— 面板只留 DSH 原生右侧边栏一条路） |
+| `kernel/builtin-backends.js`（标记名 `backendList`） | `BUILTIN_BACKENDS`、`builtinLabelOf`、`otherFiltered`、`firstBackendIdOf`、`repositoryActionOf`、`moduleMetaOf` | 无 | 内置后端显示名单单源（#231 类别 5 收编）；注意文件名与标记名不同，标记为 `// ==== kernel:backendList (spliced by build) ====` |
+| `kernel/link.js` | `issueUrlFor`、`openIssueUrl`、`searchUrlFor`、`repoUrlFor`、`issueRefNumbersFrom` | 无（调用时收 `st`/`host`） | 问题链接与搜索链接纯函数 |
+| `kernel/actions.js` | `createActionDispatcher`、`ACTIONS_VERSION` | 闭包内 `host`/`store`/`probe`（调用时） | 动作分发器（表单提交、注入、开链接、刷新） |
+| `kernel/slots.js` | `SLOTS_KERNEL_VERSION`、`SLOT_DEFS_KERNEL`、`MODAL_SEAT_ID`、`orderOf`、`isScopeValid`、`canDeclareIn`、`shouldShowInModal`、`isModalAction`、`getWizardAction`、`getFormAction`、`getModalAction`、`getWizardSteps` | 无 | 五个内部端口声明与向导动作判断（寄生官方父槽，随父坍缩回收） |
+| `kernel/slotRenderer-queue.js`（标记名 `slotRendererQueue`） | `SLOT_RENDERER_VERSION`、`ensureFormModal`、`openFormModal`、`closeFormModal`、`createModalRenderForm`、`canOpenModalForStep`、`canOpenWizardForStep` | flash（store，调用时） | 槽位渲染器之队列与开关 + 打开入口与守门（#454 由 `slotRenderer.js` 拆出；`createModalRenderForm` 为 `openFormModal` 别名，守门寄放本文件以保 modal-view 单文件达标） |
+| `kernel/slotRenderer-repo-sync.js`（标记名 `slotRendererRepoSync`） | `startRepoSync`、`finishRepoSync`、`retryRepoSync` | flash（store，调用时）、`repoUrlFor`（link，调用时） | 槽位渲染器之仓库同步流程与失败文案（#454 由 `slotRenderer.js` 拆出；`retryPushFlow` 等内部 helpers 同文件） |
+| `kernel/slotRenderer-modal-view.js`（标记名 `slotRendererModalView`） | `FormModalSeat` | flash（store，调用时）、`repoUrlFor`（link，调用时） | 槽位渲染器之弹窗本体（#454 由 `slotRenderer.js` 拆出；348 行组件独占一文件，头注释仅一行以保 350 行门槛，后续增行须再拆） |
+
+## 正文格式契约（#595 · 2026-09-10）
+
+> 背景：插件会把动作提示词注入到「使用本插件的人」自己的工作区里，所以提示词里出现的每一条命令，
+> 使用者都会看到、也可能照着执行。此前 GitHub 专用的正文写回步骤（先确认 `gh` 已登录、再找插件安装目录、
+> 最后调安装目录下的写回脚本）被字面抄进了 11 个提示词条目（中英各一份，共 22 份），用本地 Markdown
+> 后端的人（单据就是他自己工作区里的一个 Markdown 文件）也会看到这些完全用不上的命令；
+> 当时的门禁还反过来要求这些字面副本必须存在，改一处要改 22 处。
+
+现在这条口径由下面五条构成：
+
+1. **正文格式文案由跟踪器后端各自声明。** 每个后端在自己的 `prompts.bodyFormat` 里写清「它这套单据的正文怎么写、怎么写回」：GitHub 声明原来的两步写回（先确认登录，再调安装目录下的写回脚本）；本地 Markdown 声明「这张单据就是本机的一个 Markdown 文件，直接用编辑工具改，不需要登录远端账号、不需要找插件目录、不需要跑写回脚本、也没有 ok 回包可等」；GitLab 写泛指版（用后端自己的命令行把整个文件读进去，不写未经查证的具体命令）。
+2. **模板里只留标记 `{bodyFormat}`。** 10 个模板条目（`mapExecute`、`complete`、`fixate`、六个 `tpl.*`、`mapInspect`）都不再出现任何字面文案，只保留 `{bodyFormat}` 占位符，并把这个占位符登记进各自的 `placeholders`。
+3. **渲染时按当前工作区选中的后端填空。** `kernel/prompts.js` 新增的 6 个导出就是这条链路的全部入口：`currentBackendId(st)` 取当前工作区选中的后端；`backendPromptFrom(modules, backendId, key)` 从后端声明里取一段文案；`bodyFormatDefault()` 是查不到后端声明时用的通用兜底版；`bodyFormatText(st)` 按当前后端与当前语言选出这段正文格式文案；`backendParamsFor(st, params)` 把 `bodyFormat`（以及走同一套后端声明通道的 `subIssue`）填进参数表；`promptTextFor(st, id, params)` 是「按当前后端渲染某个条目」的统一入口。全部调用点（行级动作按钮、建图与新增 BUG、map 新会话、模板引擎 `renderTemplate`）统一把当前工作区状态 `st` 带下去。两个边角口径：后端只声明了一种语言时，按另一种语言渲染，不落空串（整节不许静默消失）；当前后端拿不到 `bodyFormat` 声明（快照没带后端模块、或模块没声明这一栏）时，除落通用兜底版外还给用户一次可见提示（每个后端只提示一次），不让远端后端静默丢掉写回步骤——宿主侧另有兜底：磁盘缓存命中时用当前注册表重挂 `backendModules`，旧版本写的缓存不会再漏掉 `prompts`。
+4. **标记机制由 `TPL_BACKEND_MARKERS` 登记。** `kernel/config.js` 的 `TPL_BACKEND_MARKERS`（当前值 `['bodyFormat']`）说明「哪些标记的内容来自后端声明，而不是模板作者手写在模板里」；模板校验据此放行这类标记。
+5. **门禁按渲染结果断言，不按源码字面量断言。** `tests/verify-prompts.js` 用同一段源码求值出真正的渲染函数，再配上从三个后端源码里机械求值出的声明文本，逐条渲染 10 个模板条目 × 中文/英文：GitHub 版必须仍含完整的两步写回（第 ① 步的 `dsh plugin` 带 `--profile` —— 那是 `dsh` 的必填选项，省了照抄就报错；中文占位符写 `<配置名>`、英文写 `<profile>`）；Markdown 与 GitLab 版不得出现 `gh auth`、`fix-issue-body`、`dsh plugin`，也不得引用写回脚本；另有一条卡「模板里不得残留这些 GitHub 专用字面副本」。
+
+引入票：本仓库把这次改动登记为 **#595**（改动落在提交 `ff88b5b`）。该提交当时把票号写作 `#594`——那是提交时预期、最终并没有用到的编号（#594 后来被另一张与本问题无关的票占用了）；后续提交已把源码注释、门禁断言与测试注释里的引用全部纠正为 **#595**，`#594` 只保留在它自己那张票的验收文件 `tests/verify-594-deckmap-tab.js` 里。
+
+## 边界裁定（G3 Q3 · #91 拍板）
+
+- **同层共享组件放 `views/shared/`**，不塞 kernel —— kernel 只放宿主桥与状态原语（T4 叶子迁移时落地）。
+- kernel/ctx/index 是「并发时默认冻结」层：只允许一个 session（conductor）碰（对抗审查修正：这是契约不是物理隔离，接口必须先冻结再放叶子并行）。
+- 模块间在源码层**不互 import**（同层禁互 import 边界）：闭包拼接机制下依赖经闭包变量解析，模块文件之间零 import 边 —— 这是本仓库「文本组合」构建模式的显式边界，接口以本表为准。
+
+## 验收挂钩
+
+- 每迁一个模块：`node scripts/build.mjs` + verify-* 全绿（基线 34/35，唯一失败 verify-detail-levels 为预存环境数据漂移）+ smoke 3/3。
+- `tests/verify-kernel.js`：kernel 文件存在性 + 导出齐全 + 双产物已拼接（一源两物）断言。

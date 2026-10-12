@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "GitHub Resident",
-    "description": "Keeps one GitHub identity resident in this environment and adds tools for committing, pushing and opening pull requests across many repositories."
+    "title": "GitHub Resident + Skills Deck",
+    "description": "GitHub identity, multi-repository commit/push/PR and the repository registry, plus Skills Deck issue/map tools, 27 bundled skills and the sidebar panel. Disable the standalone Skills Deck bundle before upgrading."
   }
 }

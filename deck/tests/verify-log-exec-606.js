@@ -1,0 +1,362 @@
+// verify-log-exec-606.js —— #606 门禁：经 ctx.exec 起的外部命令要留下计数与耗时，且关闭调试开关时这条路零代价。
+//
+// 为什么要有这一条：面板列表的主取数路（列表页与单票页）、每次探测的预检、取当前登录用户、所有写操作，
+//   走的都是宿主给后端的 `ctx.exec`。这条路原先一条日志都不留，于是「一整天起了多少次外部命令、每次多久」
+//   没人知道。补上 exec.run 之后，光看代码看不出「关着开关时到底付了多少代价」，所以这里用假零件
+//   （假子进程、假计时器、假记录器）把两件事量出来：
+//     一、开关打开：每条命令恰好落一行，五个字段齐，工作区只落短指纹不落原始路径，发起链名对得上；
+//     二、开关关闭：一条都不落，而且日志点连时钟都不读 —— 唯一代价是读一次开关的布尔值。
+// 另外还有两段：把整条回路走一遍真的落盘并从文件里读回数字；以及核一遍客户端的临时测点确实撤干净了。
+//
+// 顺带把关一件事：**提交信息不得以不可见字符开头**。这张票自己的两个提交就踩过这个坑（提交标题首三字节
+//   是 UTF-8 BOM `EF BB BF`，来历是本机 PowerShell 的 `Out-File -Encoding utf8` 与 `>` 重定向默认会写 BOM）。
+//   所以最后一组断言读当前 HEAD 的提交信息，标题首字节不许是不可见字符；取不到就跳过并打印说明，不报红
+//   —— 离线门禁没法逐个复核历史提交，也不该在浅克隆里失效。
+//
+// 用法：node tests/verify-log-exec-606.js（在插件根目录，不需要构建产物）。
+const path = require('path')
+const os = require('os')
+const nodeFs = require('fs')
+const { execFileSync } = require('child_process')
+const { pathToFileURL } = require('url')
+// 本文件按文本求值统一走共用入口 compileFn：把 router.js 里计时与记日志那三段真代码配上假记录器（理由与用法见 tests/lib/eval-probe.js 文件头）。
+const { compileFn } = require('./lib/eval-probe.js')
+
+let failed = false
+let total = 0
+const check = (ok, msg) => { total += 1; console.log((ok ? '  PASS ' : '  FAIL ') + msg); if (!ok) failed = true }
+
+const ROOT = path.resolve(__dirname, '..')
+const CWD = 'D:\\some\\user\\private-workspace'
+
+console.log('日志按需测点门禁（#606：经 ctx.exec 起的外部命令留计数与耗时，关闭开关时零代价）')
+
+// 假子进程：立刻交回一个已完成的句柄；句柄形状按宿主契约（collected.stdout/stderr + done + terminate）。
+function makeSubprocess(outText, exitCode, delayMs) {
+  const calls = []
+  return {
+    calls,
+    spawn(cfg) {
+      calls.push(cfg)
+      const outcome = { exitCode: exitCode === undefined ? 0 : exitCode }
+      const done = delayMs ? new Promise((resolve) => { setTimeout(() => resolve(outcome), delayMs) }) : Promise.resolve(outcome)
+      return {
+        collected: {
+          stdout: { readFrom: () => ({ text: outText === undefined ? '' : outText }) },
+          stderr: { readFrom: () => ({ text: '' }) },
+        },
+        done,
+        terminate() {},
+      }
+    },
+  }
+}
+// 假计时器：超时分支永不触发（这里只关心命令正常结束那条路）。
+const makeTimer = () => ({ timeout: () => new Promise(() => {}) })
+// 假记录器：数 isEnabled 与 fire 各被调用几次，并收下每一行的字段。
+function makeLogCtx(enabled) {
+  const lines = []
+  let isEnabledCalls = 0
+  let fireCalls = 0
+  return {
+    lines,
+    get isEnabledCalls() { return isEnabledCalls },
+    get fireCalls() { return fireCalls },
+    isEnabled(level) { isEnabledCalls += 1; if (level === 'error' || level === 'warn') return true; return enabled === true },
+    fire(level, event, fieldsOrFn) {
+      fireCalls += 1
+      lines.push({ level, event, fields: (typeof fieldsOrFn === 'function') ? fieldsOrFn() : fieldsOrFn })
+    },
+  }
+}
+// 数 Date.now 被调用几次：用来证明「关着时日志点连时钟都不读」，而不是只靠看代码推断。
+const countDateNow = async (fn) => {
+  const real = Date.now
+  let n = 0
+  Date.now = function () { n += 1; return real.apply(Date, arguments) }
+  try { await fn() } finally { Date.now = real }
+  return n
+}
+
+async function main() {
+  const platMod = await import(pathToFileURL(path.join(ROOT, 'src', 'host', 'platformChannel.js')).href)
+  const repoMod = await import(pathToFileURL(path.join(ROOT, 'src', 'host', 'repoKeys.js')).href)
+
+  // ---- 一、开关打开：每条命令一行、五个字段齐、链名对得上、路径只落短指纹 ----
+  {
+    const logCtx = makeLogCtx(true)
+    const subprocess = makeSubprocess('ok')
+    const plat = platMod.createPlatformChannel({
+      ctx: { get: () => null }, subprocess, timer: makeTimer(), fs: {}, DEFAULT_CWD: CWD, TIMEOUT_MS: 30000,
+      getMattSkillProbeNames: async () => [], probeSkill: async () => ({ level: 'ok' }), logCtx,
+    })
+    const repo = repoMod.createRepoKeys({
+      subprocess, timer: makeTimer(), fs: {}, DEFAULT_CWD: CWD, TIMEOUT_MS: 30000,
+      repoKeys: {}, repoRoots: {}, getGhPath: () => null, setGhPath: () => {}, getGhLastError: () => null, setGhLastError: () => {},
+      getPlatform: async () => null, getWorkspaceStore: async () => null, setCache: () => {}, clearWorkspaceStore: () => {},
+      namingSweepSoon: () => {}, parseGithubRepo: () => null, logCtx,
+    })
+
+    // 四条命令：前两条是不同程序（gh、git），后两条是同一条命令挂在不同链上 ——
+    // 「命令名一样、via 不一样」这一对就是「这个字段真的能区分是哪条链起的」的证据。
+    await plat.detectionExec('gh', ['api', 'user'], { cwd: CWD, timeout: 30000 }, 'snapshot')
+    await repo.execProc(['git', '-C', CWD, 'remote', 'get-url', 'origin'], CWD, 'repo-key')
+    await plat.detectionExec('gh', ['auth', 'status'], { cwd: CWD, timeout: 30000 }, 'detect-preflight')
+    await plat.detectionExec('gh', ['auth', 'status'], { cwd: CWD, timeout: 30000 }, 'comment-write')
+
+    check(logCtx.lines.length === 4, '开关打开时每条外部命令落一行（实得 ' + logCtx.lines.length + ' 行）' + (logCtx.lines.length ? '' : ' —— 一行都没有，说明接缝上的测点没接上'))
+    const events = logCtx.lines.map((l) => l.event)
+    check(events.every((e) => e === 'exec.run'), '四行都是 exec.run（实得 ' + events.join('、') + '）')
+    check(logCtx.lines.every((l) => l.level === 'debug'), '按需级：四行都是调试级别（实得 ' + logCtx.lines.map((l) => l.level).join('、') + '）')
+    const names = logCtx.lines.map((l) => l.fields && l.fields.argv0)
+    check(names[0] === 'gh' && names[1] === 'git', '命令名如实：detectionExec 记 gh、execProc 记 git（实得 ' + names.join('、') + '）')
+    const keysOk = logCtx.lines.every((l) => {
+      const k = Object.keys(l.fields || {}).sort().join(',')
+      return k === 'argv0,cwdHash,exitCode,latencyMs,via'
+    })
+    check(keysOk, '字段恰为白名单五项（argv0、cwdHash、latencyMs、exitCode、via）')
+    // 证据一：同一条命令出现三种 via。
+    const sameCmd = logCtx.lines.filter((l) => l.fields && l.fields.argv0 === 'gh')
+    const viaSet = Array.from(new Set(sameCmd.map((l) => l.fields.via)))
+    check(sameCmd.length === 3 && viaSet.length === 3, '同一条命令出现三种 via（三条都是 gh，实得 ' + viaSet.join('、') + '），证明这个字段真的能区分是哪条链起的')
+    check(logCtx.lines.map((l) => l.fields.via).join(',') === 'snapshot,repo-key,detect-preflight,comment-write', '每行的 via 与调用方传下来的链名对得上（实得 ' + logCtx.lines.map((l) => l.fields.via).join('、') + '）')
+    // 证据二：每条命令只落一行，没有双计。
+    check(logCtx.lines.length === 4 && subprocess.calls.length === 4, '起了 4 次命令、落了 4 行（起了 ' + subprocess.calls.length + ' 次），同一条命令的两次调用各自只落一行，没有双计')
+    check(sameCmd.filter((l) => l.fields.via === 'detect-preflight').length === 1 && sameCmd.filter((l) => l.fields.via === 'comment-write').length === 1, 'via 不同的两次调用各归各行')
+    const viaOk = logCtx.lines.every((l) => /^[a-z][a-z-]*$/.test(String(l.fields.via)))
+    check(viaOk, 'via 全是小写短枚举（固定名字，不含用户数据、不含路径、不含仓库名）')
+    const noParamLeak = logCtx.lines.every((l) => JSON.stringify(l.fields).indexOf('remote') < 0 && JSON.stringify(l.fields).indexOf('api') < 0)
+    check(noParamLeak, '参数一个都没进日志（记的是命令名，不是 argv 全串）')
+    const hashesOk = logCtx.lines.every((l) => /^[0-9a-f]{8}$/.test(String(l.fields.cwdHash)))
+    check(hashesOk, '工作区只记八位短指纹（实得 ' + logCtx.lines.map((l) => l.fields.cwdHash).join('、') + '）')
+    const noRawPath = logCtx.lines.every((l) => JSON.stringify(l.fields).indexOf('private-workspace') < 0 && JSON.stringify(l.fields).indexOf('D:') < 0)
+    check(noRawPath, '原始路径一个字都没进日志')
+    const msOk = logCtx.lines.every((l) => typeof l.fields.latencyMs === 'number' && l.fields.latencyMs >= 0)
+    check(msOk, '每次耗时是数字（实得 ' + logCtx.lines.map((l) => l.fields.latencyMs).join('、') + ' 毫秒）')
+    const codeOk = logCtx.lines.every((l) => l.fields.exitCode === 0)
+    check(codeOk, '成功命令退出码记为 0（实得 ' + logCtx.lines.map((l) => l.fields.exitCode).join('、') + '）')
+    // 调用方若给了带目录的完整路径，也只留程序名 —— 否则一条文件系统路径就漏进日志了。
+    // 这一行同时是兜底取值的样例：调用方没传链名时 via 记 unspecified。
+    await plat.detectionExec(process.execPath, ['--version'], { cwd: CWD, timeout: 30000 })
+    const lastRow = logCtx.lines[logCtx.lines.length - 1]
+    const lastArgv0 = lastRow.fields.argv0
+    check(lastArgv0 === path.basename(process.execPath), '给了带目录的完整路径也只记程序名（实得 ' + lastArgv0 + '，没有目录部分）')
+    check(lastRow.fields.via === 'unspecified', '没传链名时 via 落兜底取值 unspecified（实得 ' + lastRow.fields.via + '）')
+    check(logCtx.lines.length === subprocess.calls.length, '起了多少条命令就落多少行（起了 ' + subprocess.calls.length + ' 次、落了 ' + logCtx.lines.length + ' 行），不会一次命令记两行')
+  }
+
+  // ---- 二、失败与超时也计数：退出码非零照记，退出码拿不到记 -1 ----
+  {
+    const logCtx = makeLogCtx(true)
+    const subprocess = makeSubprocess('', 3)
+    const repo = repoMod.createRepoKeys({
+      subprocess, timer: makeTimer(), fs: {}, DEFAULT_CWD: CWD, TIMEOUT_MS: 30000,
+      repoKeys: {}, repoRoots: {}, getGhPath: () => null, setGhPath: () => {}, getGhLastError: () => null, setGhLastError: () => {},
+      getPlatform: async () => null, getWorkspaceStore: async () => null, setCache: () => {}, clearWorkspaceStore: () => {},
+      namingSweepSoon: () => {}, parseGithubRepo: () => null, logCtx,
+    })
+    await repo.execProc(['git', 'status'], CWD)
+    check(logCtx.lines.length === 1 && logCtx.lines[0].fields.exitCode === 3, '失败的命令同样计数，退出码如实记 3（实得 ' + (logCtx.lines[0] ? logCtx.lines[0].fields.exitCode : '无') + '）')
+  }
+
+  // ---- 二之二、耗时是真量出来的：让假子进程慢 30 毫秒，记下的必须跟着涨 ----
+  {
+    const logCtx = makeLogCtx(true)
+    const slow = makeSubprocess('ok', 0, 30)
+    const plat = platMod.createPlatformChannel({
+      ctx: { get: () => null }, subprocess: slow, timer: makeTimer(), fs: {}, DEFAULT_CWD: CWD, TIMEOUT_MS: 30000,
+      getMattSkillProbeNames: async () => [], probeSkill: async () => ({ level: 'ok' }), logCtx,
+    })
+    await plat.detectionExec('gh', ['api', 'user'], { cwd: CWD, timeout: 30000 })
+    const ms = logCtx.lines[0] ? logCtx.lines[0].fields.latencyMs : -1
+    check(ms >= 25, '耗时跟着命令真的走（假子进程慢 30 毫秒，记下 ' + ms + ' 毫秒），不是写死的 0')
+  }
+
+  // ---- 三、开关关闭：一条都不落，连时钟都不读（唯一代价是读一次开关） ----
+  {
+    const logCtx = makeLogCtx(false)
+    const subprocess = makeSubprocess('ok')
+    // 故意让外部命令本身不读时钟（假子进程与假计时器都不读），这样窗口内数到的 Date.now 只可能来自日志点。
+    const plat = platMod.createPlatformChannel({
+      ctx: { get: () => null }, subprocess, timer: makeTimer(), fs: {}, DEFAULT_CWD: CWD, TIMEOUT_MS: 30000,
+      getMattSkillProbeNames: async () => [], probeSkill: async () => ({ level: 'ok' }), logCtx,
+    })
+    const repo = repoMod.createRepoKeys({
+      subprocess, timer: makeTimer(), fs: {}, DEFAULT_CWD: CWD, TIMEOUT_MS: 30000,
+      repoKeys: {}, repoRoots: {}, getGhPath: () => null, setGhPath: () => {}, getGhLastError: () => null, setGhLastError: () => {},
+      getPlatform: async () => null, getWorkspaceStore: async () => null, setCache: () => {}, clearWorkspaceStore: () => {},
+      namingSweepSoon: () => {}, parseGithubRepo: () => null, logCtx,
+    })
+    const rounds = 5
+    const nowCalls = await countDateNow(async () => {
+      for (let i = 0; i < rounds; i++) {
+        await plat.detectionExec('gh', ['api', 'user'], { cwd: CWD, timeout: 30000 })
+        await repo.execProc(['git', 'status'], CWD)
+      }
+    })
+    check(logCtx.fireCalls === 0, '关闭时一行都不落（fire 调用 ' + logCtx.fireCalls + ' 次），所以没有任何东西进队列')
+    check(logCtx.lines.length === 0, '关闭时字段对象一个都没收到（收到 ' + logCtx.lines.length + ' 个）')
+    check(nowCalls === 0, '关闭时日志点连时钟都不读（窗口内 Date.now 调用 ' + nowCalls + ' 次），说明起始时刻与字段对象都没产生')
+    check(logCtx.isEnabledCalls === rounds * 2, '关闭时每条命令只读一次开关（实得 ' + logCtx.isEnabledCalls + ' 次，命令 ' + (rounds * 2) + ' 条）')
+    check(subprocess.calls.length === rounds * 2, '关闭时外部命令照常起（实得 ' + subprocess.calls.length + ' 次），测点不影响主流程')
+  }
+
+  // ---- 四、整条回路走一遍：开关打开 → 起外部命令 → 落盘 → 从日志文件里读出次数与每次耗时 ----
+  // 这一段用的是真的日志库（src/host/logStore.js）与真的落盘文件，只是把子进程与文件位置换成临时的，
+  // 所以它给出的数字就是「打开调试开关后，日志里到底看得到什么」。
+  {
+    const logStoreMod = await import(pathToFileURL(path.join(ROOT, 'src', 'host', 'logStore.js')).href)
+    const tmpDir = nodeFs.mkdtempSync(path.join(os.tmpdir(), 'dsws-606-'))
+    const fsSvc = {
+      async readText(p) { try { return nodeFs.readFileSync(p, 'utf8') } catch (e) { return '' } },
+      async writeText(p, text) { nodeFs.mkdirSync(path.dirname(p), { recursive: true }); nodeFs.writeFileSync(p, text); return true },
+      async mkdir(p) { try { nodeFs.mkdirSync(p, { recursive: true }) } catch (e) {} },
+      async resolve(p) { return p },
+    }
+    const store = logStoreMod.createLogStore({
+      fs: fsSvc, timer: { timeout: (fn, ms) => setTimeout(fn, ms) },
+      getCacheDir: async () => tmpDir, getPlatform: async () => null, DEFAULT_CWD: tmpDir,
+    })
+    await store.setSwitch(true, 1)
+    const logCtx = {
+      isEnabled: (level) => store.isEnabled(level),
+      fire: (level, event, fieldsOrFn) => store.log(level, event, (typeof fieldsOrFn === 'function') ? fieldsOrFn() : fieldsOrFn),
+    }
+    const slow = makeSubprocess('ok', 0, 20)
+    const plat = platMod.createPlatformChannel({
+      ctx: { get: () => null }, subprocess: slow, timer: makeTimer(), fs: {}, DEFAULT_CWD: CWD, TIMEOUT_MS: 30000,
+      getMattSkillProbeNames: async () => [], probeSkill: async () => ({ level: 'ok' }), logCtx,
+    })
+    const rounds = 3
+    // 三次都起同一条命令，但挂三条不同的链 —— 落盘之后从文件里就能读出「命令名一样、归属不一样」。
+    const chains = ['snapshot', 'detect-preflight', 'comment-write']
+    for (let i = 0; i < rounds; i++) await plat.detectionExec('gh', ['api', 'user'], { cwd: CWD, timeout: 30000 }, chains[i])
+    store.flush()
+    await new Promise((r) => setTimeout(r, 50))
+
+    const logFile = path.join(tmpDir, 'logs', logStoreMod.formatLogFileName(new Date()))
+    const exist = nodeFs.existsSync(logFile)
+    check(exist, '开关打开后日志真的落到盘上（' + (exist ? logFile.replace(tmpDir, '<临时目录>') : '没找到 ' + logFile.replace(tmpDir, '<临时目录>')) + '）')
+    let rows = []
+    if (exist) {
+      rows = nodeFs.readFileSync(logFile, 'utf8').split('\n').filter(Boolean).map((l) => { try { return JSON.parse(l) } catch (e) { return null } }).filter(Boolean)
+    }
+    const execRows = rows.filter((r) => r.event === 'exec.run')
+    check(execRows.length === rounds, '从日志文件里数得出调用次数：起了 ' + rounds + ' 次命令、文件里有 ' + execRows.length + ' 条 exec.run')
+    check(execRows.every((r) => r.level === 'debug'), '日志文件里的 exec.run 都是调试级别（按需级）')
+    check(execRows.every((r) => r.fields && r.fields.argv0 === 'gh'), '每行都带命令名 gh')
+    check(execRows.every((r) => r.fields && /^[0-9a-f]{8}$/.test(String(r.fields.cwdHash))), '每行的工作区都是八位短指纹，落盘无原始路径：' + (execRows[0] ? String(execRows[0].fields.cwdHash) : '无'))
+    const latencies = execRows.map((r) => r.fields && r.fields.latencyMs)
+    check(latencies.length === rounds && latencies.every((m) => typeof m === 'number' && m >= 15), '每次耗时逐个读得出来（假子进程慢 20 毫秒，实得 ' + latencies.join('、') + ' 毫秒）')
+    const onDiskVia = execRows.map((r) => r.fields && r.fields.via)
+    check(onDiskVia.join(',') === chains.join(','), '落盘文件里三条同一命令的 via 各不一样（实得 ' + onDiskVia.join('、') + '），从日志就能读出「这条命令是哪条链起的」')
+    const rawLeak = nodeFs.existsSync(logFile) && nodeFs.readFileSync(logFile, 'utf8').indexOf('private-workspace') >= 0
+    check(!rawLeak, '整份日志文件里没有出现工作区原始路径')
+    console.log('  样例（同一次运行里连续三行，逐行自己的毫秒数）：')
+    for (const r of execRows) console.log('    ' + JSON.stringify(r))
+    try { nodeFs.rmSync(tmpDir, { recursive: true, force: true }) } catch (e) {}
+  }
+
+  // ---- 五、客户端：临时测点撤干净了，正式的 panel.render 能用 ----
+  // 先按文本核：这是本仓库对客户端文件惯用的核实方式（渲染目录没法直接跑起来）。
+  {
+    const read = (rel) => nodeFs.readFileSync(path.join(ROOT, rel), 'utf8')
+    const routerSrc = read(path.join('src', 'client', 'kernel', 'router.js'))
+    const dockSrc = read(path.join('src', 'client', 'panel', 'Dock.js'))
+    const dockSyncSrc = read(path.join('src', 'client', 'panel', 'DockSync.js'))
+    const listTabSrc = read(path.join('src', 'client', 'views', 'ListTab.js'))
+
+    // 1) panel.open 只剩正式那一条，字段就是下面这五个（2026-09-21 去掉了 mode：面板只有一条路，
+    //    「走哪个入口」不再是一个可记的东西），没有多也没有少。
+    const panelOpenSites = routerSrc.split('\n').filter((l) => l.includes("'panel.open'"))
+    check(panelOpenSites.length === 1, 'panel.open 只剩一行记录点（实得 ' + panelOpenSites.length + ' 行）')
+    const formalOk = panelOpenSites.length === 1 && ['hasCache', 'snapFresh', 'keyHash', 'snapVersion', 'backendId'].every((k) => panelOpenSites[0].includes(k + ':')) && panelOpenSites[0].includes("log('info', 'panel.open'")
+    check(formalOk, 'panel.open 仍是那条正式记录（信息级、五个字段：hasCache、snapFresh、keyHash、snapVersion、backendId）')
+    check(!panelOpenSites[0].includes('mode:'), 'panel.open 不再记 mode（面板只有一条路之后它没有第二种取值）')
+    // 2) 把耗时编码进 mode 取值的临时写法没了。
+    const tempModes = ['sidebar-t0', 'sidebar-beforeTab', 'sidebar-ensureDone', 'sidebar-tabReturned', 'sidebar-painted', 'dock-render', 'loaf-late']
+    const leftOver = tempModes.filter((m) => routerSrc.includes(m) || dockSyncSrc.includes(m) || dockSrc.includes(m) || listTabSrc.includes(m))
+    check(leftOver.length === 0, '临时写在 mode 取值里的那几个名字全撤了' + (leftOver.length ? ' —— 残留：' + leftOver.join('、') : '（查过 ' + tempModes.length + ' 个）'))
+    // 3) 挂在全局变量与状态对象上的临时计时字段全撤了。
+    const tempGlobals = ['__dswsLoaf', '__dswsDockRenderStart', '__dswsDockRenderLogged', '__dswsDockCommitMs', '__dswsDockSeg', '__dswsMarkFn', '__dswsFitMs', '__openMs', '_dswsLoafText']
+    const globalsLeft = tempGlobals.filter((g) => routerSrc.includes(g) || dockSyncSrc.includes(g) || dockSrc.includes(g) || listTabSrc.includes(g))
+    check(globalsLeft.length === 0, '全局变量与状态对象上的临时计时字段全撤了' + (globalsLeft.length ? ' —— 残留：' + globalsLeft.join('、') : '（查过 ' + tempGlobals.length + ' 个）'))
+    // 4) 四个文件都往同一个计时对象写，阶段名齐（2026-09-21 去掉 sidebar-registered / sidebar-opened 两个：
+    //    那两个是 better-sidebar 那条路的测点，那条路已删）。
+    const stages = ['render-commit', 'render-paint', 'fit-measure', 'click-to-painted']
+    const missingStage = stages.filter((s) => !(routerSrc + dockSyncSrc).includes("'" + s + "'"))
+    check(missingStage.length === 0, '四个阶段名都在代码里' + (missingStage.length ? ' —— 缺：' + missingStage.join('、') : '（' + stages.join('、') + '）'))
+    check(routerSrc.includes('panelClock') && dockSyncSrc.includes('panelClock') && dockSrc.includes('panelClock') && listTabSrc.includes('panelClock'), '四个文件共用同一个 panelClock 计时对象（启动、渲染、提交、折叠各自写自己那段）')
+    check(!/\bglobalThis\b/.test(dockSyncSrc.split('\n').filter((l) => l.includes('panelClock')).join('')), '计时对象没挂在 globalThis 上')
+
+    // 再按运行核：把 router.js 里那三段真代码抽出来，配假记录器跑一遍。
+    const start = routerSrc.indexOf('export const panelClock')
+    const end = routerSrc.indexOf('export const DECK_NATIVE_TAB_KIND')
+    check(start >= 0 && end > start, '能从 router.js 里抽到计时与记日志那三段真代码')
+    let lines = []
+    let enabled = false
+    const body = routerSrc.slice(start, end).replace(/^\s*export\s+/gm, '')
+    // 抽出来的三段真代码配假开关与假记录器：改走共用入口 compileFn，参数名逐个列出。
+    const factory = compileFn(['isEnabled', 'log'], body + '\nreturn { panelClock: panelClock, panelNow: panelNow, logPanelStage: logPanelStage };')
+    const mod = factory(
+      (level) => (level === 'error' || level === 'warn') ? true : enabled,
+      (level, event, fields) => { lines.push({ level, event, fields }) }
+    )
+    mod.logPanelStage('click-to-painted', 123)
+    check(enabled === false && lines.length === 0, '关闭时记阶段一行都不落（实得 ' + lines.length + ' 行）')
+    enabled = true
+    mod.panelClock.t0 = mod.panelNow()
+    mod.logPanelStage('native-open', 3)
+    mod.logPanelStage('render-commit', 7)
+    mod.logPanelStage('render-paint', 9)
+    mod.logPanelStage('fit-measure', 2)
+    mod.logPanelStage('click-to-painted', 179)
+    check(lines.length === 5, '打开时每个阶段各落一行（实得 ' + lines.length + ' 行）')
+    check(lines.every((l) => l.event === 'panel.render' && l.level === 'debug'), '五行都是调试级的 panel.render（按需级）')
+    const msRead = lines.map((l) => l.fields && l.fields.ms)
+    check(msRead.join(',') === '3,7,9,2,179', '每行都带自己那段的毫秒数，各段读得出（实得 ' + msRead.join('、') + '）')
+    check(lines.every((l) => Object.keys(l.fields).sort().join(',') === 'ms,stage'), '字段恰为白名单两项（stage、ms）—— 2026-09-21 去掉了 mode')
+    console.log('  样例（同一轮打开的五条阶段行，逐行自己的毫秒数）：')
+    for (const l of lines) console.log('    ' + JSON.stringify({ level: l.level, event: l.event, fields: l.fields }))
+  }
+
+  // ---- 六、顺带把关：提交信息不得以不可见字符开头 ----
+  // 读当前 HEAD 那条提交的说明，看标题（正文里第一个非空行）的首字节是不是不可见字符。
+  // 取不到就跳过（不在 git 仓库里、没装 git、浅克隆读不到对象），跳过只打印说明，不报红。
+  {
+    let raw = null
+    try {
+      raw = execFileSync('git', ['cat-file', 'commit', 'HEAD'], { cwd: ROOT, stdio: ['ignore', 'pipe', 'ignore'], timeout: 10000 })
+    } catch (e) { raw = null }
+    if (!raw) {
+      console.log('  跳过 提交信息把关：取不到 HEAD 的提交信息（不在 git 仓库里、没装 git，或这个克隆读不到它）')
+    } else {
+      const text = raw.toString('utf8')
+      const cut = text.indexOf('\n\n')
+      const body = cut >= 0 ? text.slice(cut + 2) : text
+      const title = body.split('\n').filter((l) => l.trim().length > 0)[0] || ''
+      const bytes = Buffer.from(title, 'utf8')
+      const isBom = bytes.length >= 3 && bytes[0] === 0xEF && bytes[1] === 0xBB && bytes[2] === 0xBF
+      const zeroWidth = ['\u200b', '\u200c', '\u200d', '\u2060', '\ufeff'].some((c) => title.charAt(0) === c)
+      const ok = title.length > 0 && !isBom && !zeroWidth
+      check(ok, '提交信息的标题不以不可见字符开头（HEAD 标题 = ' + JSON.stringify(title.slice(0, 20)) + '，首三字节 ' + bytes.slice(0, 3).toString('hex').toUpperCase() + '）')
+      if (!ok) {
+        console.log('  怎么改：提交信息先写进文件，再 git commit -F <文件>；文件必须是不带 BOM 的 UTF-8。')
+        console.log('  本机坑：PowerShell 的 Out-File -Encoding utf8 与 > 重定向默认会写 BOM，改用')
+        console.log('  [System.IO.File]::WriteAllText($路径, $内容, [System.Text.UTF8Encoding]::new($false))。')
+        console.log('  只查得到 HEAD 这一条：离线门禁没法逐个复核历史提交，历史里的同类问题要另外治。')
+      }
+      // 自检：把同一段判定喂一个真的带 BOM 的标题进去，必须认出来 —— 否则这条断言只是摆设。
+      const selfBytes = Buffer.from('\ufeff补上测点', 'utf8')
+      check(selfBytes.length >= 3 && selfBytes[0] === 0xEF && selfBytes[1] === 0xBB && selfBytes[2] === 0xBF, '自检：带 BOM 的标题能被这条判定认出来（认出 ' + selfBytes.slice(0, 3).toString('hex').toUpperCase() + '）')
+    }
+  }
+
+  console.log(failed ? '\n存在失败 — verify-log-exec-606 未通过' : '\n全部通过 — 外部命令测点门禁生效（' + total + ' 项断言）')
+  process.exit(failed ? 1 : 0)
+}
+
+main().catch((e) => {
+  console.log('  FAIL 门禁执行异常：' + ((e && e.stack) || e))
+  process.exit(1)
+})

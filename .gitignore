@@ -8,3 +8,32 @@ github-resident.json
 # 打包产物（本地构建的 release 附件，不进仓）
 *.tgz
 *-src.tar.gz
+
+# ===== 构建产物（由 npm run build 生成，一源两物，不入库）=====
+# dist/client.js、dist/host.js：tools/merge/build-merge-entries.ts 的产物
+#（dist/client.js 是从 deck 客户端产物改写而来，逐字字节大，入库只会制造无意义 diff）
+/dist/
+# 包根 bundled-skills/：合并包根级技能发现路径（宿主按 <包名>/bundled-skills 找随包技能）。
+# 源是 deck/package/bundled-skills/（入库快照），构建时逐字复制到这里；不入库，避免两份漂移。
+/bundled-skills/
+# deck 的派生产物：deck/scripts/build.mjs 现场生成（原仓同样 gitignore）
+#   deck/package/lib/**        src/host 整树 + src/shared 的原样复制 + 拼出的 client.js
+#   deck/package/shared/**     同上
+#   deck/package/scripts/**    随包分发的两条消费者脚本
+#   deck/client.js, deck/host.js  deck 的 dev 形态产物（本包不使用，但构建会写）
+/deck/package/lib/
+/deck/package/shared/
+/deck/package/scripts/
+/deck/client.js
+/deck/host.js
+/deck/.tmp/
+# 入口件浏览器绑定包：deck 构建从已安装更新包现场生成（原仓同样 gitignore）
+/deck/scripts/generated/updateEntryPanel.bundle.js
+
+# deck 的依赖与临时目录
+/deck/node_modules/
+/deck/.dsh-mattskillsdeck-cache/
+
+
+# 合并验证的独占日志目录（本仓受忽略；见 docs/merge-implementation-progress.md）
+/.merge-verify/

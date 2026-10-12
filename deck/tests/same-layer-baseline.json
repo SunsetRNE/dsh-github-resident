@@ -1,0 +1,880 @@
+{
+  "version": 1,
+  "recordedAt": "2026-10-09",
+  "note": "存量豁免清单：只许减不许增；拆分票消掉一条边就同票删一条。backends 三房间不在此清单（仍由老门禁管同房间放行）。 2026-10-09：888 技能详情落地新增一条（index 动态加载 ./skillDoc.js）。",
+  "entries": [
+    {
+      "file": "src/host/index.js",
+      "spec": "./remotePredicates.js",
+      "resolved": "src/host/remotePredicates.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "二批·host-3/6 #447",
+      "note": "H3 接线：index 动态加载远端谓词模块（装配扇入）"
+    },
+    {
+      "file": "src/host/index.js",
+      "spec": "./skillProbe.js",
+      "resolved": "src/host/skillProbe.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "二批·host-3/6 #447",
+      "note": "H3 接线：index 动态加载技能探测模块（装配扇入）"
+    },
+    {
+      "file": "src/host/index.js",
+      "spec": "./detectChain.js",
+      "resolved": "src/host/detectChain.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "二批·host-3/6 #447",
+      "note": "H3 接线：index 动态加载探测编排模块（装配扇入）"
+    },
+    {
+      "file": "src/host/index.js",
+      "spec": "./refresh/chainBackoff.js",
+      "resolved": "src/host/refresh/chainBackoff.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "四批·T5 #709",
+      "note": "检查链退避的宿主薄壳：index 装配扇入，与 detectChain.js 同一条做法"
+    },
+    {
+      "file": "src/host/index.js",
+      "spec": "./sessionLifecycle.js",
+      "resolved": "src/host/sessionLifecycle.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "二批·host-4/6 #448",
+      "note": "H4 接线：index 动态加载会话启停模块（装配扇入）"
+    },
+    {
+      "file": "src/host/index.js",
+      "spec": "./sessionSnapshot.js",
+      "resolved": "src/host/sessionSnapshot.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "二批·host-4/6 #448",
+      "note": "H4 接线：index 动态加载会话快照模块（装配扇入）"
+    },
+    {
+      "file": "src/host/index.js",
+      "spec": "./sessionRefresh.js",
+      "resolved": "src/host/sessionRefresh.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "二批·host-4/6 #448",
+      "note": "H4 接线：index 动态加载会话刷新模块（装配扇入）"
+    },
+    {
+      "file": "src/host/detectChain.js",
+      "spec": "./tracker/generic.js",
+      "resolved": "src/host/tracker/generic.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "二批·host-3/6 #447",
+      "note": "H3 搬迁：通用检查链装配随函数搬入本文件"
+    },
+    {
+      "file": "src/host/detectChain.js",
+      "spec": "./tracker/fixContract.js",
+      "resolved": "src/host/tracker/fixContract.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "二批·host-3/6 #447",
+      "note": "H3 搬迁：修复契约装配随函数搬入本文件"
+    },
+    {
+      "file": "src/host/sessionSnapshot.js",
+      "spec": "./tracker/snapshot.js",
+      "resolved": "src/host/tracker/snapshot.js",
+      "layer": "host",
+      "count": 2,
+      "owner": "二批·host-4/6 #448",
+      "note": "H4 搬迁：快照编排器装配随函数搬入本文件"
+    },
+    {
+      "file": "src/host/sessionRefresh.js",
+      "spec": "./tracker/snapshot.js",
+      "resolved": "src/host/tracker/snapshot.js",
+      "layer": "host",
+      "count": 2,
+      "owner": "二批·host-4/6 #448",
+      "note": "H4 搬迁：快照编排器装配随函数搬入本文件"
+    },
+    {
+      "file": "src/host/sessionSnapshot.js",
+      "spec": "./snapshotInflight.js",
+      "resolved": "src/host/snapshotInflight.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "#729（手动刷新另起一趟：两条电话路共用一张在途表）",
+      "note": "#729 一次性方案：本地在途表撤掉，快照路动态引入共用协调器（与刷新路同一张表）；门禁原文允许确认后记入，理由与归属见本条。"
+    },
+    {
+      "file": "src/host/sessionRefresh.js",
+      "spec": "./snapshotInflight.js",
+      "resolved": "src/host/snapshotInflight.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "#729（手动刷新另起一趟：两条电话路共用一张在途表）",
+      "note": "#729 一次性方案：刷新路（客户端手动刷新的真路径）此前整篇无在途表，动态引入共用协调器；门禁原文允许确认后记入，理由与归属见本条。"
+    },
+    {
+      "file": "src/host/tracker/index.js",
+      "spec": "./contract.js",
+      "resolved": "src/host/tracker/contract.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "二批·host域拆分票（tracker 装配链，随 host 拆分消边）",
+      "note": "tracker 聚合出口重出契约定义"
+    },
+    {
+      "file": "src/host/tracker/index.js",
+      "spec": "./capability.js",
+      "resolved": "src/host/tracker/capability.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "二批·host域拆分票（tracker 装配链，随 host 拆分消边）",
+      "note": "tracker 聚合出口重出能力诊断"
+    },
+    {
+      "file": "src/host/tracker/index.js",
+      "spec": "./preflight.js",
+      "resolved": "src/host/tracker/preflight.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "二批·host域拆分票（tracker 装配链，随 host 拆分消边）",
+      "note": "tracker 聚合出口重出预检"
+    },
+    {
+      "file": "src/host/tracker/index.js",
+      "spec": "./snapshot.js",
+      "resolved": "src/host/tracker/snapshot.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "二批·host域拆分票（tracker 装配链，随 host 拆分消边）",
+      "note": "tracker 聚合出口重出快照编排器"
+    },
+    {
+      "file": "src/host/tracker/detection/detectionService.js",
+      "spec": "./explicitDetector.js",
+      "resolved": "src/host/tracker/detection/explicitDetector.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "二批·host域拆分票（tracker 装配链，随 host 拆分消边）",
+      "note": "探测服务调用显式探测器"
+    },
+    {
+      "file": "src/host/tracker/detection/detectionService.js",
+      "spec": "../../workspaceKey.js",
+      "resolved": "src/host/workspaceKey.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "二批·host域拆分票（tracker 装配链，随 host 拆分消边）",
+      "note": "探测服务读取宿主工作区键"
+    },
+    {
+      "file": "src/host/tracker/detection/explicitDetector.js",
+      "spec": "./parseIssueTracker.js",
+      "resolved": "src/host/tracker/detection/parseIssueTracker.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "二批·host域拆分票（tracker 装配链，随 host 拆分消边）",
+      "note": "显式探测器调用解析器"
+    },
+    {
+      "file": "src/host/platform/index.js",
+      "spec": "./darwin/index.js",
+      "resolved": "src/host/platform/darwin/index.js",
+      "layer": "platform",
+      "count": 1,
+      "owner": "二批·host域拆分票（platform 装配扇出）",
+      "note": "平台入口按系统分发苹果实现"
+    },
+    {
+      "file": "src/host/platform/index.js",
+      "spec": "./win32/index.js",
+      "resolved": "src/host/platform/win32/index.js",
+      "layer": "platform",
+      "count": 1,
+      "owner": "二批·host域拆分票（platform 装配扇出）",
+      "note": "平台入口按系统分发视窗实现"
+    },
+    {
+      "file": "src/host/platform/index.js",
+      "spec": "./linux/index.js",
+      "resolved": "src/host/platform/linux/index.js",
+      "layer": "platform",
+      "count": 1,
+      "owner": "二批·host域拆分票（platform 装配扇出）",
+      "note": "平台入口按系统分发 Linux 实现"
+    },
+    {
+      "file": "src/shared/tracker/deck-derive.js",
+      "spec": "./constants.js",
+      "resolved": "src/shared/tracker/constants.js",
+      "layer": "shared",
+      "count": 1,
+      "owner": "二批·shared拆分票（待开，须先修门禁对照表）",
+      "note": "看板派生引用状态常量"
+    },
+    {
+      "file": "src/shared/tracker/shape.js",
+      "spec": "./constants.js",
+      "resolved": "src/shared/tracker/constants.js",
+      "layer": "shared",
+      "count": 1,
+      "owner": "二批·shared拆分票（待开，须先修门禁对照表）",
+      "note": "数据形状引用状态与类型常量"
+    },
+    {
+      "file": "src/seam/index.js",
+      "spec": "./runtime.js",
+      "resolved": "src/seam/runtime.js",
+      "layer": "seam",
+      "count": 1,
+      "owner": "二批·seam拆分票（待开，聚合出口）",
+      "note": "接缝聚合出口重出运行时绑定"
+    },
+    {
+      "file": "src/seam/index.js",
+      "spec": "./rpc.js",
+      "resolved": "src/seam/rpc.js",
+      "layer": "seam",
+      "count": 1,
+      "owner": "二批·seam拆分票（待开，聚合出口）",
+      "note": "接缝聚合出口重出远程调用绑定"
+    },
+    {
+      "file": "src/seam/index.js",
+      "spec": "./style.js",
+      "resolved": "src/seam/style.js",
+      "layer": "seam",
+      "count": 1,
+      "owner": "二批·seam拆分票（待开，聚合出口）",
+      "note": "接缝聚合出口重出样式绑定"
+    },
+    {
+      "file": "src/seam/index.js",
+      "spec": "./timer.js",
+      "resolved": "src/seam/timer.js",
+      "layer": "seam",
+      "count": 1,
+      "owner": "二批·seam拆分票（待开，聚合出口）",
+      "note": "接缝聚合出口重出定时器绑定"
+    },
+    {
+      "file": "src/seam/index.js",
+      "spec": "./editor.js",
+      "resolved": "src/seam/editor.js",
+      "layer": "seam",
+      "count": 1,
+      "owner": "二批·seam拆分票（待开，聚合出口）",
+      "note": "接缝聚合出口重出编辑器绑定"
+    },
+    {
+      "file": "src/seam/index.js",
+      "spec": "./gate.js",
+      "resolved": "src/seam/gate.js",
+      "layer": "seam",
+      "count": 1,
+      "owner": "二批·seam拆分票（待开，聚合出口）",
+      "note": "接缝聚合出口重出门禁绑定"
+    },
+    {
+      "file": "src/host/index.js",
+      "spec": "./bootstrap.js",
+      "resolved": "src/host/bootstrap.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "二批·host-1/6 #445",
+      "note": "H1 接线：index 动态加载启动模块（装配扇入）"
+    },
+    {
+      "file": "src/host/index.js",
+      "spec": "./platformChannel.js",
+      "resolved": "src/host/platformChannel.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "二批·host-1/6 #445",
+      "note": "H1 接线：index 动态加载平台通道模块（装配扇入）"
+    },
+    {
+      "file": "src/host/index.js",
+      "spec": "./repoKeys.js",
+      "resolved": "src/host/repoKeys.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "二批·host-1/6 #445",
+      "note": "H1 接线：index 动态加载仓库钥匙模块（装配扇入）"
+    },
+    {
+      "file": "src/host/platformChannel.js",
+      "spec": "./tracker/detection/workspaceStore.js",
+      "resolved": "src/host/tracker/detection/workspaceStore.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "二批·host-1/6 #445",
+      "note": "H1 搬迁：工作区存储装配随函数搬入本文件"
+    },
+    {
+      "file": "src/host/platformChannel.js",
+      "spec": "./tracker/detection/detectionService.js",
+      "resolved": "src/host/tracker/detection/detectionService.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "二批·host-1/6 #445",
+      "note": "H1 搬迁：探测服务装配随函数搬入本文件"
+    },
+    {
+      "file": "src/host/platformChannel.js",
+      "spec": "./tracker/detection/explicitDetector.js",
+      "resolved": "src/host/tracker/detection/explicitDetector.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "二批·host-1/6 #445",
+      "note": "H1 搬迁：兜底探测器装配随函数搬入本文件"
+    },
+    {
+      "file": "src/host/repoKeys.js",
+      "spec": "./workspaceKey.js",
+      "resolved": "src/host/workspaceKey.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "二批·host-1/6 #445",
+      "note": "H1 搬迁：工作区钥匙装配随函数搬入本文件"
+    },
+    {
+      "file": "src/host/index.js",
+      "spec": "./mapBody.js",
+      "resolved": "src/host/mapBody.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "二批·host-2/6 #446",
+      "note": "H2 接线：index 动态加载正文解析模块（装配扇入）"
+    },
+    {
+      "file": "src/host/index.js",
+      "spec": "./issueList.js",
+      "resolved": "src/host/issueList.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "二批·host-2/6 #446",
+      "note": "H2 接线：index 动态加载列表拉取模块（装配扇入）"
+    },
+    {
+      "file": "src/host/index.js",
+      "spec": "./issueDetail.js",
+      "resolved": "src/host/issueDetail.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "二批·host-2/6 #446",
+      "note": "H2 接线：index 动态加载详情快照模块（装配扇入）"
+    },
+    {
+      "file": "src/host/index.js",
+      "spec": "./workspaceCwd.js",
+      "resolved": "src/host/workspaceCwd.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "二批·host-5/6 #449",
+      "note": "H5 接线：index 动态加载工作区归一模块（装配扇入）"
+    },
+    {
+      "file": "src/host/index.js",
+      "spec": "./commentThreads.js",
+      "resolved": "src/host/commentThreads.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "二批·host-5/6 #449",
+      "note": "H5 接线：index 动态加载评论线程模块（装配扇入）"
+    },
+    {
+      "file": "src/host/platformChannel.js",
+      "spec": "./tracker/registryCore.js",
+      "resolved": "src/host/tracker/registryCore.js",
+      "layer": "host",
+      "count": 2,
+      "owner": "二批·320-host #461",
+      "note": "V1 调用方改路径：平台通道装配改指注册表新装配入口"
+    },
+    {
+      "file": "src/host/tracker/index.js",
+      "spec": "./registryCore.js",
+      "resolved": "src/host/tracker/registryCore.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "二批·320-host #461",
+      "note": "V1 聚合出口改指注册表主体"
+    },
+    {
+      "file": "src/host/tracker/index.js",
+      "spec": "./registryShape.js",
+      "resolved": "src/host/tracker/registryShape.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "二批·320-host #461",
+      "note": "V1 聚合出口改指形状文件（错误类与迁移键）"
+    },
+    {
+      "file": "src/host/tracker/registryCore.js",
+      "spec": "./registryShape.js",
+      "resolved": "src/host/tracker/registryShape.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "二批·320-host #461",
+      "note": "V1 拆分：主体引用形状校验与包桩"
+    },
+    {
+      "file": "src/host/tracker/registryCore.js",
+      "spec": "./registryViews.js",
+      "resolved": "src/host/tracker/registryViews.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "二批·320-host #461",
+      "note": "V1 拆分：主体引用只读视图"
+    },
+    {
+      "file": "src/host/tracker/registryShape.js",
+      "spec": "./contract.js",
+      "resolved": "src/host/tracker/contract.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "二批·320-host #461",
+      "note": "V1 拆分：形状文件引用契约操作表（包桩用）"
+    },
+    {
+      "file": "src/host/detectChain.js",
+      "spec": "./tracker/predicateCore.js",
+      "resolved": "src/host/tracker/predicateCore.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "二批·320-host #461",
+      "note": "V1 调用方改路径：探测编排改指谓词新装配入口"
+    },
+    {
+      "file": "src/host/tracker/generic.js",
+      "spec": "./predicateCore.js",
+      "resolved": "src/host/tracker/predicateCore.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "二批·320-host #461",
+      "note": "V1 调用方改路径：通用链改指谓词新装配入口"
+    },
+    {
+      "file": "src/host/tracker/predicateCore.js",
+      "spec": "./predicatePrimitives.js",
+      "resolved": "src/host/tracker/predicatePrimitives.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "二批·320-host #461",
+      "note": "V1 拆分：注册表机制引用原语执行器"
+    },
+    {
+      "file": "src/host/index.js",
+      "spec": "./handoffClaim.js",
+      "resolved": "src/host/handoffClaim.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "二批·host-6/6 #450",
+      "note": "H6 接线：index 动态加载交接认领模块（装配扇入）"
+    },
+    {
+      "file": "src/host/index.js",
+      "spec": "./namingGuardian.js",
+      "resolved": "src/host/namingGuardian.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "二批·host-6/6 #450",
+      "note": "H6 接线：index 动态加载命名守护模块（装配扇入）"
+    },
+    {
+      "file": "src/host/index.js",
+      "spec": "./publishFlow.js",
+      "resolved": "src/host/publishFlow.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "二批·host-6/6 #450",
+      "note": "H6 接线：index 动态加载建仓发布模块（装配扇入）"
+    },
+    {
+      "file": "src/host/index.js",
+      "spec": "./pickerShell.js",
+      "resolved": "src/host/pickerShell.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "二批·host-6/6 #450",
+      "note": "H6 接线：index 动态加载选择器外壳模块（装配扇入）"
+    },
+    {
+      "file": "src/host/index.js",
+      "spec": "./ticketGrouping.js",
+      "resolved": "src/host/ticketGrouping.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "二批·host-6/6 #450",
+      "note": "H6 接线：index 动态加载分组纯函数模块（装配扇入，用户定夺追加第 5 件）"
+    },
+    {
+      "file": "src/host/index.js",
+      "spec": "./logStore.js",
+      "resolved": "src/host/logStore.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "日志底座·host #490",
+      "note": "#490 接线：index 动态加载宿主日志库（装配扇入，设计 #335 第 1、2、4 章 host 部分）"
+    },
+    {
+      "file": "src/host/index.js",
+      "spec": "./dispatchMeta.js",
+      "resolved": "src/host/dispatchMeta.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "收敛·host-7/7 #515",
+      "note": "H7 接线：index 动态加载分发异常纯函数模块（装配扇入，入参散列与错误归类逐行原样搬出）"
+    },
+    {
+      "file": "src/host/logStore.js",
+      "spec": "./logPhones.js",
+      "resolved": "src/host/logPhones.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "日志拆分 #500",
+      "note": "#500 接线：logStore 动态加载电话组模块（导出/清空/开关三组电话体逐行原样搬出，依赖全显式传入，单向引用）"
+    },
+    {
+      "file": "src/host/index.js",
+      "spec": "./logFromPackage.js",
+      "resolved": "src/host/logFromPackage.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "#564",
+      "note": "当前插件迁移到日志包：宿主运行时走日志包派生（旧文件留而不搬），接线与派生副本的引用边"
+    },
+    {
+      "file": "src/host/logFromPackage.js",
+      "spec": "./logPkg/host.js",
+      "resolved": "src/host/logPkg/host.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "#564",
+      "note": "当前插件迁移到日志包：宿主运行时走日志包派生（旧文件留而不搬），接线与派生副本的引用边"
+    },
+    {
+      "file": "src/host/logPkg/host.js",
+      "spec": "./config.js",
+      "resolved": "src/host/logPkg/config.js",
+      "layer": "host",
+      "count": 3,
+      "owner": "#564",
+      "note": "当前插件迁移到日志包：宿主运行时走日志包派生（旧文件留而不搬），接线与派生副本的引用边"
+    },
+    {
+      "file": "src/host/logPkg/host.js",
+      "spec": "./store.js",
+      "resolved": "src/host/logPkg/store.js",
+      "layer": "host",
+      "count": 2,
+      "owner": "#564",
+      "note": "当前插件迁移到日志包：宿主运行时走日志包派生（旧文件留而不搬），接线与派生副本的引用边"
+    },
+    {
+      "file": "src/host/logPkg/phones.js",
+      "spec": "./config.js",
+      "resolved": "src/host/logPkg/config.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "#564",
+      "note": "当前插件迁移到日志包：宿主运行时走日志包派生（旧文件留而不搬），接线与派生副本的引用边"
+    },
+    {
+      "file": "src/host/logPkg/store.js",
+      "spec": "./config.js",
+      "resolved": "src/host/logPkg/config.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "#564",
+      "note": "当前插件迁移到日志包：宿主运行时走日志包派生（旧文件留而不搬），接线与派生副本的引用边"
+    },
+    {
+      "file": "src/host/logPkg/store.js",
+      "spec": "./phones.js",
+      "resolved": "src/host/logPkg/phones.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "#564",
+      "note": "当前插件迁移到日志包：宿主运行时走日志包派生（旧文件留而不搬），接线与派生副本的引用边"
+    },
+    {
+      "file": "src/host/index.js",
+      "spec": "./rpcChannel.js",
+      "resolved": "src/host/rpcChannel.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "#596 客户端与宿主之间的 RPC 通道换到 DSH 公开的 /api 载体",
+      "note": "#596 接线：index 动态加载通道模块（装配扇入）。这段通道注册与信封校验原先内联在 index.js 里，把该文件顶过了文件粒度门禁的 350 行上限（379 → 414 行，该文件是已冻结的存量超标文件、只许减不许增），搬出后 index.js 降到 350 行、两侧门禁同时达标；通道本体是「注册一次 + 按请求解信封」的一页代码，独立成文件也让它的协议与失败记账自成一页"
+    },
+    {
+      "file": "src/host/index.js",
+      "spec": "./snapshotBuild.js",
+      "resolved": "src/host/snapshotBuild.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "#599",
+      "note": "#599 接线：入口动态加载快照组装模块（把 issueDetail.js 里的一半分出来，让单票详情那条路腾出位置补「已合并」状态归一）"
+    },
+    {
+      "file": "src/host/platformChannel.js",
+      "spec": "./choiceStore.js",
+      "resolved": "src/host/choiceStore.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "#683 F1",
+      "note": "F1 装配：用户选的后端那份状态文件（H）的实例在此建 —— 读它的是两处（绑定写入、判定读取），而它内部那条读-改-写队列必须全进程只有一条，所以两处共用这一个实例（与同文件里探测服务的装配同一类）"
+    },
+    {
+      "file": "src/host/detectChain.js",
+      "spec": "./tracker/detection/preflightScope.js",
+      "resolved": "src/host/tracker/detection/preflightScope.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "#723 T19（宿主层接线与拆文件时收口）",
+      "note": "#709 新增功能：一次评估里环境预检（登录态、仓库可达）只许真问一次，链求值这一步要在求值开始时按目的动态加载那个复用位（一次一个、用完即弃），没法在上层预先注入（它活着的时间比任何装配实例都短）。要消掉这条边，得先把复用位挪进另一个层或改成不需要动态加载的形态 —— 那是一次单独的重构，记在这张票里会顺手改到别票的地盘"
+    },
+    {
+      "file": "src/host/detectChain.js",
+      "spec": "./refresh/refreshSource.js",
+      "resolved": "src/host/refresh/refreshSource.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "#723 T19（宿主层接线与拆文件时收口）",
+      "note": "#709 新增功能：链求值这一步要判「这一次是人亲手点的还是插件自己的动作」（挂载时那一次强制刷新不许记成人手动过的），判据归 refreshSource.js 一处；链路顶层已在同层内（它本来就要加载 refresh/chainBackoff.js 与 tracker/detection/*），要消掉这条边得连同链求值这一步一起搬层，属单独重构"
+    },
+    {
+      "file": "src/host/index.js",
+      "spec": "./refresh/wiring.js",
+      "resolved": "src/host/refresh/wiring.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "#723 T19（宿主层接线与拆文件时收口）",
+      "note": "#723 接线：刷新机制在宿主里真的装起来那一处（闸 + 账本 + 写事件订阅 + 视野模型 + 会话↔票处理链）。入口文件 src/host/index.js 的行数余量很薄（350 行上限；#837 起 339 行、已移出零增长基线，但仍不许再往里堆装配），所以加载器与装配整段收在 wiring.js，入口只留一行调用 —— 与既有 25 处「入口动态加载某模块」同形（见本清单里 index.js 的其余条目）。"
+    },
+    {
+      "file": "src/host/refresh/wiring.js",
+      "spec": "./ledger.js",
+      "resolved": "src/host/refresh/ledger.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "#723 T19（宿主层接线与拆文件时收口）",
+      "note": "#723 接线：wiring.js 是刷新机制在宿主里的装配点 —— 闸、账本、写事件订阅、视野模型、会话↔票处理链这五件的产物在这里拼起来，所以它必然要引用这五个模块。同层互引门禁管的是「干活的文件互相引用造成环」，装配点是它明许的例外方向（本清单里 index.js、platformChannel.js、tracker/index.js 三处装配扇入都是同一条先例）。把装配搬回 index.js 会顶破那个文件的 350 行上限。"
+    },
+    {
+      "file": "src/host/refresh/wiring.js",
+      "spec": "./gate.js",
+      "resolved": "src/host/refresh/gate.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "#723 T19（宿主层接线与拆文件时收口）",
+      "note": "#723 接线：装配点造闸（createGate({ ledger })）并把它交给写事件订阅与 deck 工具的壳。同 ledger.js 那一条。"
+    },
+    {
+      "file": "src/host/refresh/wiring.js",
+      "spec": "./writeEvents.js",
+      "resolved": "src/host/refresh/writeEvents.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "#723 T19（宿主层接线与拆文件时收口）",
+      "note": "#723 接线：装配点建写事件订阅（createWriteEvents(...).attach(ctx)），并把判定过的那一笔喂给处理链。同 ledger.js 那一条。"
+    },
+    {
+      "file": "src/host/refresh/wiring.js",
+      "spec": "./sessionTickets.js",
+      "resolved": "src/host/refresh/sessionTickets.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "#723 T19（宿主层接线与拆文件时收口）",
+      "note": "#723 接线：装配点建会话↔票处理链（createSessionTickets()）—— 喂数据的是写事件订阅，读数是下面那一条。同 ledger.js 那一条。"
+    },
+    {
+      "file": "src/host/refresh/wiring.js",
+      "spec": "./sessionChainReadout.js",
+      "resolved": "src/host/refresh/sessionChainReadout.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "#723 T19（宿主层接线与拆文件时收口）",
+      "note": "#723 接线：装配点把处理链转成界面读数（buildSessionChainReadout），快照回包挂的就是它。同 ledger.js 那一条。"
+    },
+    {
+      "file": "src/host/refresh/wiring.js",
+      "spec": "./attention.js",
+      "resolved": "src/host/refresh/attention.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "#723 T19（宿主层接线与拆文件时收口）",
+      "note": "#723 接线：装配点建视野模型（createAttention），写事件白名单的活跃集合来源就是它（票面 3c：两处用的是同一份「当前在看谁」）。同 ledger.js 那一条。"
+    },
+    {
+      "file": "src/host/index.js",
+      "spec": "./snapshotEnvelope.js",
+      "resolved": "src/host/snapshotEnvelope.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "#723 T19（宿主层接线与拆文件时收口）",
+      "note": "#723 拆文件：会话快照信封（字段清单 + 落盘那一步的 snapshot.built 日志）从 sessionSnapshot.js 搬到 snapshotEnvelope.js，好给「每个会话在处理哪些票」的读数腾出位置（票面 3e）。搬运只搬不改、行为逐字等价（校验：tests/verify-723-gate-wiring.js 与复核探针都逐字段比对过，snapshot.built 那行日志还在）。入口那一行的加载器里注入了它。"
+    },
+    {
+      "file": "src/host/sessionSnapshot.js",
+      "spec": "./snapshotEnvelope.js",
+      "resolved": "src/host/snapshotEnvelope.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "#723 T19（宿主层接线与拆文件时收口）",
+      "note": "#723 拆文件：同上那一步的引用。会话快照电话要拼信封、要写 snapshot.built 那一行日志；没注入时（门禁与单测里手工拼实例的那几处）现造一个，行为与搬前一致。"
+    },
+    {
+      "file": "src/host/index.js",
+      "spec": "./versionControl.js",
+      "resolved": "src/host/versionControl.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "#810 地图 · #817",
+      "note": "版本管理页签的宿主装配扇入：index 动态加载 git 读取与三条 wf.* 电话的实现"
+    },
+    {
+      "file": "src/host/versionControl.js",
+      "spec": "./versionControlBasis.js",
+      "resolved": "src/host/versionControlBasis.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "#819 复审（宿主与核心批次 P0-3）",
+      "note": "「依据时间」那一段要补「刚克隆、还没 fetch 过、没有 reflog」的回退路，versionControl.js 当时 361 行、超过 350 上限；照 #500（logStore→logPhones）与 #821（versionControl→versionControlFiles）同一条先例搬成自包含叶子，runPinned 与 fs 全由父文件显式传入，叶子不引用父文件，父文件只留一行加载器。"
+    },
+    {
+      "file": "src/host/versionControl.js",
+      "spec": "./versionControlFiles.js",
+      "resolved": "src/host/versionControlFiles.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "#818",
+      "note": "#821 规格故事 32：versionControl.js 贴着文件粒度门禁的 350 行上限（正好 350 行），按 #500（logStore→logPhones）与 #548（update→updateReader）同一条先例，把整条 wf.gitDiff 电话体搬成自包含叶子（起进程的唯一出口、失败信封、仓库根解析全由父文件显式传入，叶子不引用父文件），父文件只留一行动态加载器。"
+    },
+    {
+      "file": "src/host/versionControl.js",
+      "spec": "./fsAbsence.js",
+      "resolved": "src/host/fsAbsence.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "#858（真因：DSH fs 服务的缺失 code 是 FS_NOT_FOUND，不是 ENOENT）",
+      "note": "缺文件判据要共享（DSH fs 服务抛 FsError/FS_NOT_FOUND，只认 ENOENT 会把「文件不存在」当 IO 错误 → 读四个标记文件必失败）；versionControl.js 已 350 行顶格，照 #500/#821 先例做自包含叶子，versionControl.js 用动态加载接上（pathExists 里按它分档）。"
+    },
+    {
+      "file": "src/host/versionControl.js",
+      "spec": "./runningMarkers.js",
+      "resolved": "src/host/runningMarkers.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "#858（人验收抓到的真 bug：文件服务不可用被说成「找不到 git 程序」）",
+      "note": "四个「正在合并/变基」标记的探测要加 git 兜底（文件服务拿不到结论时用 rev-parse -q --verify），versionControl.js 已 350 行顶格；照 #500（logStore→logPhones）/ #821（versionControl→versionControlFiles）同一先例把整段搬成自包含叶子，依赖（文件服务判定、git 探测、标记名清单）全显式传入。"
+    },
+    {
+      "file": "src/host/versionControl.js",
+      "spec": "./stallWatch.js",
+      "resolved": "src/host/stallWatch.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "#847（宿主：把「传输停住」的字节增长看门狗补上）",
+      "note": "#847 要在 runGit 里加字节增长看门狗（窗口内收集器读到的字节不再增长就判 stalled），内联写进去会把 versionControl.js 顶到 365 行、超过 350 上限；照 #500（logStore→logPhones）、#819（versionControl→versionControlBasis）、#818（versionControl→versionControlFiles）同一条先例，把看门狗搬成自包含叶子：handle 与 timer 全由父文件显式传入，叶子不引用父文件（静态 import 这一行留在父文件），父文件只多一行 import 与一行建看门狗。默认不开，只有显式传 opts.stallMs 的调用才启用。"
+    },
+    {
+      "file": "src/host/versionControl.js",
+      "spec": "./gitCredentialExec.js",
+      "resolved": "src/host/gitCredentialExec.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "#841（宿主写执行层与四条写电话）",
+      "note": "写电话要经 #839 的安全执行层（非交互环境 + 每操作预算 + 调用级总预算）；versionControl.js 正好 350 行没有余量，照 #500（logStore→logPhones）/ #821（versionControl→versionControlFiles）同一先例，装配放进本文件的 writePhone() 懒加载器里（动态加载、单向），写模块自己不引用只读模块。"
+    },
+    {
+      "file": "src/host/versionControl.js",
+      "spec": "./versionControlCheck.js",
+      "resolved": "src/host/versionControlCheck.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "#841（宿主写执行层与四条写电话）",
+      "note": "同上：预检（判定 / 目标解析 / 票据 / 索引指纹）住独立叶子，依赖由本文件显式传入（readScreenOf / failPhone / safeGit），叶子不引用本文件。"
+    },
+    {
+      "file": "src/host/versionControl.js",
+      "spec": "./versionControlWrite.js",
+      "resolved": "src/host/versionControlWrite.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "#841（宿主写执行层与四条写电话）",
+      "note": "同上：四条执行电话住独立叶子；票据表由预检叶子交给本文件的装配器再转交（叶子之间不互引），起进程只走本文件交出去的同一个 runGit。"
+    },
+    {
+      "file": "src/host/index.js",
+      "spec": "./mapTickets.js",
+      "resolved": "src/host/mapTickets.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "#691",
+      "note": "补记 #691 遗留的装配扇入边：当时没记进基线，门禁一直红着"
+    },
+    {
+      "file": "src/host/index.js",
+      "spec": "./issuePage.js",
+      "resolved": "src/host/issuePage.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "#690",
+      "note": "补记 #690 遗留的装配扇入边：当时没记进基线，门禁一直红着"
+    },
+    {
+      "file": "src/host/index.js",
+      "spec": "./updateFromPackage.js",
+      "resolved": "src/host/updateFromPackage.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "#875 薄接线",
+      "note": "宿主入口到更新包接线的引用边（旧实现边已随文件删除，基线同步清理）"
+    },
+    {
+      "file": "src/host/workspaceCwd.js",
+      "spec": "./workspaceLabelColors.js",
+      "resolved": "src/host/workspaceLabelColors.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "#957（工作区文件写器：首绑落盘与无文件保护自动写）",
+      "note": "落盘位置不够：workspaceCwd.js 正好 350 行没有余量，照 #500（logStore→logPhones）/ #821（versionControl→versionControlFiles）同一先例，把改色两条电话搬成自包含叶子，归一与上下文与政策全由父文件显式传入，叶子不引用父文件，父文件只留一行动态加载器。"
+    },
+    {
+      "file": "src/host/index.js",
+      "spec": "./skillDoc.js",
+      "resolved": "src/host/skillDoc.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "888 技能详情页落地",
+      "note": "index 动态加载技能原文直读模块（装配扇入，与 detectChain.js、skillProbe.js 同一条做法）"
+    },
+    {
+      "file": "src/host/platformChannel.js",
+      "spec": "./tracker/detection/backendDecision.js",
+      "resolved": "src/host/tracker/detection/backendDecision.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "#1003",
+      "note": "单出口接线：平台层把统一判定函数递给探测服务（动态引入，失败回退老路）；三路改调同一出口，老短清单删除时复评本条"
+    },
+    {
+      "file": "src/shared/deck-tools/workspace-file.js",
+      "spec": "../config-store/workspace.js",
+      "resolved": "src/shared/config-store/workspace.js",
+      "layer": "shared",
+      "count": 1,
+      "owner": "#1012 配置存储统一改造（三轮切核）",
+      "note": "兼容垫片调核：唯一读写实现住核里，老调用方经此垫片切YAML而不用改；垫片不调核就得另写一份解析。待维护者review确认此例外。"
+    }
+  ]
+}

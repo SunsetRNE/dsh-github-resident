@@ -1,0 +1,319 @@
+// src/host/sessionRefresh.js —— 会话刷新电话（H4 #448 从 host/index.js 660–982 搬出电话体，早选前奏改调共享判据，纯结构、行为零变化）。
+// 以后谁改它：改强制刷新或磁盘缓存的人。预估约330行，超 350 打回。
+// 接线：由 index.js 动态 import 加载；早选判据由 index 从启停模块转供给；本文件不引用其他新文件。
+// #652 改动：入口 cwd 由「原样入参」改成与 wf.snapshot 同一把规整钥匙（含工作区根），两条路的宿主单槽快照才同桶。
+// 2026-09-24（真机反馈「读不到处理记录」从来不消失）：本文件从前**自己手写四份信封字面量**，
+//   wf.snapshot 有的 setupLayout / fallback / fallbackAt / refresh / 处理链读数它一概没有——
+//   界面是 `force ? wf.refresh : wf.snapshot`，回来都装进同一个 st.snapshot，于是强制刷新一次就永久显示读不到。
+//   现在信封与「挂读数」那一步都改用接线处传进来的 snapshotEnvelope（与 wf.snapshot 同一个实例、同一份 buildSnap），
+//   两条路的字段集合由构造保证相等；tests/verify-reply-envelope-parity.js 每次运行都比一遍。
+export function createSessionRefresh(deps) {
+  const { canonicalKey, selectEarly, isComposerSelection, resetGhCache, getTrackerRegistry, getPlatform, ctx, getCache, setCache, upcaseSnapStates, computeLevels, groupTickets, getRepoRoot, getRepoKey, readDiskCache, writeDiskCache, adoptSnapshot, detectionExec, getGhPath, getGhLastError, errText, DEFAULT_CWD, logCtx, envelope, send } = deps
+  // 共用的那份信封（接线处 index.js 传进来，与 wf.snapshot 同一个实例）。
+  // 没传就没法组装出与 wf.snapshot 同形的回包 —— 那种情况下宁可如实回一次失败，
+  // 也不退回本文件自己拼一份（那正是这次故障的来路：两份信封各自漂）。
+  const env = (envelope && typeof envelope.buildSnap === 'function' && typeof envelope.withChainReadout === 'function') ? envelope : null
+  // #491 房外埋点 helpers：hash8 只记散列；脏回执与组装返回均为低频常驻，直接落盘（库体内兜底）。
+  function hash8(s) { try { const t = String(s || ''); let h = 5381; for (let i = 0; i < t.length; i++) h = (((h << 5) + h + t.charCodeAt(i)) >>> 0); return ('0000000' + h.toString(16)).slice(-8) } catch (e) { return '00000000' } }
+  // #689：snapshot.built 多了三个字段（open / closed 是后端计数给的真值、拿不到记 -1；partial 说这份行数据全不全）—— 加在既有事件里不新增一条（每次重建都会走到这里），字段表见 research/489-appendix.md 第 1 章。
+  async function adoptSnapLog(snap, c) { try { if (logCtx && snap && snap.fromCache !== true) { const _d = (snap.deck && typeof snap.deck === 'object') ? snap.deck : {}; const _ct = (_d.counts && typeof _d.counts === 'object') ? _d.counts : null; logCtx.fire('info', 'snapshot.built', { maps: (snap.maps || []).length, issues: (snap.issues || []).length, labels: (snap.labels || []).length, open: _ct ? _ct.open : -1, closed: _ct ? _ct.closed : -1, partial: _d.partial === true, latencyMs: Date.now() - (snap.generatedMs || Date.now()) }) } } catch (e) {} return adoptSnapshot(snap, c) }
+  // #589 去重加载器（D7 禁止静态 import，动态接线；与 _dispatchMetaP 同模式）
+  let _dedupeP = null
+  function _dedupe() { if (!_dedupeP) _dedupeP = import('../shared/tracker/list-dedupe.js'); return _dedupeP }
+  /** 回包交给界面之前，把「每个会话在处理哪些票」的读数挂上（与 wf.snapshot 同一个挂载口）。 */
+  async function handleRefresh(args) {
+    if (!env) return { ok: false, error: 'snapshot-envelope-not-wired' }
+    return env.withChainReadout(await refreshOf(args))
+  }
+  // #729 一次性方案：强制刷新也进与快照路共用的在途表（./snapshotInflight.js；D7 禁止静态 import，动态接线）。
+  let _sharedInflightP = null
+  function _loadSharedInflight() { if (!_sharedInflightP) _sharedInflightP = import('./snapshotInflight.js'); return _sharedInflightP }
+  async function refreshOf(args) {
+      // #1003 空目录闸：同快照，不拿进程目录冒充去重建，诚实失败等就绪。
+      const _rawRefCwd = (args && typeof args.cwd === 'string' && args.cwd.trim()) ? args.cwd : ''
+      if (!_rawRefCwd) return { ok: false, error: '这个工作区还没就绪（还没认出是哪个目录），等面板认出工作区后再试。' }
+      // #652 与快照同钥匙（规整键+工作区根）；#696 起宿主内存按根分表，强制刷新只重写自己根那条。
+      const cwd = await canonicalKey(_rawRefCwd)
+      const refT0 = Date.now()
+      try { if (logCtx) logCtx.fire('info', 'panelSync.dirty', { cwdHash: hash8(cwd), ageMs: (function () { try { const c = getCache(cwd); return (c && c.ts) ? Math.max(0, refT0 - c.ts) : 0 } catch (e) { return 0 } })() }) } catch (eL) {}
+      let _sel = null
+      try { _sel = await selectEarly({ cwd, backendId: (args && args.backendId) || undefined, baseRev: (args && args.baseRev) || 0 }) }
+      catch (eSel) { setCache({ ts: Date.now(), snapshot: null, error: errText(eSel), cwd: cwd }); return { ok: false, error: errText(eSel) } }
+      // #729：在途键与快照路同一把；强制只搭强制的车（在途是非强制就另起一趟，#366），搭上记现成的 dedup.hit。
+      const _sharedInflight = await _loadSharedInflight()
+      const refreshDedupKey = _sharedInflight.snapshotDedupKeyOf({ cwd: cwd, backendId: (_sel && _sel.backendId), lang: (args && args.lang), baseRev: (args && args.baseRev), version: (args && (args.ifNoneMatch || args.version)) })
+      { const _ride = _sharedInflight.snapshotInflightTake(refreshDedupKey, true, function () { try { if (logCtx && logCtx.isEnabled('debug')) logCtx.fire('debug', 'dedup.hit', function () { return { scope: 'snapshot', keyHash: hash8(refreshDedupKey) } }) } catch (eL) {} }); if (_ride) return _ride }
+      const _rebuild = refreshBuild(args, cwd, _sel)
+      const _entry = _sharedInflight.snapshotInflightPark(refreshDedupKey, true, _rebuild)
+      try { return await _rebuild } finally { _sharedInflight.snapshotInflightLeave(refreshDedupKey, _entry) }
+  }
+  // #729：刷新真正的组装（被在途表包住，一趟只跑一次；#195 的 resetGhCache 从入口搬进这里——
+  // 搭车的不再重复清：那一清里带一次异步落盘清空，在途那趟的脚下不能再扫一次）。
+  async function refreshBuild(args, cwd, _sel) {
+      // #195 修复：用户主动刷新时清空 gh 解析缓存，强制重探
+      resetGhCache()
+      try {
+        // 第一性原理分发：与 wf.snapshot 同构
+        const useComposer = isComposerSelection(_sel)
+        if (useComposer) {
+          const reg = await getTrackerRegistry()
+          const backendId = _sel.backendId
+          const tracker = reg.get(backendId)
+          if (!tracker) throw new Error('unknown backend ' + backendId)
+          let repoRef = null
+          try { repoRef = reg.describe({ cwd }, backendId) } catch {}
+          if (!repoRef) repoRef = { backend: backendId, refId: cwd, name: String(cwd).split(/[\\/]/).pop() || backendId, url: '' }
+          // #927：刷新这一路的每条命令也过闸（分类同上：人的动作那一档，只记账、不降档）；没给 send 时照旧直发。
+          const ctx2 = { cwd, platform: await getPlatform(), fs: ctx.get('fs'), exec: function (c, a, o) { if (typeof send !== 'function') return detectionExec(c, a, o, 'refresh'); const isGql = String((a && a[0]) || '') === 'api' && String((a && a[1]) || '').indexOf('graphql') >= 0; return send({ source: 'panel.refresh', kind: 'detail', bucket: isGql ? 'graphql' : 'rest', workspaceKey: cwd }, function () { return detectionExec(c, a, o, 'refresh') }).then(function (r) { return r.result }) } }
+          const { createSnapshotComposer } = await import('./tracker/snapshot.js')
+          const composer = createSnapshotComposer(reg, { snapshotTtl: 5000 })
+          const res = await composer.composeSnapshot(backendId, repoRef, ctx2, { ifNoneMatch: (args && (args.ifNoneMatch || args.version)) || '', force: true })
+          if (!res.ok) throw new Error((res.error && res.error.message) || 'composeSnapshot failed')
+                    const inner = upcaseSnapStates(res.snapshot)
+          const flatTickets = (inner.maps || []).flatMap(function(m){ return (m.tickets || []); })
+          let allForList = []
+          ;(inner.maps || []).forEach(function(m){
+            if (m.key != null && m.number == null) {
+              const n = parseInt(m.key, 10)
+              if (!isNaN(n)) m.number = n
+            }
+            if (m.key != null) m.key = String(m.key)
+            try {
+              const tickets = m.tickets || []
+              const lvInfo = (typeof computeLevels === 'function') ? computeLevels(tickets) : { byNumber: {} }
+              tickets.forEach(function(t){ 
+                if (t.number != null && lvInfo.byNumber && lvInfo.byNumber[t.number] != null) t.level = lvInfo.byNumber[t.number]
+                else if (t.key != null && lvInfo.byKey && lvInfo.byKey[t.key] != null) t.level = lvInfo.byKey[t.key]
+              })
+              const stats = (typeof groupTickets === 'function') ? groupTickets(tickets) : { total: tickets.length, open: tickets.filter(function(x){return x.state!=='CLOSED'}).length, closed: tickets.filter(function(x){return x.state==='CLOSED'}).length, frontier:0, claimed:0, blocked:0, levels:[], levelOf:{} }
+              m.stats = stats
+            } catch {}
+            allForList.push(m)
+          })
+          flatTickets.forEach(function(t){
+            if (t.key != null && t.number == null) {
+              const n = parseInt(t.key, 10)
+              if (!isNaN(n)) t.number = n
+            }
+            if (t.key != null) t.key = String(t.key)
+            if (Array.isArray(t.blockedBy)) {
+              t.blockedBy = t.blockedBy.map(function(ref){
+                if (typeof ref === 'number') return ref
+                if (ref && typeof ref === 'object' && ref.key != null) {
+                  const nk = String(ref.key)
+                  const nn = parseInt(nk, 10)
+                  if (!isNaN(nn)) return nn
+                  return nk
+                }
+                return ref
+              })
+            }
+            allForList.push(t)
+          })
+          ;(inner.issues || []).forEach(function(it){
+            if (it.key != null && it.number == null) {
+              const n = parseInt(it.key, 10)
+              if (!isNaN(n)) it.number = n
+            }
+            if (it.key != null) it.key = String(it.key)
+            allForList.push(it)
+          })
+          // #589：三段拼接会让身兼两职的票出现两次，这里按身份收成一行（地图容器优先）
+          allForList = (await _dedupe()).dedupeListByPool(allForList)
+          const labels = inner.labels || (function(){
+            const mm = {}
+            ;[].concat(inner.maps || []).concat(flatTickets).forEach(function(x){ (x.labels||[]).forEach(function(l){ if(l.color && !mm[l.name]) mm[l.name]=l.color }) })
+            return Object.entries(mm).map(function(e){ return {name:e[0], color:e[1]} })
+          })()
+          let backendModules = null
+          try {
+            const regM = await getTrackerRegistry()
+            if (regM && typeof regM.modules === 'function') {
+              backendModules = regM.modules().map(function(m){ return Object.assign({id:m.id,label:m.label,presentation:m.presentation}, m.links?{links:m.links}:{}, m.capabilities?{capabilities:m.capabilities}:{}, m.prompts?{prompts:m.prompts}:{}, m.setupPrompt?{setupPrompt:m.setupPrompt}:{}, m.labelPalette?{labelPalette:m.labelPalette}:{}, m.openRepository?{openRepository:m.openRepository}:{}) })
+            }
+          } catch {}
+          // B: 补全标签全量（只有本地 Markdown 后端这一段）：没用过的标签也常驻，色取后端自报的内置默认色表 labelPalette（即 backends/markdown/index.js 的 defaultLabelPalette 那 11 枚）；已用标签的颜色已是宿主按工作区配色文件 docs/agents/label-colors.json 算好的票面最终色，这里只补缺、不覆盖（#618：旧的 docs/agents/triage-labels.md 调色盘表不再参与）
+          try {
+            if(backendId==='markdown' && Array.isArray(labels) && backendModules){
+              const mdMod = backendModules.find(function(m){ return m && m.id==='markdown' && Array.isArray(m.labelPalette) })
+              const palette = mdMod && mdMod.labelPalette
+              if(Array.isArray(palette) && palette.length){
+                const have = {}
+                labels.forEach(function(l){ if(l && l.name) have[String(l.name).trim()] = true })
+                palette.forEach(function(p){
+                  const nm = p && p.name ? String(p.name).trim() : ''
+                  if(!nm || have[nm]) return
+                  labels.push({name: nm, color: String(p.color||'cccccc').replace(/^#/,'')})
+                })
+              }
+            }
+          } catch {}
+          // Q7: 兜底 url（Issue.url 为空时按后端现算；github 走 https，markdown 走盘符路径）
+          try {
+            if(backendId==='markdown' && Array.isArray(allForList) && allForList.length){
+              const mdModForUrl = backendModules && backendModules.find(function(m){ return m && m.id==='markdown' })
+              const urlFn = mdModForUrl && typeof mdModForUrl.issueUrl === 'function' ? mdModForUrl.issueUrl : null
+              const tmpRef = repoRef
+              if(urlFn){
+                allForList.forEach(function(it){
+                  if(!it || it.url) return
+                  const k = it.key != null ? String(it.key).trim() : (it.number != null ? String(it.number).trim() : '')
+                  if(!k) return
+                  try { const u = urlFn(tmpRef, k); if(u) it.url = u } catch {}
+                })
+                ;(inner.maps||[]).forEach(function(m){
+                  if(m && !m.url){
+                    try {
+                      const mk = m.key != null ? String(m.key).trim() : '00'
+                      const mu = urlFn(tmpRef, mk)
+                      if(mu) m.url = mu
+                    } catch {}
+                  }
+                })
+              }
+            }
+          } catch {}
+          const repoRoot = await getRepoRoot(cwd)
+          // 共用信封（与 wf.snapshot 同一份 buildSnap）：字段清单只有一处说了算。
+          const snap = env.buildSnap({
+            repo: null, repoRoot: repoRoot, workspaceRoot: cwd,
+            maps: inner.maps, issues: allForList, thinTickets: inner.thinTickets, labels: labels,
+            repository: repoRef, backendModules: backendModules, selection: _sel,
+            deck: inner.deck,
+          })
+          return adoptSnapLog(snap, cwd)
+        }
+        // 统一走编排器（所有后端）
+        if (!_sel || !_sel.backendId) {
+          const repoRoot = await getRepoRoot(cwd)
+          let backendModules = null
+          try {
+            const regM = await getTrackerRegistry()
+            if (regM && typeof regM.modules === 'function') {
+              backendModules = regM.modules().map(function(m){ return Object.assign({id:m.id,label:m.label,presentation:m.presentation}, m.links?{links:m.links}:{}, m.capabilities?{capabilities:m.capabilities}:{}, m.prompts?{prompts:m.prompts}:{}, m.setupPrompt?{setupPrompt:m.setupPrompt}:{}, m.labelPalette?{labelPalette:m.labelPalette}:{}, m.openRepository?{openRepository:m.openRepository}:{}) })
+            }
+          } catch {}
+          // 共用信封：没有后端时那份空快照与 wf.snapshot 同形。
+          const snap = env.buildSnap({
+            repo: null, repoRoot, workspaceRoot: cwd,
+            maps: [], issues: [], thinTickets: [], labels: [],
+            repository: null, backendModules, selection: _sel,
+            deck: { total:0, open:0, closed:0, frontier:0, claimed:0, blocked:0, indeterminate:0, levels:[], levelOf:{} },
+          })
+          return adoptSnapLog(snap, cwd)
+        }
+        const reg2 = await getTrackerRegistry()
+        const backendId2 = _sel.backendId
+        const tracker2 = reg2.get(backendId2)
+        if (!tracker2) throw new Error('unknown backend ' + backendId2)
+        let repoRef2 = null
+        try { repoRef2 = reg2.describe({ cwd }, backendId2) } catch {}
+        if (!repoRef2 || !repoRef2.refId) {
+          const rk = await getRepoKey(cwd)
+          if (rk && rk.owner && rk.name) {
+            repoRef2 = { backend: backendId2, refId: rk.owner + '/' + rk.name, name: rk.owner + '/' + rk.name, url: 'https://github.com/' + rk.owner + '/' + rk.name }
+          } else {
+            const repoRootNoRepo = await getRepoRoot(cwd)
+            let backendModulesNoRepo = null
+            try {
+              const regMNo = await getTrackerRegistry()
+              if (regMNo && typeof regMNo.modules === 'function') {
+                backendModulesNoRepo = regMNo.modules().map(function(m){ return Object.assign({id:m.id,label:m.label,presentation:m.presentation}, m.links?{links:m.links}:{}, m.capabilities?{capabilities:m.capabilities}:{}, m.prompts?{prompts:m.prompts}:{}, m.setupPrompt?{setupPrompt:m.setupPrompt}:{}, m.labelPalette?{labelPalette:m.labelPalette}:{}, m.openRepository?{openRepository:m.openRepository}:{}) })
+              }
+            } catch {}
+            const _selNoRepo = (typeof _sel !== 'undefined' ? _sel : (typeof _selEarly !== 'undefined' ? _selEarly : null))
+            // 共用信封：仓库都认不出来时那份空快照与 wf.snapshot 同形。
+            const snapNoRepo = env.buildSnap({
+              repo: null, repoRoot: repoRootNoRepo, workspaceRoot: cwd,
+              maps: [], issues: [], thinTickets: [], labels: [],
+              repository: null, backendModules: backendModulesNoRepo, selection: _selNoRepo,
+              deck: { total:0, open:0, closed:0, frontier:0, claimed:0, blocked:0, indeterminate:0, levels:[], levelOf:{} },
+            })
+            return adoptSnapLog(snapNoRepo, cwd)
+          }
+        }
+        const repo0b = await getRepoKey(cwd)
+        // #366 fix: wf.refresh must bypass disk cache short-circuit (force rebuild with fresh generatedMs)
+        void 0;
+        const ctx2b = { cwd, platform: await getPlatform(), fs: ctx.get('fs'), exec: function (c, a, o) { if (typeof send !== 'function') return detectionExec(c, a, o, 'refresh'); const isGql = String((a && a[0]) || '') === 'api' && String((a && a[1]) || '').indexOf('graphql') >= 0; return send({ source: 'panel.refresh', kind: 'detail', bucket: isGql ? 'graphql' : 'rest', workspaceKey: cwd }, function () { return detectionExec(c, a, o, 'refresh') }).then(function (r) { return r.result }) } }
+        const { createSnapshotComposer: createComposer2 } = await import('./tracker/snapshot.js')
+        const composer2 = createComposer2(reg2, { snapshotTtl: 5000 })
+        const res2 = await composer2.composeSnapshot(backendId2, repoRef2, ctx2b, { ifNoneMatch: (args && (args.ifNoneMatch || args.version)) || '', force: true })
+        if (!res2.ok) throw new Error((res2.error && res2.error.message) || 'composeSnapshot failed')
+                  const inner2 = upcaseSnapStates(res2.snapshot)
+        ;(inner2.maps || []).forEach(function(m){ 
+          if (m.number == null && m.key != null) { const nn = parseInt(m.key,10); if(!isNaN(nn)) m.number = nn; }
+          try {
+            const tickets = m.tickets || []
+            // 补 number（GitHub 仅有 key，旧的地图列表和地图详情用 number 展示）
+            // 把新形状的阻塞边压成旧视图要的数字数组，把认领人数组派生为旧视图要的认领名字符串，再算层级和统计
+            tickets.forEach(function(t){
+              if(t && t.key != null && t.number == null){ const nn=parseInt(t.key,10); if(!isNaN(nn)) t.number=nn; if(t.key!=null) t.key=String(t.key) }
+              if (t && Array.isArray(t.blockedBy)) {
+                t.blockedBy = t.blockedBy.map(function(ref){
+                  if (typeof ref === 'number') return ref
+                  if (ref && typeof ref === 'object' && ref.key != null) {
+                    const nk = String(ref.key)
+                    const nn = parseInt(nk, 10)
+                    if (!isNaN(nn)) return nn
+                    return nk
+                  }
+                  return ref
+                })
+              }
+              if (t && t.claimedBy == null) {
+                const owners = t.assignees
+                if (Array.isArray(owners) && owners.length) t.claimedBy = (owners[0] && owners[0].login) || ''
+                else t.claimedBy = ''
+              }
+            })
+            const lvInfo = (typeof computeLevels === 'function') ? computeLevels(tickets) : { byNumber: {} }
+            tickets.forEach(function(t){ 
+              if (t.number != null && lvInfo.byNumber && lvInfo.byNumber[t.number] != null) t.level = lvInfo.byNumber[t.number]
+              else if (t.key != null && lvInfo.byKey && lvInfo.byKey[t.key] != null) t.level = lvInfo.byKey[t.key]
+            })
+            const stats = (typeof groupTickets === 'function') ? groupTickets(tickets) : { total: tickets.length, open: tickets.filter(function(x){return x.state!=='CLOSED'}).length, closed: tickets.filter(function(x){return x.state==='CLOSED'}).length, frontier:0, claimed:0, blocked:0, levels:[], levelOf:{} }
+            m.stats = stats
+          } catch {}
+        })
+        ;(inner2.issues || []).forEach(function(it){ if (it.number == null && it.key != null) { const nn = parseInt(it.key,10); if(!isNaN(nn)) it.number = nn; } })
+        let allForList2 = [].concat(inner2.maps || []).concat((inner2.maps||[]).flatMap(function(m){ return m.tickets||[]; })).concat(inner2.issues||[])
+        // #589：三段拼接会让身兼两职的票出现两次，这里按身份收成一行（地图容器优先）
+        allForList2 = (await _dedupe()).dedupeListByPool(allForList2)
+        const labels2 = inner2.labels || (function(){
+          const mm = {}
+          ;[].concat(inner2.maps||[]).concat(inner2.issues||[]).forEach(function(x){ (x.labels||[]).forEach(function(l){ if(l.color && !mm[l.name]) mm[l.name]=l.color }) })
+          return Object.entries(mm).map(function(e){ return {name:e[0], color:e[1]} })
+        })()
+        let backendModules2 = null
+        try {
+          const regM2 = await getTrackerRegistry()
+          if (regM2 && typeof regM2.modules === 'function') {
+            backendModules2 = regM2.modules().map(function(m){ return Object.assign({id:m.id,label:m.label,presentation:m.presentation}, m.links?{links:m.links}:{}, m.capabilities?{capabilities:m.capabilities}:{}, m.prompts?{prompts:m.prompts}:{}, m.setupPrompt?{setupPrompt:m.setupPrompt}:{}, m.labelPalette?{labelPalette:m.labelPalette}:{}, m.openRepository?{openRepository:m.openRepository}:{}) })
+          }
+        } catch {}
+        const repoRoot2 = await getRepoRoot(cwd)
+        let viewer2 = null, viewerLogin2 = null
+        try {
+          const tr = reg2.get(backendId2)
+          if (tr && typeof tr.getCurrentUser === 'function') {
+            const vr = await tr.getCurrentUser(repoRef2, ctx2b)
+            if (vr && vr.ok && vr.data) { viewer2 = vr.data; viewerLogin2 = vr.data.login || null }
+          }
+        } catch {}
+        // 共用信封：这条路与 wf.snapshot 的 GitHub 分支同形（含 viewer / viewerLogin）。
+        const snap2 = env.buildSnap({
+          repo: repo0b, repoRoot: repoRoot2, workspaceRoot: cwd,
+          maps: inner2.maps, issues: allForList2, thinTickets: inner2.thinTickets, labels: labels2,
+          repository: repoRef2, backendModules: backendModules2, selection: _sel,
+          viewer: viewer2, viewerLogin: viewerLogin2, deck: inner2.deck,
+        })
+        await writeDiskCache(snap2.repo, snap2)
+        return adoptSnapLog(snap2, cwd)
+      } catch (e) {
+        setCache({ ts: Date.now(), snapshot: null, error: errText(e), cwd: cwd })
+        return { ok: false, error: errText(e) }
+      }
+  }
+  return { handleRefresh }
+}

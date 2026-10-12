@@ -1,0 +1,353 @@
+// verify-deck-tools-agent-register.js —— 门禁：七个 deck_* 工具真的交到 agent 手上（#741）
+// 用法：在插件根目录执行 node tests/verify-deck-tools-agent-register.js，可独立运行。
+//
+// 为什么要这一段：七个工具的实现与宿主装配都在（verify-deck-tools.js 与
+// verify-deck-tools-host-wiring.js 盯着那两半），但 agent 的工具列表里一个都看不见 ——
+// 从来没有一处调用过工具注册。这一段盯最后那一步：
+//   ① 注册入口只有一处（刷新接线装好表就调钩子，宿主入口零增长）；
+//   ② 注册用的形状就是工具注册表认的那份（名字、描述、参数、输出模式、执行函数），
+//      参数写法只含注册表允许的键，对象节点必带显式的 additionalProperties；
+//   ③ 执行只是转发：调宿主已装好的那张表，回它的 value，不多不少，不抛异常；
+//   ④ 注册失败（服务不在、注册表拒绝、依赖没装好）只进 reason，不掀翻宿主。
+//
+// 本文件不联网、不读 DSH 安装目录、不依赖档案里装没装包：
+// 工具定义用桩，工具表用桩，defineTool 用桩；真定义只读“形状”（名字与参数），不执行。
+const path = require('path')
+const fs = require('fs')
+const { pathToFileURL } = require('url')
+
+const ROOT = path.resolve(__dirname, '..')
+let failed = false
+let total = 0
+const check = (ok, msg) => { total += 1; console.log((ok ? '  PASS ' : '  FAIL ') + msg); if (!ok) failed = true }
+const imp = (rel) => import(pathToFileURL(path.join(ROOT, rel)).href)
+const readText = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8')
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
+async function waitFor(cond, what, rounds) {
+  const total = rounds || 100
+  for (let i = 0; i < total; i++) { try { if (cond()) return } catch (e) {} await sleep(20) }
+  throw new Error('等不到：' + what)
+}
+
+const SEVEN_NAMES = [
+  'deck_context',
+  'deck_issue_get',
+  'deck_map_snapshot',
+  'deck_issue_list',
+  'deck_issue_create',
+  'deck_map_plan_create',
+  'deck_map_link',
+  'deck_issue_patch',
+  'deck_issue_report',
+]
+
+// 注册表允许出现在参数写法里的键（与线上工具注册实现同一份白名单，逐字对齐）。
+const LEGAL_PARAM_KEYS = ['type', 'properties', 'items', 'enum', 'const', 'additionalProperties', 'required', 'description', 'title', 'default', 'examples']
+
+// 原生模式子集判定（退路交出去的形状必须过这一关）：与线上 assertSupportedJsonSchema
+// 同一条规则——required 只许是挂在对象节点上的字符串数组，绝不许按属性标布尔；
+// additionalProperties 出现就必须是布尔；键必须在子集里。2026-09-26 真机验证
+// 就是栽在输出模式里按属性标了必填，门禁当时只查了官方写法的合法，没查退路。
+const RAW_TYPES = ['string', 'number', 'integer', 'boolean', 'null', 'array', 'object']
+const RAW_KEYS = ['type', 'oneOf', 'properties', 'required', 'additionalProperties', 'items', 'enum', 'const', 'description', 'title', 'default', 'examples']
+function rawSubsetLegal(node, where, problems) {
+  if (node === null || typeof node !== 'object' || Array.isArray(node)) { problems.push(where + ' 不是对象'); return }
+  for (const k of Object.keys(node)) if (RAW_KEYS.indexOf(k) < 0) { problems.push(where + ' 有子集外的键 ' + k); return }
+  const t = node.type
+  if (typeof t !== 'string' || RAW_TYPES.indexOf(t) < 0) { problems.push(where + ' 类型不在子集里'); return }
+  if (Object.hasOwn(node, 'required')) {
+    if (t !== 'object') { problems.push(where + '.required 不许出现在非对象节点上'); }
+    else if (!Array.isArray(node.required) || node.required.some((x) => typeof x !== 'string')) { problems.push(where + '.required 必须是字符串数组'); }
+  }
+  if (Object.hasOwn(node, 'additionalProperties') && typeof node.additionalProperties !== 'boolean') problems.push(where + '.additionalProperties 必须是布尔')
+  if (node.properties !== undefined) {
+    if (t !== 'object' || node.properties === null || typeof node.properties !== 'object' || Array.isArray(node.properties)) { problems.push(where + '.properties 形状不对'); return }
+    for (const p of Object.keys(node.properties)) rawSubsetLegal(node.properties[p], where + '.properties.' + p, problems)
+  }
+  if (node.items !== undefined) rawSubsetLegal(node.items, where + '.items', problems)
+}
+
+function paramsLegal(node, where, problems) {
+  if (node === null || typeof node !== 'object' || Array.isArray(node)) { problems.push(where + ' 不是对象'); return }
+  for (const k of Object.keys(node)) {
+    if (LEGAL_PARAM_KEYS.indexOf(k) < 0) { problems.push(where + ' 有非法键 ' + k); continue }
+    if (k === 'required' && typeof node[k] !== 'boolean') { problems.push(where + '.required 不是布尔（数组写法不许出现在这里）'); continue }
+    if (k === 'properties') {
+      if (node[k] === null || typeof node[k] !== 'object' || Array.isArray(node[k])) { problems.push(where + '.properties 不是对象'); continue }
+      for (const p of Object.keys(node[k])) paramsLegal(node[k][p], where + '.properties.' + p, problems)
+    }
+    if (k === 'items') paramsLegal(node[k], where + '.items', problems)
+  }
+  if (node.type === 'object' && typeof node.additionalProperties !== 'boolean') problems.push(where + ' 对象节点缺显式 additionalProperties')
+}
+
+function topMapLegal(map, where, problems) {
+  if (map === null || typeof map !== 'object' || Array.isArray(map)) { problems.push(where + ' 不是属性清单对象'); return }
+  for (const p of Object.keys(map)) paramsLegal(map[p], where + '.' + p, problems)
+}
+
+function stubToolsSvc() {
+  const registered = []
+  return {
+    registered: registered,
+    register: function (tool) {
+      if (!tool || typeof tool.name !== 'string') throw new Error('stub: 注册形状不对')
+      if (registered.some((t) => t.name === tool.name)) throw new Error('stub: 同一层重复注册 ' + tool.name)
+      registered.push(tool)
+      return function () {}
+    },
+  }
+}
+
+function stubTable(seven, failOn) {
+  const tools = {}
+  for (const d of seven) {
+    tools[d.name] = {
+      run: async function (exec, args) {
+        if (failOn === d.name) throw new Error('桩后端炸了')
+        return { value: { status: 'ok', text: '桩回包：' + d.name, data: { echo: args || {} } }, claimed: { requests: 1, points: 1 } }
+      },
+    }
+  }
+  return { tools: tools, names: seven.map((d) => d.name), definitions: seven }
+}
+
+async function main() {
+  console.log('九个 deck_* 工具的 agent 注册门禁（#741：注册一处、形状合法、只转发、不掀宿主）')
+
+  // ── 0. 注册帮助模块存在且只用纯函数 ──
+  let agent = null
+  try { agent = await imp('src/shared/deck-tools/agent-register.js') } catch (e) {
+    check(false, '注册帮助模块可加载（src/shared/deck-tools/agent-register.js）')
+    console.log('\n' + total + ' 条断言，' + (failed ? '失败' : '通过'))
+    process.exit(1)
+  }
+  check(agent && typeof agent.buildAgentToolOptions === 'function', '交出 buildAgentToolOptions（定义 → 注册选项）')
+  check(agent && typeof agent.registerDeckAgentTools === 'function', '交出 registerDeckAgentTools（批量注册）')
+  const agentSrc = readText('src/shared/deck-tools/agent-register.js')
+  check(!/from\s+['"]@deepseek-ai\/dsh-tools['"]/.test(agentSrc) && !/require\(['"]@deepseek-ai\/dsh-tools['"]\)/.test(agentSrc),
+    '帮助模块不直引工具包（defineTool 由调用方传进来）')
+  let row = null
+  try { row = await imp('src/host/platform/deckToolsRow.js') } catch (e) {
+    check(false, '行模块可加载（src/host/platform/deckToolsRow.js）')
+    console.log('\n' + total + ' 条断言，失败')
+    process.exit(1)
+  }
+  check(row && typeof row.apply === 'function', '行模块交出 apply（官方行形状）')
+  check(row && Array.isArray(row.inject) && row.inject.indexOf('tools') >= 0, '行模块注入工具服务（框架保证就绪才加载）')
+  check(typeof row.name === 'string' && row.name.length > 0, '行模块有名字')
+
+  // ── 1. 用八个真定义跑转换：名字齐、形状合法、必填对上 ──
+  const toolFiles = [
+    'src/host/tools/deckContext.js',
+    'src/host/tools/deckIssueGet.js',
+    'src/host/tools/deckMapSnapshot.js',
+    'src/host/tools/deckIssueList.js',
+    'src/host/tools/deckIssueCreate.js',
+    'src/host/tools/deckMapPlanCreate.js',
+    'src/host/tools/deckMapLink.js',
+    'src/host/tools/deckIssuePatch.js',
+    'src/host/tools/deckIssueReport.js',
+  ]
+  const seven = []
+  for (const f of toolFiles) seven.push((await imp(f)).definition)
+  check(seven.map((d) => d.name).join(',') === SEVEN_NAMES.join(','), '九个真定义名字齐且顺序与装配口一致')
+  // 真实现直引（仓库开发依赖，与线上同版本）：官方编译与原生判定都不拿桩冒充。
+  const realTools = await imp('node_modules/@deepseek-ai/dsh-tools/lib/index.js')
+  const realDefineTool = realTools.defineTool
+  const realAssert = realTools.assertSupportedJsonSchema
+  check(typeof realDefineTool === 'function' && typeof realAssert === 'function', '真实现可加载（官方编译与原生判定都用它）')
+  const requiredOf = { deck_issue_create: ['title'], deck_issue_get: ['key'], deck_map_snapshot: ['key'], deck_issue_patch: ['key'], deck_issue_report: ['key'], deck_map_plan_create: ['title', 'children'] }
+  for (const d of seven) {
+    const opt = agent.buildAgentToolOptions(d)
+    check(opt && opt.name === d.name && opt.description === d.description, d.name + ' 名字与一句话描述原样透出')
+    const problems = []
+    topMapLegal(opt.parameters, d.name + '.parameters', problems)
+    check(problems.length === 0, d.name + ' 参数只含注册表允许的键' + (problems.length ? '（' + problems.join('；') + '）' : ''))
+    const want = requiredOf[d.name] || []
+    const got = Object.keys(opt.parameters).filter((k) => opt.parameters[k] && opt.parameters[k].required === true).sort()
+    check(JSON.stringify(got) === JSON.stringify(want.slice().sort()), d.name + ' 必填项对上（要 ' + (want.join('、') || '无') + '）')
+    check(opt.output && typeof opt.output.render === 'function' && opt.output.schema && opt.output.schema.type === 'object',
+      d.name + ' 输出带模式与渲染函数')
+    // 没有明细时仍然只回一块：这是渲染的原有契约，#809 的修复不能把它改坏
+    const rendered = opt.output.render({}, { status: 'ok', text: '你好' })
+    check(Array.isArray(rendered) && rendered.length === 1 && rendered[0].type === 'text' && String(rendered[0].text).indexOf('你好') >= 0,
+      d.name + ' 渲染回文本块且带着原话')
+    // 上一条只钉住「没有明细时回一块」，那正是 #809 之前的形状，也正是它让丢明细这件事
+    // 无人察觉：信封有 data 时必须把明细一起给，这一条才是真正守住接缝的那一句。
+    const withData = opt.output.render({}, { status: 'ok', text: '你好', data: { key: '759', body: '这里是票的正文' } })
+    const withDataText = (withData || []).map((b) => String(b.text)).join('\n')
+    check(Array.isArray(withData) && withData.length > 1 && withDataText.indexOf('这里是票的正文') >= 0,
+      d.name + ' 信封里有 data 时把明细一起交给模型（#809）')
+  }
+
+  // ── 2. 注册行为（全桩）：九个都交出去、执行只转发、不抛 ──
+  const svc = stubToolsSvc()
+  const table = stubTable(seven, null)
+  const res = await agent.registerDeckAgentTools(svc, table, realDefineTool)
+  check(res && res.registered && res.registered.join(',') === SEVEN_NAMES.join(','), '一次注册九个，一个不少')
+  check(!res.missing || res.missing.length === 0, '缺件清单为空')
+  const one = svc.registered.filter((t) => t.name === 'deck_issue_create')[0]
+  const out = await one.execute({ title: '演示票' }, { agent: { session: { cwd: '/ws', id: 's1' } } })
+  check(out && out.status === 'ok' && out.text === '桩回包：deck_issue_create', '执行转发到宿主那张表并只回它的 value')
+  check(out && !Object.hasOwn(out, 'claimed'), '记账数不外露（闸里已经记过）')
+  // 九个逐个真执行一遍：转发的路每条都通，回包都有状态与一句话。
+  const demoArgs = { deck_context: {}, deck_issue_get: { key: '01' }, deck_map_snapshot: { key: '01' }, deck_issue_list: {}, deck_issue_create: { title: 't' }, deck_map_plan_create: { title: 't', children: [] }, deck_map_link: { key: '01' }, deck_issue_patch: { key: '01' }, deck_issue_report: { key: '01' } }
+  for (const t of svc.registered) {
+    const got = await t.execute(demoArgs[t.name], { agent: { session: { cwd: '/ws' } } })
+    check(got && typeof got.status === 'string' && typeof got.text === 'string' && got.text.length > 0, t.name + ' 执行通，回包带状态与一句话')
+  }
+  const throwing = stubTable(seven, 'deck_map_link')
+  const svc2 = stubToolsSvc()
+  await agent.registerDeckAgentTools(svc2, table, realDefineTool)
+  const link = svc2.registered.filter((t) => t.name === 'deck_map_link')[0]
+  // 注意这里故意用会抛的表执行：工具永不抛，炸了也要包成信封。
+  const svc3 = stubToolsSvc()
+  await agent.registerDeckAgentTools(svc3, throwing, realDefineTool)
+  const link3 = svc3.registered.filter((t) => t.name === 'deck_map_link')[0]
+  const out3 = await link3.execute({ key: '01' }, { agent: { session: { cwd: '/ws' } } })
+  check(out3 && out3.status === 'unsupported' && typeof out3.text === 'string' && out3.text.length > 0,
+    '后端炸了也不抛，包成没做成的信封如实说')
+
+  // ── 3. 脏环境：调两次不炸、注册表拒绝不掀、没工具包走退路 ──
+  const twice = await agent.registerDeckAgentTools(svc, table, realDefineTool)
+  check(twice && twice.registered.length === 0 && (twice.reason || '').length > 0, '同一服务调两次不重复注册（第二次给 reason）')
+  const angrySvc = { register: function () { throw new Error('注册表拒绝') } }
+  const angry = await agent.registerDeckAgentTools(angrySvc, table, realDefineTool)
+  check(angry && angry.registered.length === 0 && (angry.reason || '').length > 0, '注册表拒绝只进 reason，不抛')
+  const noSvc = await agent.registerDeckAgentTools(null, table, realDefineTool)
+  check(noSvc && noSvc.registered.length === 0 && (noSvc.reason || '').length > 0, '服务不在只进 reason，不抛')
+  const emptyTable = await agent.registerDeckAgentTools(stubToolsSvc(), { names: [], definitions: [], tools: {} }, realDefineTool)
+  check(emptyTable && emptyTable.registered.length === 0 && emptyTable.reason === 'empty-table', '表是空的给空表原因（不谎报已交过）')
+  // 退路（工具包没装好、defineTool 传不进来）：直接按注册表形状交，八个照样出去。
+  const rawSvc = stubToolsSvc()
+  const raw = await agent.registerDeckAgentTools(rawSvc, table, null)
+  check(raw && raw.registered.join(',') === SEVEN_NAMES.join(',') && (!raw.missing || raw.missing.length === 0),
+    '没 defineTool 走退路，九个照样注册')
+  const rawOne = rawSvc.registered.filter((t) => t.name === 'deck_issue_get')[0]
+  const rawDef = seven.filter((d) => d.name === 'deck_issue_get')[0]
+  check(rawOne && rawOne.parameters === rawDef.parameters && typeof rawOne.execute === 'function',
+    '退路参数用定义里编好的那份原样交（注册表不重编，直接当模式用）')
+  // 退路七个的形状逐个过原生子集判定（官方写法走编译器，退路走这一关），
+  // 再过一遍真原生判定（手写判定只防回归，真实现才是准绳）。
+  for (const t of rawSvc.registered) {
+    const rProblems = []
+    rawSubsetLegal(t.parameters, t.name + '.parameters', rProblems)
+    rawSubsetLegal(t.output.schema, t.name + '.output.schema', rProblems)
+    check(rProblems.length === 0, t.name + ' 退路形状过原生子集' + (rProblems.length ? '（' + rProblems.join('；') + '）' : ''))
+    try { realAssert(t.parameters); realAssert(t.output.schema) } catch (e) {
+      check(false, t.name + ' 退路形状过真原生判定（' + String((e && e.message) || e).split(';')[0] + '）')
+      continue
+    }
+    check(true, t.name + ' 退路形状过真原生判定')
+  }
+  const rawBad = await rawOne.execute('不是对象', { agent: { session: { cwd: '/ws' } } })
+  check(rawBad && rawBad.status === 'unsupported' && typeof rawBad.text === 'string' && rawBad.text.length > 0,
+    '参数不是对象直接回没做成，不进表')
+  const rawAbort = await rawOne.execute({ key: '01' }, { agent: { session: { cwd: '/ws' } }, signal: { aborted: true } })
+  check(rawAbort && rawAbort.status === 'unsupported' && String(rawAbort.text).indexOf('中止') >= 0,
+    '调用已被中止直接回没做成，不等后端（也不抛）')
+  // 信封取值与共享壳同一份常量（改了壳，这里的字面量会先红）。
+  const shell = await imp('src/shared/deck-tools/shell.js')
+  check(rawBad.status === shell.DECK_STATUS.UNSUPPORTED, '没做成的状态取值与壳一致')
+  check(out.status === 'ok' && out.status !== shell.DECK_STATUS.UNSUPPORTED, '做成的状态取值与壳一致')
+
+  // ── 4. 接线形状：接线处只留两行（引钩子 + 调钩子），入口保持干净 ──
+  const wiringSrc = readText('src/host/refresh/wiring.js')
+  check(wiringSrc.indexOf('hookDeckAgentTools(d.ctx, deckToolsForHost') >= 0, '刷新接线装好表就调钩子（注册入口只有这一处）')
+  const indexSrc = readText('src/host/index.js')
+  check(indexSrc.indexOf('registerDeckAgentTools') < 0, '宿主入口不直接碰注册（钩子住在接线里，入口零增长）')
+  check(/inject:\s*\[[^\]]*['"]connection['"][^\]]*\]/.test(indexSrc) && !/['"]webServer['"]/.test(indexSrc.match(/inject:\s*\[[^\]]*\]/)[0]), '宿主注入声明仅 connection + #746 的 llm/sessionQuery（webServer 仍禁，注册不加新服务）')
+
+  // ── 5. 钩子行为（全桩）：有服务就交八个，没服务静默跳过 ──
+  check(typeof agent.hookDeckAgentTools === 'function', '交出 hookDeckAgentTools（接线调的就是它）')
+  const hookSvc = stubToolsSvc()
+  agent.hookDeckAgentTools({ tools: hookSvc }, async function () { return table }, async function () { return { defineTool: realDefineTool } })
+  await waitFor(function () { return hookSvc.registered.length === 9 }, '钩子交出九个')
+  check(hookSvc.registered.length === 9, '钩子交出九个（官方写法）')
+  const hookRawSvc = stubToolsSvc()
+  agent.hookDeckAgentTools({ tools: hookRawSvc }, async function () { return table }, async function () { return null })
+  await waitFor(function () { return hookRawSvc.registered.length === 9 }, '退路钩子交出九个')
+  check(hookRawSvc.registered.length === 9, '拿不到工具包时钩子走退路，八个照样交')
+  let hookCrashed = false
+  try { agent.hookDeckAgentTools({}, async function () { return table }, async function () { return null }) } catch (e) { hookCrashed = true }
+  await sleep(50)
+  check(!hookCrashed, '工具服务不在，钩子静默等几轮（宿主照常起）')
+  // 服务晚到两秒：钩子第一轮取不到，等一轮再取到，七个照样交。
+  const lateCtx = {}
+  const lateSvc = stubToolsSvc()
+  const lateReports = []
+  agent.hookDeckAgentTools(lateCtx, async function () { return table }, async function () { return { defineTool: realDefineTool } },
+    function (info) { lateReports.push(info) }, { retries: 30, waitMs: 20 })
+  await sleep(100)
+  lateCtx.tools = lateSvc
+  await waitFor(function () { return lateSvc.registered.length === 9 }, '晚到的服务', 700)
+  check(lateSvc.registered.length === 9, '服务晚到，钩子等到再交（不等死也不错过）')
+  check(lateReports.length === 1 && lateReports[0].ok === true && typeof lateReports[0].ms === 'number',
+    '交出去终点报告成功（含耗时）')
+  // 报告函数抛错不连累钩子；服务始终没有终点报告没交出去。
+  const angryReports = []
+  agent.hookDeckAgentTools({}, async function () { return table }, async function () { return null },
+    function () { angryReports.push(1); throw new Error('报告炸了') }, { retries: 2, waitMs: 10 })
+  await waitFor(function () { return angryReports.length === 1 }, '失败终点', 700)
+  check(angryReports.length === 1, '报告抛错钩子不崩，失败终点照样记一次')
+
+  // ── 6. 报告函数：只落既有事件，键都在白名单里 ──
+  check(typeof agent.makeDeckRegisterReport === 'function', '交出 makeDeckRegisterReport（接线拿它落日志）')
+  const fired = []
+  const fakeLog = { fire: function (level, event, fields) { fired.push({ level: level, event: event, fields: fields }) } }
+  const report = agent.makeDeckRegisterReport(fakeLog)
+  report({ ok: true, ms: 12 })
+  report({ ok: false, reason: 'no-tools-service' })
+  report({ ok: false, reason: 'register-failed:deck_context' })
+  const okLine = fired.filter((f) => f.event === 'host.call')[0]
+  check(fired.every((f) => f.event === 'host.call' || f.event === 'host.call.fail'),
+    '报告只落既有事件（不新增事件名）')
+  check(okLine && okLine.level === 'info' && okLine.fields.method === 'deck.agentRegister' && okLine.fields.ok === true && okLine.fields.kind === 'deck-tool' && typeof okLine.fields.latencyMs === 'number',
+    '成功行带方法名、耗时、成功标记与种类')
+  const failLines = fired.filter((f) => f.event === 'host.call.fail')
+  check(failLines.length === 2 && failLines.every((f) => f.level === 'warn' && f.fields.method === 'deck.agentRegister' && f.fields.kind === 'deck-tool' && typeof f.fields.errorHash === 'string' && typeof f.fields.errorKind === 'string'),
+    '失败行带方法名、种类、错误指纹与缺失分类')
+  check(failLines[0].fields.errorKind === 'missing-dep' && failLines[1].fields.errorKind === 'throw',
+    '服务不在标缺失，注册抛错标抛错（两类分开）')
+  const noLog = agent.makeDeckRegisterReport(null)
+  let reportCrashed = false
+  try { noLog({ ok: true, ms: 1 }); noLog({ ok: false, reason: 'x' }) } catch (e) { reportCrashed = true }
+  check(!reportCrashed, '日志口不在，报告静默跳过')
+
+  // ── 7. 行模块：agent 层那一行交出八个加探针 ──
+  const rowSvc = stubToolsSvc()
+  let rowCrashed = null
+  try { row.apply({ tools: rowSvc, connection: {} }) } catch (e) { rowCrashed = e }
+  check(!rowCrashed, '行模块应用不抛（服务在就交）')
+  const rowNames = rowSvc.registered.map((t) => t.name)
+  check(SEVEN_NAMES.every((n) => rowNames.indexOf(n) >= 0), '行模块交出九个 deck 工具')
+  check(rowNames.indexOf('deck_probe') >= 0, '行模块交出探针')
+  const probe = rowSvc.registered.filter((t) => t.name === 'deck_probe')[0]
+  const inventory = JSON.parse(await probe.execute({}, { tools: { a: 1 }, connection: {}, agent: { session: { cwd: '/ws' } } }))
+  check(inventory && inventory.tools === true && inventory.connection === true && inventory.subprocess === false,
+    '探针如实回服务清单（有的说有，没有的说没有）')
+  const pending = rowSvc.registered.filter((t) => t.name === 'deck_context')[0]
+  const pendOut = await pending.execute({}, { agent: { session: { cwd: '/ws' } } })
+  check(pendOut && pendOut.status === 'unsupported' && String(pendOut.text).indexOf('面板') >= 0,
+    '通道未通时执行诚实说明并指去面板（不谎报成功）')
+  // 注册表第二个就拒绝：剩下的照样交，坏一个不连累其余六个加探针。
+  const flakySvc = stubToolsSvc()
+  let flakyCalls = 0
+  const flakyOrig = flakySvc.register
+  flakySvc.register = function (tool) { flakyCalls += 1; if (flakyCalls === 2) throw new Error('注册表拒收这一个'); return flakyOrig(tool) }
+  let flakyCrashed = null
+  try { row.apply({ tools: flakySvc, connection: {} }) } catch (e) { flakyCrashed = e }
+  check(!flakyCrashed && flakySvc.registered.length === 9,
+    '坏一个工具的注册，剩下八个加探针照样交（行不整体掀翻）')
+  // 工具服务不在：行起不来就明说，不静默。
+  let noSvcCrashed = null
+  try { row.apply({}) } catch (e) { noSvcCrashed = e }
+  check(!!noSvcCrashed && String((noSvcCrashed && noSvcCrashed.message) || '').indexOf('工具服务不在') >= 0,
+    '工具服务不在行就明说失败（不静默，装配面看得见）')
+
+  console.log('\n' + total + ' 条断言，' + (failed ? '失败' : '通过'))
+  process.exit(failed ? 1 : 0)
+}
+
+main().catch((e) => { console.error('门禁抛错：' + ((e && e.stack) || e)); process.exit(1) })

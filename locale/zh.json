@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "GitHub 常驻身份",
-    "description": "让一个 GitHub 身份常驻在当前环境，并提供跨多个仓库的提交、推送与开 PR 工具。"
+    "title": "GitHub 常驻身份 + Skills Deck",
+    "description": "合并 GitHub 身份、多仓库提交/推送/PR、仓库登记库与 Skills Deck 的 issue/map 工具、27 个技能和右侧面板。升级前请先停用独立的 Skills Deck 插件。"
   }
 }

@@ -1,4 +1,22 @@
+# @local/dsh-github-resident-v2 —— 合并后的单包 bundle 层装配
+#
+# 两行同属一个包，这不是「两个插件」：宿主入口一行（常驻 GitHub 身份 + Deck 宿主半边），
+# 行模块一行（9 个 deck_* 业务工具 + deck_probe）。
+#
+# 为什么保留 /tools 行而不只留一个入口：探针 deck_probe 只由行模块显式注册
+#（deck/src/host/platform/deckToolsRow.js），删行前必须先给探针一个明确的新归属；
+# 运行态「哪条通路胜出、是否重复注册」尚未在隔离 profile 里验证过，本阶段不猜（默认暂留）。
+#
+# 为什么 /tools 不只是一个「兼容路径」：包级 dsh.client 按【包名】建客户端图行，
+# 子路径行（@local/dsh-github-resident-v2/tools）解析不到包根，因此 /tools 永远不会产生
+# 第二个客户端脚本。客户端只有 dist/client.js 一份 —— 这是宿主契约，不是约定。
+#
+# 旧组合互斥：部署时必须先停用「旧 Resident + 旧 Deck」两行，再启用本包；
+# 新旧同时激活会让同一批 tool 名重复注册。
 - insert:
     - id: github-resident-v2
       name: '@local/dsh-github-resident-v2'
+      config: {}
+    - id: github-resident-v2-tools
+      name: '@local/dsh-github-resident-v2/tools'
       config: {}

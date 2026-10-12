@@ -1,0 +1,199 @@
+#!/usr/bin/env node
+/**
+ * verify-locale-completeness.js — locale 完整性 + 硬编码中文回归门禁（#231 验收）。
+ *
+ * A. zh/en 键集合全等（键数一致且互相包含）；
+ * B. 本票关键键存在（双语源与双产物四处核验）；
+ * C. client 层字符串级中文残留以「基线清单」封顶（2026-08-29 实测登记；只许缩小不许增大，
+ *    清单外文件出现字符串级中文即红；kernel/locale.js 与 kernel/prompts.js 为双语定义本体，不入清单）。
+ */
+const fs = require('fs')
+const path = require('path')
+const root = path.resolve(__dirname, '..')
+
+let failed = false
+let passed = 0
+const ok = function (name) { passed++; console.log('  PASS', name) }
+const bad = function (name) { failed = true; console.log('  FAIL', name) }
+
+// ---------- A. locale 键集合 ----------
+const LOCALE_SRC_FILES = ['src/client/kernel/locale-panel.js', 'src/client/kernel/locale-flow.js', 'src/client/kernel/locale-word.js', 'src/client/kernel/locale-labels.js', 'src/client/kernel/locale-pages.js', 'src/client/kernel/locale-vcwrite.js', 'src/client/kernel/locale-skilldesc.js', 'src/client/kernel/locale.js'] // #458 K5：locale.js 已拆为三片段加合并器，此处读四文件拼起来的内容断言（panel 含导航面板横幅环境引导，flow 含动作类型列表配置详情地图提示，word 含技能检查浮层命名切换进度错误模板运行描述，合并器含 L 合并逻辑）；#621 起多一份 locale-labels.js（标签配色弹窗的中英词条），#690 起再多一份 locale-pages.js（历史票按需翻页的五条），#879 起再多一份 locale-skilldesc.js（技能描述 27 条），同样按「每个键 zh/en 各出现一次」判定
+const locSrc = LOCALE_SRC_FILES.map((f) => fs.readFileSync(path.join(root, f), 'utf8')).join('\n')
+function sliceAfter(buf, marker) { const i = buf.indexOf(marker); return i < 0 ? '' : buf.slice(i) }
+function keysOf(seg) {
+  const re = /'([a-zA-Z0-9_.]+)':\s*'((?:[^'\\]|\\.)*)'/g
+  const out = {}
+  let m
+  while ((m = re.exec(seg)) !== null) out[m[1]] = m[2]
+  return out
+}
+const allKeys = keysOf(locSrc)
+const half = Math.floor(Object.keys(allKeys).length / 2)
+const zhSet = new Set(Object.keys(keysOf(sliceAfter(locSrc, "'act.view'") || locSrc)))
+if (!zhSet.size) bad('A. zh 半区切片失败')
+const zhCount = (locSrc.match(/':\s*'/g) || []).length
+if (zhCount > 600) ok('A. locale 规模正常（约 ' + Math.round(zhCount / 2) + ' 键 × 2 语）')
+else bad('A. locale 规模异常：value-form 出现 ' + zhCount)
+// 更强判定：直接按字节序切两半并不稳（中英同文件交错块状布局），改为「键出现次数必须=2」
+let dupFail = []
+for (const k of Object.keys(allKeys)) {
+  const c = locSrc.split("'" + k + "':").length - 1
+  if (c !== 2) dupFail.push(k + '(' + c + ')')
+}
+if (!dupFail.length) ok('A. 全部键 zh/en 双语各出现一次')
+else bad('A. 键非双语配对 → ' + dupFail.slice(0, 8).join(', ') + (dupFail.length > 8 ? ' …共' + dupFail.length : ''))
+
+// ---------- B. 关键键 ----------
+const REQUIRED = [
+  'list.openInTrackerTitle', 'detail.viewOnTracker', 'detail.viewOnTrackerHint',
+  'detail.authFailCta', 'detail.readOnlyHint',
+  'switch.gateOtherErr', 'switch.pleaseSelectTracker', 'switch.gateIntro',
+  'panel.loadingShort',
+  'setup.github.trackerLine', 'setup.github.labelReqs',
+  'setup.markdown.trackerLine', 'setup.markdown.labelReqs',
+  'setup.gitlab.trackerLine', 'setup.gitlab.labelReqs',
+  'setup.default.trackerLine', 'setup.default.labelReqs',
+  'panel.labelsStepTitle', 'panel.labelsStepDesc',
+  'check.selection.pass', 'check.tracker.initialized.pass', 'env.diagTitle', 'env.actRun', 'env.chainDone',
+  // #626：普通票的显示名。TypeChip 渲染的是 tr('type.' + 类型值)，缺了这条，
+  // 界面上会直接印出 'type.issue' 这串字（#626 实测）。
+  'type.issue',
+  // #655：初始化小卡上那组单选与两句注入句。缺了卡片会印出键名，注入文案里那句布局结论会空着。
+  'setup.layoutQuestion', 'setup.layoutSingle', 'setup.layoutMulti',
+  'setup.layout.single', 'setup.layout.multi',
+]
+for (const k of REQUIRED) {
+  if (k in allKeys) ok('B. 键在 ' + k)
+  else bad('B. 缺键 ' + k)
+}
+// #619：旧的「标签调色盘」注入文案整段删除，那条词条键也随之删掉。
+//   判据由「必须存在」换成「必须不存在」——同一条键，方向相反，强度不变。
+if (!('setup.markdown.paletteNote' in allKeys)) ok('B. 已删的 setup.markdown.paletteNote 键没有复活（#619）')
+else bad('B. setup.markdown.paletteNote 又回来了：#619 已删掉这条注入文案，词条不该再存在')
+
+// ---------- E. 类型徽章能收到的每个类型值都必须有词条（#626 防复发）----------
+// TypeChip（views/shared/chips.js）渲染的是 tr('type.' + 类型值)。类型值有两个来源：
+//   ① 后端归一的票类型：src/shared/tracker/constants.js 的 ISSUE_TYPE（issue / map）
+//   ② 五个 wayfinder 类型标签：src/shared/labels.js 的 wayfinder:xxx
+// 任何一路冒出新值而词条没跟上，界面上就会印出键名本身 —— 那正是 #626 的毛病。
+const constantsSrc = fs.readFileSync(path.join(root, 'src/shared/tracker/constants.js'), 'utf8')
+const issueTypeBlock = (constantsSrc.match(/ISSUE_TYPE\s*=\s*Object\.freeze\(\{([\s\S]*?)\}\)/) || [])[1] || ''
+const fromBackend = (issueTypeBlock.match(/:\s*'([a-z]+)'/g) || []).map(function (s) { return s.replace(/[^a-z]/g, '') })
+const labelsSrc = fs.readFileSync(path.join(root, 'src/shared/labels.js'), 'utf8')
+const fromLabels = []
+;(labelsSrc.match(/wayfinder:[a-z]+/g) || []).forEach(function (n) {
+  const v = n.slice('wayfinder:'.length)
+  if (fromLabels.indexOf(v) < 0) fromLabels.push(v)
+})
+const typeValues = []
+fromBackend.concat(fromLabels).forEach(function (v) { if (v && typeValues.indexOf(v) < 0) typeValues.push(v) })
+if (typeValues.length >= 6) ok('E. 收集到类型值 ' + typeValues.join(' / '))
+else bad('E. 类型值收集失败（只拿到 ' + typeValues.join(' / ') + '）')
+for (const v of typeValues) {
+  if (('type.' + v) in allKeys) ok('E. 有词条 type.' + v)
+  else bad('E. 缺词条 type.' + v + ' —— 类型徽章会把这串字直接印到界面上')
+}
+
+// ---------- C. 硬编码中文基线封顶 ----------
+const BASELINE = {
+  'index.js': 25, // #459 由 index.js 拆出装配：主文件留 25 串（合计 26，与原持平）
+  'panelAssembly.js': 1, // #459 由 index.js 拆出：装配分得 1 串（host.call 不可用透传文案）
+  'kernel/icons.js': 8,
+  'kernel/router.js': 1,
+  'kernel/store-switch.js': 5, // #455 K2 由 store.js 拆出：切换确认分得 5 串（合计 6，与原持平，注释已剥离不计）
+  'kernel/store-snapshot.js': 1, // #455 K2 由 store.js 拆出：存储核分得 1 串（makeStore 外观词）
+  'kernel/actions.js': 1, // 2026-08-28 #317 wizard 队列与提交闭环：RPC 业务失败透传文案，按封顶章程登记（0→1）
+  'kernel/api-new-session.js': 5, // #457 由 api.js 拆出时漏登记：占位四式比对 2 串 + 动作推断关键词 3 串（均为代码比对非界面文案，界面文案一律走 tr()；#746 确认零新增）
+  'kernel/slotRenderer-queue.js': 6, // #454 K1 由 slotRenderer.js 拆出：打开入口与守门分得 6 串（合计 44，较原 46 缩小，注释已剥离不计）
+  'kernel/slotRenderer-repo-sync.js': 2, // #454 K1 由 slotRenderer.js 拆出：同步流程分得 2 串
+  'kernel/slotRenderer-modal-view.js': 32, // #454 K1 由 slotRenderer.js 拆出：弹窗本体分得 36 串；#698 把表单字段那一串渲染搬去 kernel/modal-fields.js，随之带走 4 串（36→32）
+  'kernel/modal-fields.js': 4, // #698 由 slotRenderer-modal-view.js 拆出：表单字段那串渲染带过来的 4 个中文串（与上一行是同一批，不是新增文案）
+  'panel/Dock.js': 21,
+  'panel/OverlayGate.js': 1, // #646 页内浮窗退役：Overlay.js 已删，门控逻辑仍在（这个文件 1 串）
+  'statusbar/StatusBar.js': 16, // B1 #460 由 StatusBar.js 拆出选后端：主文件留 16 串（合计 17，与原持平）
+  'statusbar/StatusBackend.js': 1, // B1 #460 由 StatusBar.js 拆出：选后端确认分得 1 串（已选择透传文案）
+  'views/ChecksTab.js': 0, // #529 环境检查标题诊断卡动作全部改走中英文词条：文件中不再留中文字符串，基线收紧到 0 防回退
+  'views/IssueDetail.js': 13, // #463 V3 由 IssueDetail.js 拆出评论区：主文件留 13 串；#693 把「无描述」等正文/评论兜底文案改走词条，由 16 收紧到 13
+  'views/IssueDetailComments.js': 12, // #463 V3 由 IssueDetail.js 拆出：评论区分得 12 串；#693 「无评论」改走词条后由 13 收紧到 12
+  'views/NoRepoCard.js': 15,
+  'views/SettingsPage.js': 12, // #463 V3 由 SettingsPage.js 拆出后端总览：主文件留 12 串
+  'views/SettingsWorkspaces.js': 0, // #528 总览文案全部改走中英文词条：文件中不再留中文字符串，基线收紧到 0 防回退
+  'views/shared/BackendSelector.js': 10,
+  'views/shared/ChainRenderer.js': 0, // #529 链标题按钮表单全部改走中英文词条：文件中不再留中文字符串，基线收紧到 0 防回退
+  'views/shared/SwitchConfirmModal.js': 5,
+}
+function stripComments(buf) { return buf.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '') }
+const SRC_CLIENT = path.join(root, 'src', 'client')
+const seen = {}
+;(function walk(dir) {
+  for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+    const p = path.join(dir, e.name)
+    if (e.isDirectory()) walk(p)
+    else if (e.name.endsWith('.js')) inspect(p)
+  }
+})(SRC_CLIENT)
+function inspect(file) {
+  const rel = path.relative(SRC_CLIENT, file).replace(/\\/g, '/')
+  if (rel === 'kernel/locale.js' || rel === 'kernel/locale-panel.js' || rel === 'kernel/locale-flow.js' || rel === 'kernel/locale-word.js' || rel === 'kernel/locale-labels.js' || rel === 'kernel/locale-pages.js' || rel === 'kernel/locale-vcwrite.js' || rel === 'kernel/locale-skilldesc.js' || rel === 'kernel/locale-skilldetail.js' || rel === 'kernel/locale-cards.js' || rel === 'kernel/prompts.js' || rel === 'kernel/prompts-skills.js' || rel === 'kernel/prompts-setup.js') return // #458 K5：三片段与合并器均为双语定义本体，不入清单（与原 locale.js 同口径）；#621 的 locale-labels.js、#690 的 locale-pages.js 同为此类；#698 又把 prompts-skills.js（installSkills 的中英长句）与 prompts-setup.js（决策的说明）单列成片，同样不入清单；技能详情页的 locale-skilldetail.js 与卡片族的 locale-cards.js 也是双语定义本体，同口径排除（2026-10-10）
+  const buf = stripComments(fs.readFileSync(file, 'utf8'))
+  let count = 0
+  const strRe = /'((?:[^'\\\n]|\\.)*)'|"((?:[^"\\\n]|\\.)*)"/g
+  let m
+  while ((m = strRe.exec(buf)) !== null) {
+    const s = m[1] !== undefined ? m[1] : m[2]
+    if (/[\u4e00-\u9fff]/.test(s)) count++
+  }
+  seen[rel] = count
+  const cap = BASELINE[rel]
+  if (cap === undefined) { if (count > 0) bad('C. 清单外新增 CJK 字符串 ' + rel + '=' + count); else ok('C. 干净 ' + rel) }
+  else if (count <= cap) ok('C. 基线内 ' + rel + ' ' + count + '<=' + cap)
+  else bad('C. 超基线 ' + rel + ' ' + count + '>' + cap)
+}
+for (const k of Object.keys(BASELINE)) if (!(k in seen)) ok('C. 基线项已清零（请从清单删除）' + k)
+
+// ---------- D. 双产物关键键 ----------
+for (const a of ['client.js', path.join('package', 'lib', 'client.js')]) {
+  let buf
+  try { buf = fs.readFileSync(path.join(root, a), 'utf8') } catch (e) { bad('D. 产物缺失 ' + a); continue }
+  const miss = REQUIRED.filter(function (k) { return buf.indexOf("'" + k + "'") < 0 })
+  if (!miss.length) ok('D. 产物关键键齐备 ' + a)
+  else bad('D. 产物缺键 ' + a + ' -> ' + miss.join(','))
+}
+
+// ---------- A2. 词条结构（#818 补：上面那条 A 只数「键名出现两次」，数不出「值放错层」）----------
+// 为什么另开这一条：把中文值写在 zh 字典**外面**、英文值写在 en 里，键名照样出现两次 ——
+//   A 那条会绿，而界面上 tr('vc.xxx') 印出来的是键名本身。#818 实施时真发生过一次：
+//   94 条新词条的中文全落在 zh 外面，A 报「全部键 zh/en 双语各出现一次」、T3 门禁也全绿，
+//   是独立验收者按对象结构复现出来的。所以这里不再数数，直接 import 词条模块看结构。
+const LOCALE_STRUCT_FILES = [
+  'src/client/kernel/locale-panel.js',
+  'src/client/kernel/locale-flow.js',
+  'src/client/kernel/locale-word.js',
+  'src/client/kernel/locale-labels.js',
+  'src/client/kernel/locale-pages.js',
+  'src/client/kernel/locale-vcwrite.js', // #842 写操作那一族的词条（单独一份片段）
+  'src/client/kernel/locale-skilldesc.js', // #879 技能描述 27 条中英词条（单独一份片段）
+]
+;(async function structuralCheck() {
+  const { pathToFileURL } = require('url')
+  const problems = []
+  for (const rel of LOCALE_STRUCT_FILES) {
+    let mod
+    try { mod = await import(pathToFileURL(path.join(root, rel)).href) } catch (e) { problems.push(rel + ' 载入失败：' + ((e && e.message) || e)); continue }
+    for (const name of Object.keys(mod)) {
+      const dict = mod[name]
+      if (!dict || typeof dict !== 'object' || !dict.zh || !dict.en) continue
+      const top = Object.keys(dict).filter(function (k) { return k !== 'zh' && k !== 'en' })
+      if (top.length) problems.push(rel + ' 的 ' + name + ' 顶层多出 ' + top.length + ' 个键（例如 ' + top.slice(0, 3).join('、') + '）：这些键不在 zh/en 字典里，界面上会直接把键名印出来')
+      const zk = Object.keys(dict.zh), ek = Object.keys(dict.en)
+      const onlyZh = zk.filter(function (k) { return !(k in dict.en) })
+      const onlyEn = ek.filter(function (k) { return !(k in dict.zh) })
+      if (onlyZh.length) problems.push(rel + ' 的 ' + name + ' 只在 zh 里有 ' + onlyZh.length + ' 个键（例如 ' + onlyZh.slice(0, 3).join('、') + '）')
+      if (onlyEn.length) problems.push(rel + ' 的 ' + name + ' 只在 en 里有 ' + onlyEn.length + ' 个键（例如 ' + onlyEn.slice(0, 3).join('、') + '）')
+    }
+  }
+  if (!problems.length) ok('A2. 词条结构：每个字典只有 zh/en 两个顶层键，且两边键集合相等')
+  else for (const p of problems.slice(0, 6)) bad('A2. ' + p)
+  console.log(failed ? '\n[locale-completeness] FAIL (' + passed + ' passed)' : '\n全部通过 · locale 完整性门禁生效 (' + passed + ')')
+  process.exit(failed ? 1 : 0)
+})()

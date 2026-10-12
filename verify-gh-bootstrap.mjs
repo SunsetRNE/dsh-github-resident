@@ -90,6 +90,11 @@ const DL = `http://127.0.0.1:${PORT}/dl/`;
 process.env.DSH_GH_RELEASE_API = `http://127.0.0.1:${PORT}/repos/cli/cli/releases/latest`;
 process.env.DSH_GH_DOWNLOAD_BASE = `http://127.0.0.1:${PORT}/dl`;
 
+// 比对真实环境的前后状态；系统本来未安装 gh 也必须保持未安装。
+const realCacheExistedBefore = await exists(path.join(REAL_HOME, '.dsh', 'gh-cli'));
+const systemGhExistedBefore = await exists('/usr/bin/gh');
+const systemGhPackageBefore = await sh('dpkg', ['-l', 'gh'], { PATH: REAL_PATH });
+
 // ---- 装进假 ctx ----
 const mod = await import(new URL('./plugin.js', import.meta.url).href);
 const tools = new Map();
@@ -153,9 +158,10 @@ check('E status 报 layer=plugin-cache', status.layer === 'plugin-cache', status
 check('E status 报的是自带路径', status.path === FAKE_GH_BIN, status.path);
 
 // ---- F. 真 HOME / 真 PATH 未被触碰 ----
-check('F 真 HOME 未被动', await exists(path.join(REAL_HOME, '.dsh', 'gh-cli')) === false || true, 'ok');
-check('F 真 gh 仍在 PATH 之外未受影响', await exists('/usr/bin/gh'), '/usr/bin/gh 仍在');
-check('F 系统 gh 未被 dpkg 动过', (await sh('dpkg', ['-l', 'gh'], { PATH: REAL_PATH })).out.includes('ii  gh'), 'dpkg 记录仍在');
+check('F 真 HOME 的 gh 缓存存在状态未变', await exists(path.join(REAL_HOME, '.dsh', 'gh-cli')) === realCacheExistedBefore);
+check('F 系统 gh 的存在状态未变', await exists('/usr/bin/gh') === systemGhExistedBefore, { existedBefore: systemGhExistedBefore });
+const systemGhPackageAfter = await sh('dpkg', ['-l', 'gh'], { PATH: REAL_PATH });
+check('F 系统 gh 的 dpkg 记录未变', JSON.stringify(systemGhPackageAfter) === JSON.stringify(systemGhPackageBefore));
 
 // ---- G/H. 子进程场景：fetch 兜底路径 与 加载期自动落地 ----
 // 子进程里 os.homedir 猴补要早于 import，所以另起进程跑，主进程只读结论。

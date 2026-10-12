@@ -1,18 +1,38 @@
 {
   "name": "@local/dsh-github-resident-v2",
-  "version": "1.6.4",
+  "version": "1.7.0",
   "private": true,
   "type": "module",
-  "description": "Resident GitHub identity plus multi-repository commit, push and pull-request tools for this harness profile, with a consent-gated one-file-per-repo Git repository registry. Resolves (and when absent, lands) its own gh CLI so no manual gh install is required.",
+  "description": "常驻 GitHub 身份与多仓库提交/推送/PR 工具（含自带 gh 落地与需用户同意的仓库登记文件库），并内置 Matt Skills Deck 的 issue / map 管理工具、随包 27 个技能、右侧栏面板与合并后的设置页。",
   "exports": {
-    ".": "./plugin.js",
-    "./client": "./client.js",
+    ".": "./dist/host.js",
+    "./client": "./dist/client.js",
+    "./tools": "./deck/src/host/platform/deckToolsRow.js",
+    "./deck": "./deck/src/host/index.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json",
     "./locale/*.json": "./locale/*.json"
   },
   "files": [
+    "dist/",
     "plugin.js",
-    "client.js",
+    "bundled-skills/",
+    "deck/src/",
+    "deck/scripts/",
+    "deck/package/lib/",
+    "deck/package/bundled-skills/",
+    "deck/package/cordis.patch.yml",
+    "deck/package/LICENSE",
+    "deck/package/README.md",
+    "deck/package/CHANGELOG.md",
+    "deck/label-color-core/src/",
+    "deck/refresh-core/",
+    "deck/version-control-core/",
+    "deck/config-store-core/",
+    "deck/tsconfig.client.json",
+    "deck/LICENSE",
+    "deck/README.md",
+    "deck/CHANGELOG.md",
     "cordis.patch.yml",
     "locale/*.json",
     "icon.svg",
@@ -21,7 +41,15 @@
     "README.en.md"
   ],
   "scripts": {
-    "verify": "bash verify-bundle.sh && node verify-logout.mjs && node verify-registry.mjs && node verify-ui.mjs && node verify-gh-bootstrap.mjs && node verify-update-gc.mjs && node verify-real-artifact.mjs",
+    "build": "node tools/merge/build-merge-entries.ts --build-all",
+    "build:deck": "node deck/scripts/build.mjs",
+    "build:entries": "node tools/merge/build-merge-entries.ts",
+    "check:entries": "node tools/merge/build-merge-entries.ts --check",
+    "verify": "npm run check:entries && npm run verify:merge && npm run verify:resident && npm run verify:deck",
+    "verify:resident": "bash verify-bundle.sh && node verify-logout.mjs && node verify-registry.mjs && node verify-ui.mjs && node verify-gh-bootstrap.mjs && node verify-update-gc.mjs && node verify-real-artifact.mjs",
+    "verify:deck": "node deck/scripts/verify-chain.js",
+    "verify:merge": "node tests/merge/run.mjs",
+    "verify:deck:smoke": "cd deck && node tests/smoke-client.test.js && node tests/smoke-host.test.js && node tests/smoke-host-dispatch.test.js && node tests/smoke-render.test.js && node tests/smoke-naming-persistence.test.js && node tests/smoke-comment-passthrough.test.js",
     "verify:bundle": "bash verify-bundle.sh",
     "verify:logout": "node verify-logout.mjs",
     "verify:registry": "node verify-registry.mjs",
@@ -30,9 +58,28 @@
     "verify:artifact": "node verify-real-artifact.mjs",
     "verify:update": "node verify-update-gc.mjs"
   },
+  "dependencies": {
+    "dsh-plugin-update": "^0.13.0",
+    "yaml": "^2.9.1"
+  },
+  "devDependencies": {
+    "@deepseek-ai/dsh-tools": "0.2.0-rc.2",
+    "dsh-log": "^0.2.2",
+    "esbuild": "^0.28.2",
+    "jsdom": "^30.0.1",
+    "playwright": "^1.62.1",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "typescript": "7.0.2",
+    "typescript-ast": "npm:typescript@5.6.3"
+  },
+  "engines": {
+    "node": ">=22.18.0",
+    "dsh": ">=0.2.0-rc.2"
+  },
   "meta": {
-    "title": "GitHub Resident",
-    "description": "Resident GitHub credentials with multi-repository commit, push and PR tools, a consent-gated Git repository registry file library, self-contained gh provisioning, and full credential teardown."
+    "title": "GitHub Resident + Skills Deck",
+    "description": "Resident GitHub credentials with multi-repository commit, push and PR tools, a consent-gated Git repository registry file library, self-contained gh provisioning, full credential teardown — plus the Matt Skills Deck issue/map toolkit, 27 bundled skills and the right-side panel."
   },
   "icon": "./icon.svg",
   "dsh": {

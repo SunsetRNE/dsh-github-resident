@@ -1,0 +1,71 @@
+node_modules/
+*.tgz
+
+# 临时工作区/调测产物（不入库）
+.scratch/
+_research/
+.bug-investigate/
+.tmp-screenshots/
+.dsh-waystation-cache/
+.dsh-mattskillsdeck-cache/
+.tmp/
+.dsh-tmp/
+
+# 根级临时件（debug / 抓取 / 原始导出）
+/dsh-market-registry.csv
+/dsh-market-registry.json
+/issue-path-mechanisms-r3.html
+/issue15-body.md
+/issue110_raw.md
+/111-body-100.md
+/111-body-raw.md
+/.tmp-*
+# 发布窗口落盘（状态文件加转录日志）：Agent 轮询用，不入库
+**/.tmp-publish-*.log
+**/.tmp-publish-status.json
+**/.tmp-publish-all-status.json
+/package.json
+/package-lock.json
+/tests/playwright-e2e-probe.js
+/cyberpunk-tokyo-16x9-4k.png
+
+# ===== T0 可变产物（G1 决策 A）：一源出两物，产物由 scripts/build.mjs 生成，不入库 =====
+/client.js
+/host.js
+/package/lib/
+/package/scripts/
+# 入口件绑定包也是纯生成物（scripts/bundle-update-entry.mjs 每次构建按已安装更新包现场生成），
+# 同样不入库：它是上游包产物的逐字拷贝，入库的副本会被集中扫描器误判成硬编码密钥，
+# 而构建时重新生成的那份不在扫描范围内。改这个文件等于改上游原文，一律不改，只重新生成。
+/scripts/generated/updateEntryPanel.bundle.js
+
+# 日志系统的编译产物不入库（发布前跑 build:dsh-log 本地生成，本地保留文件可跑测试）
+/packages/dsh-log/dist/
+
+# 日志系统的发布向导与发布记录只留本地（都是证据类文件，不进发布包也不入库）
+/packages/dsh-log/publish-wizard.sh
+/packages/dsh-log/notes-publish-drill.md
+
+# 更新包的编译产物不入库（发布前跑 build:dsh-plugin-update 本地生成，本地保留文件可跑测试）
+/packages/dsh-plugin-update/dist/
+
+# 更新包集成工具自查用的临时落点（跑包内测试时生成，不入库）
+/packages/dsh-plugin-update/tests/.tmp/
+
+# ===== teach skill — teaching workspace (ignored, durable across resets) =====
+/MISSION.md
+/RESOURCES.md
+/NOTES.md
+/GLOSSARY.md
+/lessons/
+/reference/
+/learning-records/
+/assets/teach.css
+/assets/quiz.js
+.env
+.wizard-release.env
+
+# 本地工作目录：明确不入库（多人协作的工作树、本地运行日志、视觉路由产物）
+/.worktrees/
+/logs/
+/.dsh-vision-router/

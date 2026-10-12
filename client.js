@@ -103,6 +103,11 @@ window.__ModuleLoader__.load({
     const { Badge, Btn, Section } = uiParts('ghr');
     const { Badge: RegBadge, Btn: RegBtn, Section: RegSection } = uiParts('ghreg');
 
+    // 合并装配层（tools/merge/client-factory.ts）在 apply 时把 Deck 半边交出来的可复用设置区块
+    // 作为第二参数传进来：这个页面据此渲染 Deck 的工作区总览 / 诊断日志 / 作者链接与唯一的更新入口。
+    // 组件与状态都来自 Deck 半边本人（同一份 store 与宿主电话），这里只负责摆位置，不复制持久化逻辑。
+    let deckEmbed = null;
+
     /** 一个条目 → 一行人类可读的绑定描述（无远端时明说）。 */
     function remoteText(e) {
       if (!e || !e.hasRemote) return '无远端';
@@ -167,6 +172,13 @@ window.__ModuleLoader__.load({
       const rows = (lib && lib.entries) || [];
       const shown = onlyMissing ? rows.filter((e) => !e.hasRemote) : rows;
 
+      // Deck 半边交出来的可复用设置区块与唯一更新入口（由合并装配层在 apply 时传入）。
+      // 缺了只少这一部分，不影响登记库本身——「未建库 / 未登录 / 非 Git 仓库」也能看到 Deck 状态。
+      const deck = deckEmbed;
+      const DeckSections = deck && deck.SettingsSections;
+      const DeckUpdate = deck && deck.UpdateEntry;
+      const deckVersion = deck && deck.version ? String(deck.version) : '—';
+
       const tone = reg.phase !== 'ok' ? 'var(--dsw-alias-state-error-primary)'
         : granted && hasLib ? 'var(--dsw-alias-state-success-primary)'
           : granted ? 'var(--dsw-alias-state-idle-primary)'
@@ -222,6 +234,14 @@ window.__ModuleLoader__.load({
               lib && lib.libraryExists && lib.entries && lib.entries.length
                 ? String((lib.entries.slice().sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')))[0] || {}).updatedAt || '—').replace('T', ' ').slice(0, 19)
                 : '—')),
+          // ⑧（合并后）：更新入口唯一落点 + 行为说明。挂在版本号旁，不在别处再放第二个入口。
+          h('div', { className: 'ghreg-row' }, h('span', { className: 'ghreg-k' }, '插件版本'),
+            h('span', { className: 'ghreg-v', style: { display: 'inline-flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' } },
+              deckVersion,
+              DeckUpdate ? h(DeckUpdate, null) : null)),
+          h('p', { className: 'ghreg-answer' },
+            '更新：检查更新走宿主 dsh-plugin-update 的入口件（就是上面那颗按钮）。'
+            + '本包是本地 private 包，更新走源码重新安装/构建，不从 npm 更新，也不会装回旧的 Deck 包。'),
           reg.phase === 'unsupported'
             ? h('p', { className: 'ghreg-answer' }, '宿主未重启：/registry 返回 404，重启后刷新本页。')
             : null,
@@ -236,7 +256,7 @@ window.__ModuleLoader__.load({
             h(RegBtn, { onClick: () => post(API + '/registry/build?consent=1', 'build'), disabled: busy === 'build' },
               busy === 'build' ? '建立中…' : (granted ? '重建登记库' : '建立登记库')),
             h(RegBtn, { ghost: true, onClick: () => post(API + '/registry/plan', 'plan'), disabled: busy === 'plan' }, '看计划'),
-            h(RegBtn, { ghost: true, onClick: () => post(API + '/registry/build?rescan=1&consent=1', 'rescan'), disabled: busy === 'rescan' || !granted }, '刷新'),
+            h(RegBtn, { ghost: true, onClick: () => post(API + '/registry/build?rescan=1&consent=1', 'rescan'), disabled: busy === 'rescan' || !granted }, '刷新登记快照'),
             h(RegBtn, { ghost: true, onClick: () => post(API + '/registry/verify', 'verify'), disabled: busy === 'verify' || !hasLib }, '对账'),
             h(RegBtn, { ghost: true, onClick: () => { setArmPurge(false); post(API + '/registry/revoke', 'revoke'); }, disabled: busy === 'revoke' || !granted }, '撤销许可'),
             armPurge
@@ -274,6 +294,14 @@ window.__ModuleLoader__.load({
           REG_COMMANDS.map((row) => h('div', { className: 'ghreg-cmd', key: row[0] },
             h('div', null, h('code', null, row[0]), h('em', null, row[1])),
             h(RegBtn, { ghost: true, onClick: () => flash('丢进会话：' + row[0]) }, '用法')))),
+
+        // ⑦⑨⑩（合并后）：Deck 设置页的区块整段搬来这里，组件与状态仍是 Deck 自己那一份
+        // （工作区总览「刷新工作区总览」只读；诊断开关与日志四键走同一个宿主实现；作者链接默认折叠）。
+        h(RegSection, { title: '插件设置（Deck 并入）' },
+          DeckSections
+            ? h(DeckSections, null)
+            : h('p', { className: 'ghreg-answer', style: { marginTop: 0 } },
+              'Deck 半边未随本页加载：登记库状态照常，Deck 的工作区总览与诊断开关暂时不可见。')),
       );
     }
 
@@ -415,7 +443,10 @@ window.__ModuleLoader__.load({
 
     return {
       inject: ['slots'],
-      apply(ctx) {
+      // 合并装配层（tools/merge/client-factory.ts）先跑 Deck 半边，再把它的 mergeEmbed 作为第二参数传进来。
+      // 单独运行本半边（旧形态）时 embed 为空——两个设置页仍然注册，只是没有 Deck 区块。
+      apply(ctx, embed) {
+        deckEmbed = embed && (embed.SettingsSections || embed.UpdateEntry) ? embed : null;
         ctx.slots.inject('settings.section', () => ctx.slots.register({
           name: 'settings.section',
           id: 'github-resident',

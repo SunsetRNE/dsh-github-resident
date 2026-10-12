@@ -1,0 +1,25 @@
+# 合并包自己的 workspace/配置层（tools/merge 与门禁都读这里）。
+#
+# 为什么 packages 为空、不把 deck/ 纳进来：
+#   deck/ 自带 package.json 的 "prepare": "node scripts/build.mjs"。一旦 deck/ 成为根 workspace
+#   的成员包，`pnpm install` 就会在根安装过程中自动跑 deck 构建 —— 那是「安装顺手改产物」，
+#   本仓纪律是安装只装依赖、构建一律显式跑（npm run build / node deck/scripts/build.mjs）。
+#   所以 deck/ 明确不进 packages；它需要的包（esbuild/typescript/dsh-log/dsh-plugin-update…）
+#   由根 devDependencies/dependencies 提供，deck 内的 createRequire 会向上解析到根 node_modules。
+packages: []
+
+# pnpm 10 默认拦截依赖的安装脚本。esbuild 的 postinstall 只做二进制校验/兜底下载，
+# 平台二进制由 optionalDependencies 提供；这里显式放行，避免「装了但二进制没落地」。
+allowBuilds:
+  esbuild: true
+
+# 从 pnpm store 向 node_modules 落文件时用「真拷贝」而不是硬链接。
+#
+# 为什么必须这样（实测，不是偏好）：本机是 Android + PRoot（PROOT_L2S_DIR=/…/linux/ubuntu/.l2s）。
+# PRoot 的 link2symlink 会把硬链接文件执行时替换成 /.l2s/.l2s.<hash>-execXXXX.000Y 桩，
+# 于是该进程的 /proc/self/exe 指向 /.l2s/…，任何「按自己可执行文件位置找同目录资源」的原生程序都会找错目录。
+# 具体症状：typescript@7.0.2 的原生 tsc（tsgo）报
+#   panic: bundled: /.l2s/lib.d.ts does not exist; this executable may be misplaced
+# 把同一份包 cp -rL 成真文件后再执行就正常（Version 7.0.2），确认是硬链接桩而非 TS 本身的问题。
+# copy 只是慢一点，产物与行为不变；在普通 Linux 主机上同样可用（想换回 hardlink 可删掉本项）。
+packageImportMethod: copy
