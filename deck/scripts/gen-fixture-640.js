@@ -17,9 +17,14 @@
 //   D:\DeepseekHarness\resources\app.asar 里那一条（用 scripts/asar-extract.js 零依赖抽出来，只读）。
 //   全都拿不到时本文件**不再直接抛错**，改为「跳过不生成」，由门禁打印 SKIP 并按严格开关
 //   DSWS_REQUIRE_HOST_BUNDLE 决定算不算失败——量尺必须来自外部，宁可不跑也不自证。
-const fs = require('fs');
-const path = require('path');
-const root = path.resolve(__dirname, '..');
+// 2026-10-12：本仓 package.json 是 "type": "module"，这个文件原来用 require/__dirname/module.exports，
+//   在 ESM 下加载即报 "require is not defined in ES module scope"，verify-640 连量尺都拿不到。
+//   改成 ESM：node 内建模块用 import，asar-extract.js 仍是 CJS，借 createRequire 抓一个。
+import fs from 'node:fs';
+import path from 'node:path';
+import { createRequire } from 'node:module';
+const require = createRequire(import.meta.url);
+const root = path.resolve(import.meta.dirname, '..');
 const statusSrc = fs.readFileSync(path.join(root, 'src/client/statusbar/StatusBar.js'), 'utf8');
 const stylesSrc = fs.readFileSync(path.join(root, 'src/client/kernel/styles.js'), 'utf8');
 
@@ -212,10 +217,11 @@ const html = '<!doctype html><html><head><meta charset=utf-8><style>' + css + '<
 const outDir = path.join(root, 'tests/fixtures');
 fs.mkdirSync(outDir, { recursive: true });
 const outFile = path.join(outDir, '640-dock-width-repro.html');
+let result; // 两条路各给一份：跳过那份与写入那份（门禁读 default 导出）
 if (!HOST_BUNDLE) {
   // 跳过：不生成 fixture、不抛错。门禁会打印 SKIP，并按 DSWS_REQUIRE_HOST_BUNDLE 决定算不算失败。
   console.log('SKIP gen-fixture-640：本机找不到宿主原文产物，这次不生成 fixture（量尺必须是外部的，不能用插件自己的公式自证）。');
-  module.exports = {
+  result = {
     skipped: true, tried: HOST_CANDIDATES, asarPath: ASAR_PATH, asarEntry: ASAR_ENTRY,
     asarDisabled: ASAR_DISABLED, hostBundle: null, fixture: outFile,
   };
@@ -224,10 +230,12 @@ if (!HOST_BUNDLE) {
   console.log('fixture written', path.relative(root, outFile), html.length, 'bytes');
   console.log('  量尺（宿主原文，' + hostFrom + '）：root「' + hostRootPad + '」 + card「' + hostCardWidth + ' / ' + hostCardMax + '」');
   console.log('  被测（插件真源）：width「' + geomWidth + '」，maxWidth「' + geomMaxWidth + '」，padding「' + geomPad + '」');
-  module.exports = {
+  result = {
     skipped: false, hostBundle: HOST_BUNDLE, hostBundleFrom: hostFrom, tried: HOST_CANDIDATES,
     hostBundleText: bundle, hostRootRule: hostRootRule, hostCardRule: hostCardRule,
     pickRule: pickRule, pickByClassName: pickByClassName, pickByFormula: pickByFormula,
     fixture: outFile,
   };
 }
+
+export default result

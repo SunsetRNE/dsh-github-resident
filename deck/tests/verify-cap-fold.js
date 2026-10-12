@@ -519,8 +519,11 @@ const server = createServer((req, res) => {
 })
 await new Promise((r) => server.listen(0, '127.0.0.1', r))
 const origin = 'http://127.0.0.1:' + server.address().port + '/'
-const { chromium } = await import('playwright')
-const browser = await chromium.launch({ headless: true })
+// 真渲染通道：容器没有 /dev/shm、playwright 默认那一版 revision 也不在缓存里，
+// 统一走 lib/chromium-channel.js（要换浏览器设 DSH_TEST_CHROMIUM）。
+const { launchChromium, describeChannel } = await import('./lib/chromium-channel.js')
+console.log(describeChannel())
+const browser = await launchChromium()
 try {
   const page = await browser.newPage({ viewport: { width: 1100, height: 700 } })
   const pageErrors = []

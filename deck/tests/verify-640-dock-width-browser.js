@@ -18,15 +18,22 @@
 //   打印 SKIP + 试过的路径清单、exit 0；设 DSWS_REQUIRE_HOST_BUNDLE=1 时跳过算失败（exit 1），防假绿。
 //
 // 依赖：playwright（含 chromium）。无登录令牌也能跑（纯本地 fixture 页）。
-const { chromium } = require('playwright');
-const path = require('path');
-const fs = require('fs');
+// 2026-10-12：本仓 package.json 是 "type": "module"，这个文件却用 require/import.meta.dirname —— 一跑就
+//   `ReferenceError: require is not defined in ES module scope`，真渲染层根本摸不到。这里改成 ESM，
+//   只为取回 ../scripts/gen-fixture-640.js（它还是 CJS）留一个 createRequire。
+// 通道：真浏览器统一走 lib/chromium-channel.js（容器没有 /dev/shm，且 playwright 默认那一版
+//   revision 不在缓存里；要换浏览器设 DSH_TEST_CHROMIUM）。
+import { createRequire } from 'node:module';
+import path from 'node:path';
+import fs from 'node:fs';
+import { launchChromium, describeChannel } from './lib/chromium-channel.js';
+const require = createRequire(import.meta.url);
 
 let ok = true;
 const check = function (cond, msg) { console.log((cond ? 'PASS ' : 'FAIL ') + msg); if (!cond) ok = false; };
 
 (async () => {
-  const gen = require(path.resolve(__dirname, '../scripts/gen-fixture-640.js'));
+  const gen = (await import('../scripts/gen-fixture-640.js')).default;
   // 找不到宿主原文产物：本门没有外部量尺就无从判定 —— 按仓库惯例「明确跳过」，不报红也不装绿。
   //   设 DSWS_REQUIRE_HOST_BUNDLE=1 时跳过算失败（给 CI 或严格场合用）。
   if (gen.skipped) {
@@ -50,10 +57,11 @@ const check = function (cond, msg) { console.log((cond ? 'PASS ' : 'FAIL ') + ms
   try { gen.pickByFormula(gen.hostBundleText, function (b) { return /这份产物里绝不可能出现的算式/.test(b); }, '输入卡外层'); } catch (e) { threw = true; }
   check(threw, 'A5 反证：算式特征找不到时报错（不是随便返回第一条）');
 
-  const fixture = path.resolve(__dirname, 'fixtures/640-dock-width-repro.html');
+  const fixture = path.resolve(import.meta.dirname, 'fixtures/640-dock-width-repro.html');
   if (!fs.existsSync(fixture)) { console.error('fixture 缺失：' + fixture); process.exit(1); }
 
-  const browser = await chromium.launch({ headless: true });
+  console.log(describeChannel());
+  const browser = await launchChromium();
   const page = await browser.newPage({ viewport: { width: 2500, height: 1600 } });
   await page.goto('file:///' + fixture.replace(/\\/g, '/'));
   const rows = await page.evaluate(() => {

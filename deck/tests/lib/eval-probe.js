@@ -28,7 +28,7 @@
  */
 'use strict'
 
-const vm = require('node:vm')
+import vm from 'node:vm'
 
 /**
  * 把参数拆成一个个独立名字。
@@ -75,4 +75,8 @@ function evalInWindow(dom, code) {
   return vm.runInContext(String(code), dom.getInternalVMContext())
 }
 
-module.exports = { compileFn, evalWithScope, evalInWindow }
+// 2026-10-12：本仓 package.json 是 "type": "module"，.js 一律按 ESM 加载 ——
+//   `module.exports = ...` 在这条链上并不成立（import 侧报 "does not provide an export named"）。
+//   改成 ESM 具名导出；仍用 `require('./lib/eval-probe.js')` 的老调用方（verify-587 / 626 / 653 等）
+//   是另一处 ESM/CJS 混用欠账，不在本票动。
+export { compileFn, evalWithScope, evalInWindow }

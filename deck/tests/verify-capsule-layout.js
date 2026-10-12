@@ -279,8 +279,11 @@ html,body{margin:0;background:#10131a;color:#e6edf3;font-family:system-ui,-apple
 const server = createServer((req, res) => { res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' }); res.end(html) })
 await new Promise((r) => server.listen(0, '127.0.0.1', r))
 const origin = 'http://127.0.0.1:' + server.address().port + '/'
-const { chromium } = await import('playwright')
-const browser = await chromium.launch({ headless: true })
+// 真渲染通道：容器没有 /dev/shm、playwright 默认那一版 revision 也不在缓存里，
+// 统一走 lib/chromium-channel.js（要换浏览器设 DSH_TEST_CHROMIUM）。
+const { launchChromium, describeChannel } = await import('./lib/chromium-channel.js')
+console.log(describeChannel())
+const browser = await launchChromium()
 
 const ratioOf = function (gaps) {
   const vals = gaps.map((g) => g.gap).filter((v) => v >= 0)
