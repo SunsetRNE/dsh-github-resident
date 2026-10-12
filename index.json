@@ -1,13 +1,19 @@
 {
   "schema": "dsh-github-resident/artifact-index",
   "schemaVersion": 1,
-  "package": "local-dsh-github-resident-v2",
-  "version": "1.7.0",
-  "publishedAt": "2026-10-12T19:37:54Z",
-  "sourceRef": "ea64262",
-  "tarball": "local-dsh-github-resident-v2-1.7.0.tgz",
-  "url": "https://sunsetrne.github.io/dsh-github-resident/local-dsh-github-resident-v2-1.7.0.tgz",
-  "sha256": "8a54ead3a214f78bef18722f3029d7ff0cb828a63f58d54039496cac55cf350d",
-  "bytes": 2797119,
-  "install": "npm i https://sunsetrne.github.io/dsh-github-resident/local-dsh-github-resident-v2-1.7.0.tgz"
+  "package": "@sunsetrne/dsh-github-resident-v2",
+  "version": "1.7.2",
+  "publishedAt": "2026-10-12T19:54:33Z",
+  "sourceRef": "ea64262 + 改名/版本(1.7.2) + merge 版本守卫修复(工作区未提交)",
+  "tarball": "sunsetrne-dsh-github-resident-v2-1.7.2.tgz",
+  "url": "https://sunsetrne.github.io/dsh-github-resident/sunsetrne-dsh-github-resident-v2-1.7.2.tgz",
+  "sha256": "8c523f67a984f4dec5e9c05aad8d2122914860b2d00de143fa9f9b5748318dd6",
+  "bytes": 2797396,
+  "install": "npm i https://sunsetrne.github.io/dsh-github-resident/sunsetrne-dsh-github-resident-v2-1.7.2.tgz",
+  "previous": [
+    {
+      "version": "1.7.0",
+      "tarball": "local-dsh-github-resident-v2-1.7.0.tgz"
+    }
+  ]
 }
