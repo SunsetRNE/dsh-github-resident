@@ -51,8 +51,17 @@ check(mod.DEFAULT_TARGET_PACKAGE === MERGED, 'DEFAULT_TARGET_PACKAGE = 合并包
 check(mod.DEFAULT_TARGET_PACKAGE !== mod.LEGACY_DECK_PACKAGE_NAME, 'DEFAULT_TARGET_PACKAGE 不是旧 Deck 包名')
 check(mod.__updateTargetsLegacyDeck({ targetPackageName: mod.DEFAULT_TARGET_PACKAGE }) === false, '漂移守卫：当前配置不指向旧 Deck')
 check(mod.__updateTargetsLegacyDeck({ targetPackageName: mod.LEGACY_DECK_PACKAGE_NAME }) === true, '漂移守卫：真指回旧 Deck 时返回 true（守卫本身有效）')
-check(mod.UPDATE_LOCAL_PRIVATE === false && typeof mod.UPDATE_LOCAL_PRIVATE_HINT === 'string' && mod.UPDATE_LOCAL_PRIVATE_HINT.includes(MERGED), '发布状态（v1.7.1 起可 npm 安装）与如实文案都导出了：' + mod.UPDATE_LOCAL_PRIVATE_HINT)
-check(String(mod.UPDATE_LOCAL_PRIVATE_HINT).includes('npm'), '文案明说更新走 npm')
+// 走仓库发（票 #14）：默认更新源 = 自托管源根（用户站根），不是 npm 官方源；尾斜杠必须在。
+check(typeof mod.SELF_HOSTED_REGISTRY === 'string', 'SELF_HOSTED_REGISTRY 是字符串（实际 ' + String(mod.SELF_HOSTED_REGISTRY) + '）')
+check(mod.SELF_HOSTED_REGISTRY.endsWith('/'), '自托管源根以 / 结尾（实际 ' + mod.SELF_HOSTED_REGISTRY + '）')
+check(mod.SELF_HOSTED_REGISTRY.startsWith('https://'), '自托管源根走 https')
+check(!String(mod.SELF_HOSTED_REGISTRY).includes('registry.npmjs.org'), '默认源不是 npm 官方源')
+check(mod.__effectiveRegistry({}) === mod.SELF_HOSTED_REGISTRY, '没有环境变量时走自托管源根')
+check(mod.__effectiveRegistry({ DSH_UPDATE_REGISTRY: 'https://example.com/' }) === 'https://example.com/', '环境变量可覆盖更新源')
+check(mod.__effectiveRegistry({ DSH_UPDATE_REGISTRY: '   ' }) === mod.SELF_HOSTED_REGISTRY, '空环境变量不吃掉默认值')
+check(mod.__effectiveRegistry({}).endsWith('/'), '生效源同样以 / 结尾（少了它请求根本不发）')
+check(mod.UPDATE_LOCAL_PRIVATE === false && typeof mod.UPDATE_LOCAL_PRIVATE_HINT === 'string' && mod.UPDATE_LOCAL_PRIVATE_HINT.includes(MERGED), '发布状态与如实文案都导出了：' + mod.UPDATE_LOCAL_PRIVATE_HINT)
+check(String(mod.UPDATE_LOCAL_PRIVATE_HINT).includes(String(mod.SELF_HOSTED_REGISTRY).replace(/\/$/, '')), '文案里的源与 SELF_HOSTED_REGISTRY 同源（不能各写各的）')
 
 section('3) 真建一次电话处理器：更新包接受我们的 pluginId（含 scope 的包名会被拒）')
 const quietLog = { fire: () => {} }

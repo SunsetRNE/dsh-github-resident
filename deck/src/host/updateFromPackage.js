@@ -77,7 +77,7 @@ export const UPDATE_RELEASE_CHANNEL = 'prerelease'
 //      只收回调、不收文案）。
 export const UPDATE_LOCAL_PRIVATE = false
 export const UPDATE_LOCAL_PRIVATE_HINT =
-  '本包（' + MERGED_PACKAGE_NAME + '）自 v1.7.1 起可从 npm 安装更新；本地源码构建仍可用源码重装覆盖。'
+  '本包（' + MERGED_PACKAGE_NAME + '）走自己的仓库站点（https://sunsetrne.github.io/）安装更新；npm 上不发布，本地源码构建仍可用源码重装覆盖。'
 // 更新包自报的默认目标包名（要检查更新的那个包是谁）与官方源与默认前缀，
 // 供门禁核对「默认值与旧字面一致」。取值只从已安装包的配置面算出来，不在本文件另写字面。
 // targetPackageName 必须显式传——不传就落到更新包自带的旧 Deck 默认值，那是「装回旧 Deck」的根因。
@@ -87,8 +87,28 @@ const __pkgDefaults = resolveUpdateConfig({
   targetPackageName: MERGED_PACKAGE_NAME,
 })
 export const DEFAULT_TARGET_PACKAGE = __pkgDefaults.targetPackageName
+/** 更新包自带的官方源（仅作参考/回退说明用；**本包实际默认不走它**，见下一条）。 */
 export const DEFAULT_REGISTRY = __pkgDefaults.registryUrl
 export const DEFAULT_PREFIX = __pkgDefaults.prefix
+
+/**
+ * 本包真正用的默认更新源：**自己的仓库站点**（`SunsetRNE.github.io` 用户站根）。
+ *
+ * 为什么不是 npm 官方源：本包没发到 npm（票 #14 实测 `latest` 返回 404），查它只会得到 check-failed；
+ * 而我们的仓库站点正好把 `/<包名>/latest` 与 `/<包名>/-/…tgz` 摆在**源 origin 的根**上 ——
+ * 那正是 dsh-plugin-update 的强校验形状（项目站带 `/dsh-github-resident/` 前缀会判 `invalid-release`）。
+ * 尾斜杠**必须**在：少了它 URL 会拼成 `…:端口%40scope…`，请求根本不发出去（票 #14 实测）。
+ *
+ * 换源（自定义域名 / 小中转 / 临时自测）不必改代码：
+ *   `DSH_UPDATE_REGISTRY=https://example.com/`（同样必须以 `/` 结尾）。
+ */
+export const SELF_HOSTED_REGISTRY = 'https://sunsetrne.github.io/'
+
+/** 生效的更新源：环境变量优先，其次自托管源根。调门禁与隔离用例可注入替身。 */
+export function __effectiveRegistry(env) {
+  const raw = env && typeof env.DSH_UPDATE_REGISTRY === 'string' ? env.DSH_UPDATE_REGISTRY.trim() : ''
+  return raw || SELF_HOSTED_REGISTRY
+}
 
 /**
  * 漂移守卫：一份更新配置是不是又指回了旧 Deck。
@@ -302,14 +322,18 @@ export function createUpdatePhoneHandlers(deps = {}) {
   // unknown-profile。这里把这份代码自己的版本（构建横幅）如实交出去；调用方自己给了就一个字不动。
   const callerGaveVersion = Object.prototype.hasOwnProperty.call(callerOverrides, 'runningVersion')
   const detectedVersion = callerGaveVersion ? null : __runningVersionOf(dirname(fileURLToPath(import.meta.url)))
+  // 更新源同理：调用方没给就补自托管源根（走仓库发，不依赖 npm 凭据）。给了就一个字不动。
+  const callerGaveRegistry = Object.prototype.hasOwnProperty.call(callerOverrides, 'registryUrl')
+  const detectedRegistry = callerGaveRegistry ? null : __effectiveRegistry(process.env)
   const effectiveOverrides = {
     ...callerOverrides,
     ...(detectedProfileDir ? { profileDir: detectedProfileDir } : {}),
     ...(detectedVersion ? { runningVersion: detectedVersion } : {}),
+    ...(detectedRegistry ? { registryUrl: detectedRegistry } : {}),
   }
   const key = `${ctx ? 'ctx' : 'noctx'}\0${deps.logCtx ? 'log' : 'nolog'}\0${
     callerGaveProfileDir ? 'callerProfile' : detectedProfileDir ? `detected:${detectedProfileDir}` : 'noProfile'
-  }`
+  }\0${callerGaveRegistry ? 'callerRegistry' : detectedRegistry ? `registry:${detectedRegistry}` : 'noRegistry'}`
   if (phones && phonesKey === key) return phones
   const holder = createHostUpdate(
     {
