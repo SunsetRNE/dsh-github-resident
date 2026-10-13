@@ -47,6 +47,56 @@ function run(cmd, args, opts = {}) {
   });
 }
 
+/**
+ * 有界子进程 —— **读到结论即结算**，不等子进程（也不等它的孙进程）收场。
+ *
+ * 为什么不用 `run()` + `timeout` 就完事：`execFile` 自带 timeout 在 Node 24 上实测**确实会收场**，
+ * 但「父进程能不能结算」这件事不该寄在子进程那一侧 —— 实测同一个挂死的桩，纯 `spawn` + `kill`
+ * 的父进程永远等不到 'close'（孙进程攥着 stdout/stderr 管道就不放），也就是本仓踩过的
+ * 「子进程不退」：不退出、不报错、不结束的第三态。
+ *
+ * 所以这里到点就自己结算，并显式放掉我们这端的管道：上界由**这一段代码**保证，不由子进程的收场保证。
+ * 返回形状与 run() 一致，只多一个 `timedOut`。
+ */
+function runBounded(cmd, args, { timeoutMs, graceMs = 500 } = {}) {
+  return new Promise((resolve) => {
+    let settled = false;
+    let timer = null;
+    let child = null;
+    const finish = (out) => {
+      if (settled) return;
+      settled = true;
+      if (timer) clearTimeout(timer);
+      resolve(out);
+    };
+    const releasePipes = () => {
+      try { if (child && child.stdout) child.stdout.destroy(); } catch { /* 已经关了 */ }
+      try { if (child && child.stderr) child.stderr.destroy(); } catch { /* 已经关了 */ }
+      try { if (child && child.unref) child.unref(); } catch { /* 已经跑完 */ }
+    };
+    try {
+      child = execFile(cmd, args, { maxBuffer: 8 * 1024 * 1024, timeout: timeoutMs, killSignal: 'SIGKILL' }, (err, stdout, stderr) => {
+        finish({
+          code: err ? (typeof err.code === 'number' ? err.code : 1) : 0,
+          stdout: stdout || '',
+          stderr: stderr || '',
+          ...(err && typeof err.code === 'string' ? { errno: err.code } : {}),
+          ...(err && err.signal ? { signal: err.signal } : {}),
+          timedOut: Boolean(err && err.signal === 'SIGKILL'),
+        });
+      });
+    } catch (err) {
+      finish({ code: 1, stdout: '', stderr: String(err), timedOut: false });
+      return;
+    }
+    timer = setTimeout(() => {
+      try { child.kill('SIGKILL'); } catch { /* 可能已经死了 */ }
+      releasePipes();
+      finish({ code: 1, stdout: '', stderr: '', signal: 'SIGKILL', timedOut: true });
+    }, timeoutMs + graceMs);
+  });
+}
+
 function git(repo, args) {
   return run('git', ['-C', repo, ...args]);
 }
@@ -208,6 +258,28 @@ async function api(token, method, urlPath, body) {
     json = { raw: text.slice(0, 500) };
   }
   return { status: res.status, ok: res.ok, json };
+}
+
+/**
+ * 一行摘要：多行输出取第一条非空行。**保留原文**，不翻译成泛化错误 ——
+ * 「两条路都没成」时，调用方要能分别读出 gh / GitHub 各自说了什么（票「gh_pr … 回落 gh pr create」R4）。
+ */
+function firstLine(s, max = 300) {
+  const line = String(s == null ? '' : s).split('\n').map((x) => x.trim()).filter(Boolean)[0] || '';
+  return line.slice(0, max);
+}
+
+/**
+ * 回落路径的上界：默认 60s（开 PR 要出网，链路慢也得给足），但**绝不无限等**。
+ * `DSH_GH_PR_TIMEOUT_MS` 可覆盖（门禁把它压到秒级好做「挂死」用例）；下限 200ms、上限 10 分钟，
+ * 免得配出一个等于没有上界的值。调用时才读，改环境不用重载插件。
+ */
+const PR_FALLBACK_DEFAULT_MS = 60 * 1000;
+
+function prFallbackTimeoutMs() {
+  const raw = Number(process.env.DSH_GH_PR_TIMEOUT_MS);
+  const ms = Number.isFinite(raw) && raw > 0 ? Math.round(raw) : PR_FALLBACK_DEFAULT_MS;
+  return Math.min(600 * 1000, Math.max(200, ms));
 }
 
 // ---------- 仓库发现与状态 ----------
@@ -1000,7 +1072,10 @@ const TOOL_PROTOCOL = [
   { name: 'gh_sync', kind: 'write', required: [], optional: ['root', 'depth', 'message', 'push', 'dry_run'], returns: ['root', 'scanned', 'committed', 'failed', 'results'] },
   // 2026-10-14：成功分支实际还回 authSource / message / errors（源码里确有），表里一直漏着 —— 顺手改真。
   // 同一类漂移（表说少了）以前没人管：门禁只钉 gh_protocol 自己的 returns，不钉每工具那行。
-  { name: 'gh_pr', kind: 'write', required: ['repo', 'title'], optional: ['head', 'base', 'body', 'draft'], returns: ['ok', 'number', 'url', 'base', 'status', 'authSource', 'message', 'errors'] },
+  // 2026-10-14（票「gh_pr 共用解析器 + 回落 gh pr create」）：加 `authPath`（这次走哪条路）与 `attempts`
+  // （逐路记 `{ path, ok, reason }`：两条路都没成时，两边的**原始原因**都在，不吞成一句泛化错误）。
+  // 这一行从此也有门禁钉着（tests/merge/host/pr-fallback.test.mjs）——两条路都能离线实跑，不必再手抄。
+  { name: 'gh_pr', kind: 'write', required: ['repo', 'title'], optional: ['head', 'base', 'body', 'draft'], returns: ['ok', 'number', 'url', 'base', 'status', 'authSource', 'authPath', 'message', 'errors', 'attempts'] },
   { name: 'gh_cli_install', kind: 'write', required: [], optional: ['force', 'prefer'], returns: ['installed', 'layer', 'path', 'version', 'attempts'] },
   { name: 'gh_cli_auth_web', kind: 'write', required: [], optional: ['open_browser'], returns: ['ok', 'version', 'ghLayer', 'ghPath', 'user_code', 'verification_uri', 'opened', 'note', 'logTail'] },
   { name: 'gh_cli_status', kind: 'read', required: [], optional: [], returns: ['version', 'authenticated', 'activeAccount', 'gitCredentialHelper', 'hosts'] },
@@ -1296,9 +1371,66 @@ export function apply(ctx) {
     }),
   }));
 
+  /**
+   * 回落的第二条路：把活交给 gh 自己（票「gh_pr 共用解析器 + 回落 gh pr create」）。
+   *
+   * 边界（ADR 0001）：**不读** gh 的 hosts.yml、不猜它是谁 —— 只借它的落点（绝对路径）与执行，
+   * 身份仍归 gh 自己。所以回执里 `authSource` 如实是 `(none)`，路由事实由 `authPath` 承担。
+   * 有界：到上界即结算并如实报「超时」（用 runBounded，不等子进程退出）；只**尽力而为**，不重试。
+   */
+  async function createPrViaGhCli({ repo, title, head, base, body, draft }) {
+    // 读路径（install:false）：不因为「要开个 PR」就顺手下载几十 MB 的 gh，更不在写动作里出网。
+    const gh = await resolveGh({ install: false });
+    if (!gh.ok || !gh.path) {
+      return {
+        ok: false,
+        layer: gh.layer || 'none',
+        reason: '这台机器上没有能跑的 gh（' + String(gh.note || '系统层与插件缓存都没有') + '）'
+          + '；要走这条回落得先跑 gh_cli_install 落地一份',
+      };
+    }
+
+    const argv = ['pr', 'create', '--repo', repo, '--title', title];
+    if (head) argv.push('--head', head);
+    if (base) argv.push('--base', base);
+    // `--body` **一律显式给**（哪怕空串）：不给的话 gh 在非交互环境下直接失败
+    // （实测 gh 2.102：`must provide --title and --body (or --fill …) when not running interactively`），
+    // 于是这条回落每次都会撞在同一句话上。给空串既跳过它的提问，也不会去开编辑器。
+    argv.push('--body', body);
+    if (draft) argv.push('--draft');
+
+    const boundMs = prFallbackTimeoutMs();
+    const r = await runBounded(gh.path, argv, { timeoutMs: boundMs });
+    if (r.timedOut) {
+      return {
+        ok: false, timedOut: true, layer: gh.layer, boundMs,
+        reason: 'gh pr create 在 ' + boundMs + 'ms 上界内没有返回（超时）—— '
+          + 'PR 可能已经开了、也可能没有，**结果未知**，别盲目重试（可以先 gh pr list 看一眼）',
+      };
+    }
+    const output = (r.stdout || '') + '\n' + (r.stderr || '');
+    if (r.code !== 0) {
+      return {
+        ok: false, layer: gh.layer,
+        reason: 'gh pr create 退出码 ' + r.code + '：' + (firstLine(output) || '(没有输出)'),
+      };
+    }
+    const url = (output.match(/https?:\/\/\S*\/pull\/\d+/) || [])[0] || null;
+    // 退出码 0 但没有 PR 链接 = 假结论（桩、被包装的 gh、被 alias 的 gh 都可能这样）——不许当成功。
+    if (!url) {
+      return {
+        ok: false, layer: gh.layer,
+        reason: 'gh pr create 退出码 0，但输出里没有 PR 链接（不敢当成功）：' + (firstLine(output) || '(没有输出)'),
+      };
+    }
+    return { ok: true, layer: gh.layer, url, number: Number((url.match(/\/pull\/(\d+)/) || [])[1]) || null };
+  }
+
   ctx.tools.register(textTool({
     toolName: 'gh_pr',
-    description: 'Open a pull request through the GitHub REST API using the resident token. Defaults base to the repository default branch when the head branch is the current one.',
+    description: 'Open a pull request. Uses the resident token through the GitHub REST API when one resolves; '
+      + 'when no token is available anywhere (env / plugin state / gh CLI hosts.yml) it falls back to `gh pr create` '
+      + 'with the resolved gh binary, bounded by a timeout. The receipt reports which path was taken via `authPath`.',
     parameters: {
       repo: { type: 'string', required: true, description: 'Repository as owner/name.' },
       title: { type: 'string', required: true, description: 'Pull request title.' },
@@ -1312,35 +1444,87 @@ export function apply(ctx) {
       const state = await readState();
       const resolvedToken = await resolveIdentity(state);
       const token = resolvedToken.token;
-      if (!token) {
+      const repo = String(args.repo || '');
+      const title = String(args.title || '');
+      const attempts = [];
+
+      if (token) {
+        // 有 token：行为与从前完全一致（REST 优先，且**不**多跑一个 gh 子进程）。
+        // 回落只在「三处都解析不到 token」时发生：REST 自己失败（401/403/网络）**不改道** ——
+        // 否则会拿另一个身份去执行，把权限问题与网络问题掩盖成路由问题。
+        let base = args.base;
+        if (!base) {
+          const info = await api(token, 'GET', `/repos/${repo}`);
+          base = info.ok ? info.json.default_branch : undefined;
+        }
+        const created = await api(token, 'POST', `/repos/${repo}/pulls`, {
+          title: String(args.title || ''),
+          head: String(args.head || ''),
+          base,
+          body: String(args.body || ''),
+          draft: Boolean(args.draft),
+        });
+        attempts.push({
+          path: 'token-rest',
+          ok: created.ok,
+          reason: created.ok
+            ? null
+            : 'HTTP ' + created.status + (created.json && created.json.message ? '：' + created.json.message : ''),
+        });
         return {
-          ok: false,
-          error: '三处都没有可用身份（env GH_TOKEN/GITHUB_TOKEN、插件 state、gh CLI 的 hosts.yml）；'
-            + '可以先跑 gh_resident_login 落一份 state，或 gh auth login 让 gh CLI 自己登。',
+          ok: created.ok,
+          authPath: 'token-rest',            // 这次走的是哪条路（一眼可见，不用猜）
+          status: created.status,
+          base,
+          number: created.json.number ?? null,
+          url: created.json.html_url ?? null,
+          authSource: resolvedToken.source,   // 这次用的是哪条身份路径（回执里如实标出来）
+          message: created.ok ? null : (created.json.message ?? null),
+          errors: created.json.errors ?? null,
+          attempts,
         };
       }
-      const repo = String(args.repo || '');
-      let base = args.base;
-      if (!base) {
-        const info = await api(token, 'GET', `/repos/${repo}`);
-        base = info.ok ? info.json.default_branch : undefined;
-      }
-      const created = await api(token, 'POST', `/repos/${repo}/pulls`, {
-        title: String(args.title || ''),
+
+      // 三处都没有 token → 尽力而为的第二条路。**不是**隐式重试：上面那条路失败时已经 return 了。
+      const restReason = '三处都没有可用身份（env GH_TOKEN/GITHUB_TOKEN、插件 state、gh CLI 的 hosts.yml）';
+      attempts.push({ path: 'token-rest', ok: false, reason: restReason });
+      const fallback = await createPrViaGhCli({
+        repo, title,
         head: String(args.head || ''),
-        base,
+        base: args.base,
         body: String(args.body || ''),
         draft: Boolean(args.draft),
       });
+      attempts.push({ path: 'gh-cli-fallback', ok: fallback.ok, reason: fallback.ok ? null : fallback.reason });
+
+      if (fallback.ok) {
+        return {
+          ok: true,
+          authPath: 'gh-cli-fallback',
+          status: null,                     // HTTP 状态码是 REST 那条路的事，这里如实留空
+          base: args.base ?? null,          // 没给 base 就交给 gh 自己判定（不为它再发一次 REST 请求）
+          number: fallback.number,
+          url: fallback.url,
+          authSource: '(none)',             // 回落不解析 gh 自己的凭据（ADR 0001 边界）；路由事实看 authPath
+          message: null,
+          errors: null,
+          attempts,
+        };
+      }
       return {
-        ok: created.ok,
-        status: created.status,
-        base,
-        number: created.json.number ?? null,
-        url: created.json.html_url ?? null,
-        authSource: resolvedToken.source,   // 这次用的是哪条身份路径（回执里如实标出来）
-        message: created.ok ? null : (created.json.message ?? null),
-        errors: created.json.errors ?? null,
+        ok: false,
+        authPath: 'gh-cli-fallback',
+        status: null,
+        base: null,
+        number: null,
+        url: null,
+        authSource: '(none)',
+        message: null,
+        errors: null,
+        attempts,
+        error: '两条路都没有成功 —— REST：' + restReason
+          + '；gh CLI 回落：' + fallback.reason
+          + '。可以 gh_resident_login 落一份 state，或 gh_cli_install / gh auth login 让 gh CLI 自己能跑。',
       };
     },
   }));

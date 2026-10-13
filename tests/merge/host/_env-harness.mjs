@@ -44,6 +44,8 @@ const FIXED_CANDIDATES = {
   curl: ['/usr/bin/curl', '/usr/local/bin/curl', '/bin/curl'],
   git: ['/usr/bin/git', '/usr/local/bin/git', '/bin/git'],
   sh: ['/bin/sh', '/usr/bin/sh'],
+  // 「挂死」的 gh 桩要用它（夹具的 PATH 只有夹具 bin，裸 `sleep` 在桩里根本找不到）
+  sleep: ['/bin/sleep', '/usr/bin/sleep'],
 }
 
 export function whichReal(name) {
@@ -62,6 +64,7 @@ export const REAL = {
   git: whichReal('git'),
   sh: whichReal('sh'),
   curl: whichReal('curl'),
+  sleep: whichReal('sleep'),
 }
 
 const writeStub = (dir, name, body) => {
@@ -71,6 +74,74 @@ const writeStub = (dir, name, body) => {
   return p
 }
 
+/** gh 桩记 argv 的分隔行（写与读共用一处，别在两处各写一遍格式）。 */
+export const GH_CALL_MARKER = '---CALL---'
+
+/** 读回 gh 桩记下的 argv：每次调用一组参数，空参数也保留。 */
+export function readGhCalls(logFile) {
+  if (!existsSync(logFile)) return []
+  const lines = readFileSync(logFile, 'utf8').split('\n')
+  if (lines.length && lines[lines.length - 1] === '') lines.pop()
+  const calls = []
+  let cur = null
+  for (const line of lines) {
+    if (line === GH_CALL_MARKER) { cur = []; calls.push(cur); continue }
+    if (cur) cur.push(line)
+  }
+  return calls
+}
+
+/**
+ * gh 桩的脚本正文（2026-10-14，票「gh_pr 共用解析器 + 回落 gh pr create」扩的口子）。
+ *
+ * 不传 `prCreate` 时行为**与从前逐字节一致**：任何 argv 都只回版本行、exit 0（既有用例靠它）。
+ * 传了才多认 `pr create`，四种形态：
+ *   `{ url }`                     → 回 PR 链接、exit 0（回落成功的那一格）
+ *   `{ exit: 1, stderr: '…' }`    → 按 gh 失败的样子回（原文进 stderr + 退出码）
+ *   `{ noUrl: true }`             → exit 0 但**不回链接**（「exit 0 却没有 URL」这类假结论）
+ *   `{ hang: true, hangMs, exec }`→ 挂住不回；默认**留一个攥着管道的孙进程**（正是本仓「子进程不退」
+ *                                   那个坑的形状），`exec: true` 才让 shell 自己被替换掉（无孙进程）。
+ * `log` 给绝对路径时，桩把每次 argv 追写进去 —— 「有 token 时 gh 没被 fork」这条判据靠它。
+ *
+ * 桩里**不写裸命令名**：夹具的 PATH 只有夹具 bin，`sleep` 一律走绝对路径。
+ */
+export function ghStubScript({ log = null, prCreate = null } = {}) {
+  const q = (s) => "'" + String(s).replace(/'/g, "'\\''") + "'"
+  const L = ['#!/bin/sh']
+  if (log) {
+    // 一次调用一组、一个参数一行（空参数也要留得住：`--body ''` 是「不给 gh 开交互式编辑器」的判据）。
+    L.push(`printf '%s\\n' ${q(GH_CALL_MARKER)} >> ${q(log)}`)
+    L.push(`for a in "$@"; do printf '%s\\n' "$a" >> ${q(log)}; done`)
+  }
+  L.push('case "$1" in')
+  L.push('  --version) echo "gh version 9.9.9 (HARNESS-STUB)"; exit 0 ;;')
+  if (prCreate) {
+    L.push('  pr)')
+    L.push('    if [ "$2" = "create" ]; then')
+    if (prCreate.hang) {
+      const secs = Math.max(5, Math.round((prCreate.hangMs || 30000) / 1000))
+      const sleeper = (REAL.sleep ? q(REAL.sleep) : 'sleep') + ' ' + secs
+      // 非 exec：shell 等孙进程 —— 父进程把 shell SIGKILL 掉之后，孙进程仍攥着 stdout/stderr 管道
+      L.push('      ' + (prCreate.exec ? 'exec ' : '') + sleeper)
+      if (!prCreate.exec) L.push('      exit 0')
+    } else if (prCreate.noUrl) {
+      L.push('      exit 0')
+    } else if (prCreate.exit && prCreate.exit !== 0) {
+      if (prCreate.stderr) L.push('      echo ' + q(prCreate.stderr) + ' 1>&2')
+      L.push('      exit ' + Number(prCreate.exit))
+    } else {
+      L.push('      echo ' + q(prCreate.url || 'https://github.com/example/repo/pull/1'))
+      L.push('      exit 0')
+    }
+    L.push('    fi')
+    L.push('    ;;')
+  }
+  L.push('esac')
+  L.push('echo "gh version 9.9.9 (HARNESS-STUB)"')
+  L.push('exit 0')
+  return L.join('\n') + '\n'
+}
+
 /**
  * 造一个假 HOME（含自己的 bin）。返回：
  *   home  —— 假 HOME 路径（模块的 ~/.dsh / ~/.config 都落在这里）
@@ -78,8 +149,11 @@ const writeStub = (dir, name, body) => {
  *   path  —— **只用 bin** 的 PATH（门禁不看这台机器有什么；「无 curl」就是这么造的）
  *   pathWithReal —— bin + 真实 PATH（少数需要真环境的场景用）
  *   hasRealCurl / hasRealGit —— 如实报夹具里到底是不是真货
+ *   ghLog —— gh 桩记 argv 的落点（只有传了 `gh: { log: true }` 才有；读它用 `readGhCalls`）
+ *
+ * `gh`：富桩选项（见 ghStubScript）：`{ log, prCreate }` —— 用它才认 `pr create`。
  */
-export function makeHome(tag, { files = {}, withGh = false, ghExits = 0, withCurl = true, withGit = true, withSh = true } = {}) {
+export function makeHome(tag, { files = {}, withGh = false, ghExits = 0, withCurl = true, withGit = true, withSh = true, gh = null } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'dsh-env-' + tag + '-'))
   const bin = join(home, '.bin')
   mkdirSync(bin, { recursive: true })
@@ -90,10 +164,15 @@ export function makeHome(tag, { files = {}, withGh = false, ghExits = 0, withCur
     if (real) { try { symlinkSync(real, join(bin, name)) } catch { /* 已有同名 */ } }
     else writeStub(bin, name, '#!/bin/sh\nexit 127\n')
   }
+  // gh 桩记 argv 的落点：`gh.log === true` 时默认落在 home 里（调用方拿得到，见返回值 `ghLog`）。
+  const ghLog = gh && gh.log ? (typeof gh.log === 'string' ? gh.log : join(home, 'gh-argv.log')) : null
   if (withGh) {
-    writeStub(bin, 'gh', ghExits === 0
-      ? '#!/bin/sh\necho "gh version 9.9.9 (HARNESS-STUB)"\n'
-      : '#!/bin/sh\nexit 1\n')
+    // `gh` 选项给的是「会答 pr create / 会记 argv / 会挂死」的富桩；不给就还是老的两行桩。
+    writeStub(bin, 'gh', gh
+      ? ghStubScript({ ...gh, log: ghLog })
+      : (ghExits === 0
+        ? '#!/bin/sh\necho "gh version 9.9.9 (HARNESS-STUB)"\n'
+        : '#!/bin/sh\nexit 1\n'))
   }
   if (withCurl) {
     if (REAL.curl) { try { symlinkSync(REAL.curl, join(bin, 'curl')) } catch { /* 已有同名 */ } }
@@ -111,6 +190,7 @@ export function makeHome(tag, { files = {}, withGh = false, ghExits = 0, withCur
     pathWithReal: bin + ':' + String(process.env.PATH || ''),
     hasRealCurl: Boolean(REAL.curl),
     hasRealGit: Boolean(REAL.git),
+    ghLog,
     cleanup: () => { try { rmSync(home, { recursive: true, force: true }) } catch { /* 收尾 */ } },
   }
 }
@@ -118,6 +198,8 @@ export function makeHome(tag, { files = {}, withGh = false, ghExits = 0, withCur
 /** 要注入/恢复的环境键（含小写变体：代理变量两种写法都有人用）。 */
 const ENV_KEYS = [
   'HOME', 'PATH', 'DSH_GH_DATA_DIR', 'GIT_CONFIG_GLOBAL', 'GH_TOKEN', 'GITHUB_TOKEN',
+  // 回落路径的上界（票「gh_pr … 回落 gh pr create」）：门禁把它压到秒级，好做「挂死」用例。
+  'DSH_GH_PR_TIMEOUT_MS',
   'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'all_proxy', 'no_proxy',
 ]
 

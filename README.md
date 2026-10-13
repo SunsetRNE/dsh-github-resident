@@ -61,7 +61,7 @@
 
 ### 5. 后台工具
 
-`gh_resident_status` / `gh_repos` / `gh_commit` / `gh_sync`（多仓库一次性提交推送）/ `gh_pr`（REST 开 PR）/ `gh_cli_status` / `gh_cli_setup_git`。工具返回值统一带 `{ protocol, ok }` 信封，失败也保留原字段。
+`gh_resident_status` / `gh_repos` / `gh_commit` / `gh_sync`（多仓库一次性提交推送）/ `gh_pr`（REST 开 PR，三处无 token 时回落 `gh pr create`）/ `gh_cli_status` / `gh_cli_setup_git`。工具返回值统一带 `{ protocol, ok }` 信封，失败也保留原字段。
 
 ### 6. 仓库登记文件库：先问用户，再落盘
 
@@ -153,7 +153,7 @@ bash tools/account-ui-check.sh
 | `gh_repo_registry_list` | 读登记文件库：有哪些仓库、是否绑远端、host/owner、ahead-behind | 是 |
 | `gh_commit` | 单仓库 `add -A` + `commit` + 可选 `push` | 否 |
 | `gh_sync` | 根目录下**所有脏仓库**一次性提交 + 推送（支持 `dry_run`） | 否 |
-| `gh_pr` | 走 REST API 开 PR | 否 |
+| `gh_pr` | 开 PR：有 token 走 REST，三处都无 token 时回落 `gh pr create`（有界；回执用 `authPath` 标出走的哪条路） | 否 |
 | `gh_cli_install` | 让 gh 可用（系统层优先，否则自带落地） | 否 |
 | `gh_cli_resolve` | 只读报告 gh 的分层来源与架构串 | 是 |
 | `gh_cli_version` | 版本体检 + 自更新 | 否 |

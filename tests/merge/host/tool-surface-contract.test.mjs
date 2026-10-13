@@ -316,7 +316,9 @@ if (surface) {
   }
 
   note('本段只覆盖**能在合成环境里离线跑**的工具与动作（gh_protocol / gh_identity 四动作 / gh_env_probe）：')
-  note('写工具与需要出网的工具跑不了离线，这条判据不覆盖它们 —— 不假装覆盖。')
+  note('需要出网的工具跑不了离线，这条判据不覆盖它们 —— 不假装覆盖。')
+  note('gh_pr 自《gh_pr 共用解析器 + 回落 gh pr create》起两条路都能离线实跑（REST 换掉 fetch、回落走 gh 桩），'
+    + '它的「协议表那行 == 真回执键并集」由 tests/merge/host/pr-fallback.test.mjs 钉住，不在这里重复。')
 }
 
 summary()

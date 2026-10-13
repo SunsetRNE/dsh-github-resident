@@ -53,7 +53,7 @@ A resident GitHub identity bundle for [DeepSeek Harness](https://github.com/deep
 
 ### 5. Background tools
 
-`gh_resident_status` / `gh_repos` / `gh_commit` / `gh_sync` (commit+push every dirty repo in one pass) / `gh_pr` (REST) / `gh_cli_status` / `gh_cli_setup_git`. Every result carries a `{ protocol, ok }` envelope; failures keep the original fields.
+`gh_resident_status` / `gh_repos` / `gh_commit` / `gh_sync` (commit+push every dirty repo in one pass) / `gh_pr` (REST, with a `gh pr create` fallback when no token resolves) / `gh_cli_status` / `gh_cli_setup_git`. Every result carries a `{ protocol, ok }` envelope; failures keep the original fields.
 
 ## Tools
 
@@ -64,7 +64,7 @@ A resident GitHub identity bundle for [DeepSeek Harness](https://github.com/deep
 | `gh_repos` | enumerate git repos under a root with branch / dirty count / ahead-behind | yes |
 | `gh_commit` | one repo: `add -A` + `commit` + optional `push` | no |
 | `gh_sync` | **every dirty repo** under a root: commit + push in one pass (`dry_run` supported) | no |
-| `gh_pr` | open a PR through the REST API | no |
+| `gh_pr` | open a PR: REST when a token resolves, else a bounded `gh pr create` fallback (`authPath` reports the path taken) | no |
 | `gh_cli_install` | make gh available (system layer first, else land a copy) | no |
 | `gh_cli_resolve` | read-only report of the gh layer, path and arch string | yes |
 | `gh_cli_version` | version check + self-update | no |

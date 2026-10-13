@@ -28,6 +28,9 @@ const GATES = {
   audit: 'tests/merge/host/identity-audit.test.mjs',
   surface: 'tests/merge/host/tool-surface.test.mjs',
   probe: 'tests/merge/host/env-probe.test.mjs',
+  // 票「gh_pr 共用解析器 + 回落 gh pr create」：自己造 gh 桩与假 fetch，全离线；
+  // 放进矩阵是为了证明它**不看跑门禁这台机器**有什么（no-gh 那一格照样绿）。
+  pr: 'tests/merge/host/pr-fallback.test.mjs',
 }
 
 /**
@@ -43,6 +46,7 @@ const TABLE = [
       { gate: 'audit', expect: 'pass' },
       { gate: 'surface', expect: 'pass' },
       { gate: 'probe', expect: 'pass' },
+      { gate: 'pr', expect: 'pass' },
     ],
   },
   {
@@ -53,6 +57,7 @@ const TABLE = [
       { gate: 'audit', expect: 'pass' },
       { gate: 'surface', expect: 'pass' },
       { gate: 'probe', expect: 'pass', why: '这一格正是「无 gh 也要如实」的主判据' },
+      { gate: 'pr', expect: 'pass', why: '回落那半自己造 gh 桩：外层没有 gh 也得照样绿（门禁不看这台机器）' },
     ],
   },
   {
@@ -63,6 +68,7 @@ const TABLE = [
       { gate: 'audit', expect: 'pass' },
       { gate: 'surface', expect: 'pass' },
       { gate: 'probe', expect: 'skip', why: '身份判据在 resolver/audit 两格；探针不读 hosts.yml，没有新信息' },
+      { gate: 'pr', expect: 'pass', why: '本票的目标环境就是它（有 gh、三处无 token）' },
     ],
   },
   {
