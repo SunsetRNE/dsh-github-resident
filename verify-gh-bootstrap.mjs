@@ -205,7 +205,16 @@ async function runChild(mode, extraEnv) {
       DSH_GH_RELEASE_API: process.env.DSH_GH_RELEASE_API, DSH_GH_DOWNLOAD_BASE: process.env.DSH_GH_DOWNLOAD_BASE,
     },
     maxBuffer: 8 * 1024 * 1024,
-  }, (e, out, err) => res({ code: e ? 1 : 0, out: out || '', err: String(err || '') })));
+    // 子进程上界：它真的会去走 gh 的落地路径。原来没有 timeout，子进程卡在网络等待上时
+    // 父进程只能无限期挂着 —— 挂的又是发布门禁的一环，整条流水线会静默地耗掉几十分钟。
+    // 超时按失败记账（下方把 TIMEOUT 写进 err，重试回执里看得见），不吞成通过。
+    timeout: 90_000,
+    killSignal: 'SIGKILL',
+  }, (e, out, err) => res({
+    code: e ? 1 : 0,
+    out: out || '',
+    err: (e && e.killed) ? ('TIMEOUT(' + (e.signal || '') + ') ' + String(err || '')) : String(err || ''),
+  })));
   const line = r.out.split('\n').find((l) => l.startsWith('__CHILD__')) || '';
   if (!line) console.error('[child ' + mode + '] code=' + r.code + ' out=' + r.out.slice(0, 300) + ' err=' + r.err.slice(0, 300));
   const parsed = line ? JSON.parse(line.slice(9)) : null;

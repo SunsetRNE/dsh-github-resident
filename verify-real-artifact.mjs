@@ -8,7 +8,9 @@
  * 用法: node verify-real-artifact.mjs            # 默认严格：拿不到真包即失败（「没验」不许报成「通过」）
  *       DSH_GH_TAG=v2.102.0 node verify-real-artifact.mjs
  *       DSH_GH_STRICT=0 node verify-real-artifact.mjs   # 显式放宽：断网时 SKIP 并以 0 退出（本机开发用）
- */
+ *
+ * 上界与重试（2026-10-13 补）：两条网络调用都带 AbortSignal 超时；资产下载重试至多 3 次，
+ * 用了几次写进回执的 downloadAttempts。抖动不该报成「抽取器坏了」，但三次都拿不到仍然判红。 */
 import os from 'node:os';
 import path from 'node:path';
 import zlib from 'node:zlib';
@@ -21,6 +23,13 @@ import { execFile } from 'node:child_process';
 const STRICT = process.env.DSH_GH_STRICT !== '0';
 const ARCH = ({ x64: 'amd64', arm64: 'arm64', arm: 'armv6', ia32: '386' })[process.arch] || process.arch;
 const UA = { 'user-agent': 'dsh-github-resident-verify', accept: 'application/vnd.github+json' };
+// 两条上界。元数据那次 fetch 原来**没有超时**（整条门禁里唯一可能无上界的等待）；
+// 资产下载原来一次定生死，而它在本机实测会抖（三次里红两次，12 秒即 fetch failed）。
+// 抖动是网络的性质，不是「抽取器坏了」的证据：给有界重试，并把跑了几次如实写进回执；
+// 全部失败仍然判红（strict 时 exit 1），不静默跳过。
+const API_TIMEOUT_MS = 30_000;
+const DL_TIMEOUT_MS = 180_000;
+const DL_ATTEMPTS = 3;
 const skip = (why) => { console.log(JSON.stringify({ skipped: true, why })); process.exit(STRICT ? 1 : 0); };
 
 let tag = process.env.DSH_GH_TAG || '';
@@ -29,12 +38,12 @@ let url = '';
 let apiDown = '';
 try {
   if (tag) {
-    const info = await (await fetch(`https://api.github.com/repos/cli/cli/releases/tags/${tag}`, { headers: UA })).json();
+    const info = await (await fetch(`https://api.github.com/repos/cli/cli/releases/tags/${tag}`, { headers: UA, signal: AbortSignal.timeout(API_TIMEOUT_MS) })).json();
     assetName = (info.assets || []).map((a) => a.name).find((n) => n.endsWith(`linux_${ARCH}.tar.gz`)) || '';
     url = ((info.assets || []).find((a) => a.name === assetName) || {}).browser_download_url || '';
     tag = info.tag_name || tag;
   } else {
-    const meta = await (await fetch('https://api.github.com/repos/cli/cli/releases/latest', { headers: UA })).json();
+    const meta = await (await fetch('https://api.github.com/repos/cli/cli/releases/latest', { headers: UA, signal: AbortSignal.timeout(API_TIMEOUT_MS) })).json();
     tag = meta.tag_name;
     assetName = (meta.assets || []).map((a) => a.name).find((n) => n.endsWith(`linux_${ARCH}.tar.gz`)) || '';
     url = ((meta.assets || []).find((a) => a.name === assetName) || {}).browser_download_url || '';
@@ -46,14 +55,21 @@ try {
 if (!assetName || !url) skip(`release ${tag} 里没有 linux_${ARCH}.tar.gz`);
 
 let buf = null;
-try {
-  const res = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(180000) });
-  if (!res.ok) skip('下载失败 HTTP ' + res.status);
-  buf = Buffer.from(await res.arrayBuffer());
-} catch (e) {
-  // 网络抖动不应把整个 npm run verify 变成红的：SKIP 并说明原因。
-  skip('资产下载不可达: ' + String(e).slice(0, 140));
+let dlAttempts = 0;
+let dlWhy = '';
+while (!buf && dlAttempts < DL_ATTEMPTS) {
+  dlAttempts += 1;
+  try {
+    const res = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(DL_TIMEOUT_MS) });
+    if (!res.ok) { dlWhy = 'HTTP ' + res.status; continue; }
+    const got = Buffer.from(await res.arrayBuffer());
+    if (got.length === 0) { dlWhy = '响应体为空'; continue; }
+    buf = got;
+  } catch (e) {
+    dlWhy = String(e).slice(0, 140);
+  }
 }
+if (!buf) skip(`资产下载不可达（试了 ${dlAttempts} 次）: ${dlWhy}`);
 const gz = zlib.gunzipSync(buf);
 
 const magic = gz.subarray(257, 263).toString('latin1');
@@ -82,6 +98,7 @@ const report = {
   tag,
   asset: assetName,
   downloadBytes: buf.length,
+  downloadAttempts: dlAttempts,
   ustarMagic: JSON.stringify(magic),
   entry: hit.nm,
   entryBytes: hit.size,

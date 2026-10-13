@@ -143,7 +143,15 @@ async function runChild(mode, extraEnv = {}, port) {
       ...extraEnv,
     },
     maxBuffer: 8 * 1024 * 1024,
-  }, (e, out, err) => res({ code: e ? 1 : 0, out: out || '', err: String(err || '') })));
+    // 子进程上界：同 verify-gh-bootstrap 的理由 —— 原来没有 timeout，卡住就是无限期；
+    // 超时按失败记账（写进 err），不吞成通过。
+    timeout: 90_000,
+    killSignal: 'SIGKILL',
+  }, (e, out, err) => res({
+    code: e ? 1 : 0,
+    out: out || '',
+    err: (e && e.killed) ? ('TIMEOUT(' + (e.signal || '') + ') ' + String(err || '')) : String(err || ''),
+  })));
   const line = r.out.split('\n').find((l) => l.startsWith('__CHILD__')) || '';
   const parsed = line ? JSON.parse(line.slice(9)) : null;
   return { ...r, parsed, childHome };
