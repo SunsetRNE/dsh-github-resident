@@ -3,13 +3,13 @@
   "schemaVersion": 1,
   "package": "@sunsetrne/dsh-github-resident-v2",
   "version": "1.7.6",
-  "publishedAt": "2026-10-13T08:27:33Z",
-  "sourceRef": "HEAD 341c6c7：更新源走自己的仓库站点（默认自托管源根 + DSH_UPDATE_REGISTRY 覆盖）",
+  "publishedAt": "2026-10-13T08:40:58Z",
+  "sourceRef": "CI 发布 · 75e2e26",
   "tarball": "sunsetrne-dsh-github-resident-v2-1.7.6.tgz",
   "url": "https://sunsetrne.github.io/dsh-github-resident/sunsetrne-dsh-github-resident-v2-1.7.6.tgz",
-  "sha256": "0dd754c65d456a09e792435f87c00cfafa9fffdde75fb4d3ebd47ec399e7bc22",
-  "sha512": "sha512-C23Yw9DwPHKdHCwmAjFXmKO3k1Zj9+H5hl3N9iUFmo4fKAMSzw9Ggl02biPKZ8xRNke1fvA23zm4iPdG8lC1EQ==",
-  "bytes": 2834613,
+  "sha256": "0b1ce42be5fa36524bf5a66b603158976473c641b592c902302594b6edec7b05",
+  "sha512": "sha512-mp7Drp1CaMLdlH0pF3i48LTonZ8uTc9iECHJJNmRTEBERkoEx2Vta9u+RyNKRdSKsIQGovEiszmM7bM9VwL1ow==",
+  "bytes": 2834688,
   "install": "npm i https://sunsetrne.github.io/dsh-github-resident/sunsetrne-dsh-github-resident-v2-1.7.6.tgz",
   "previous": [
     {
