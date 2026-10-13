@@ -23,7 +23,7 @@ import {
   __resetSharedUpdateReaderForTests as resetPackageReader,
 } from 'dsh-plugin-update'
 import { readFile, writeFile } from 'node:fs/promises'
-import { existsSync, readdirSync } from 'node:fs'
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -171,6 +171,40 @@ export function __bannerVersionOf(clientText) {
 export const BANNER_CLIENT_CANDIDATES = ['dist/client.js', 'lib/client.js', 'client.js']
 
 /**
+ * 同步读「本进程所在的这份合并包」自己声明的版本（构建注入的横幅）。
+ * 为什么需要：更新包解析「已装版本」只有两条来源 —— 调用方给的 runningVersion，或它去读宿主写的安装清单；
+ * 开发态 link: 安装没有那份清单，于是它在 read-installed 阶段抛 unknown-profile
+ * （票 #14 本机实测：只给 profileDir 仍 unknown-profile，补上 runningVersion 立刻 ok:true）。
+ * 这里按横幅（dist/client.js 的 DSW_VERSION）如实报出「这份代码自己的版本」，找不到回 null、不猜。
+ */
+export function __runningVersionOf(moduleDir) {
+  try {
+    let cur = String(moduleDir || '')
+    for (let i = 0; i < 8; i++) {
+      if (!cur) return null
+      try {
+        const manifest = JSON.parse(readFileSync(join(cur, 'package.json'), 'utf8'))
+        if (manifest && manifest.name === MERGED_PACKAGE_NAME) {
+          for (const rel of BANNER_CLIENT_CANDIDATES) {
+            try {
+              const v = __bannerVersionOf(readFileSync(join(cur, rel), 'utf8'))
+              if (v) return v
+            } catch { /* 这个候选位没有产物，试下一个 */ }
+          }
+          return null
+        }
+      } catch { /* 这一层没有/读不动 package.json，继续往上 */ }
+      const parent = dirname(cur)
+      if (parent === cur) return null
+      cur = parent
+    }
+    return null
+  } catch {
+    return null
+  }
+}
+
+/**
  * 找**已装那一份合并包**的根：从本文件所在目录向上问，谁的 package.json 名字是合并包名谁就是根。
  * 为什么不是 `dirname(moduleDir)`：本文件在合并包里落在 `<包根>/deck/src/host/`（源码形态随包发布），
  * 旧的「上一层就是包根」只对旧 Deck 的 lib/*.js 扁平布局成立。找不到回 null，由调用方如实 skip。
@@ -264,6 +298,15 @@ export function createUpdatePhoneHandlers(deps = {}) {
   // 没给才由宿主补上探测结果，免得生产路径退回到「推断」那条对本包走不通的路（票 #10）。
   const callerGaveProfileDir = Object.prototype.hasOwnProperty.call(callerOverrides, 'profileDir')
   const detectedProfileDir = callerGaveProfileDir ? null : __detectProfileDir()
+  // 票 #14：开发态 link: 安装没有宿主写的安装清单，更新包读不到「已装版本」会在 read-installed 抛
+  // unknown-profile。这里把这份代码自己的版本（构建横幅）如实交出去；调用方自己给了就一个字不动。
+  const callerGaveVersion = Object.prototype.hasOwnProperty.call(callerOverrides, 'runningVersion')
+  const detectedVersion = callerGaveVersion ? null : __runningVersionOf(dirname(fileURLToPath(import.meta.url)))
+  const effectiveOverrides = {
+    ...callerOverrides,
+    ...(detectedProfileDir ? { profileDir: detectedProfileDir } : {}),
+    ...(detectedVersion ? { runningVersion: detectedVersion } : {}),
+  }
   const key = `${ctx ? 'ctx' : 'noctx'}\0${deps.logCtx ? 'log' : 'nolog'}\0${
     callerGaveProfileDir ? 'callerProfile' : detectedProfileDir ? `detected:${detectedProfileDir}` : 'noProfile'
   }`
@@ -272,7 +315,7 @@ export function createUpdatePhoneHandlers(deps = {}) {
     {
       ctx,
       logCtx: deps.logCtx ?? null,
-      readerOverrides: detectedProfileDir ? { ...callerOverrides, profileDir: detectedProfileDir } : callerOverrides,
+      readerOverrides: effectiveOverrides,
     },
     {
       pluginId: UPDATE_PLUGIN_ID,
