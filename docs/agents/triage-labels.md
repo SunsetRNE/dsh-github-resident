@@ -22,3 +22,7 @@ When a skill mentions a role (e.g. "apply the AFK-ready triage label"), use the 
 - 打标签严格按技能规则走，不额外强制任何标签。
 
 Edit the right-hand column to match whatever vocabulary you actually use.
+
+## 补充（origin 侧合并进来的一条事实）
+
+- wayfinder 的五个工单标签（`wayfinder:map` / `wayfinder:research` / `wayfinder:prototype` / `wayfinder:grilling` / `wayfinder:task`）也走本仓库；除此之外不强制任何标签。

@@ -15,7 +15,7 @@
  * 用法：node tests/merge/host/update-target.test.mjs
  */
 import { existsSync } from 'node:fs'
-import { mkdir, readFile, writeFile } from 'node:fs/promises'
+import { mkdir, readFile, symlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { REPO_ROOT, check, importRel, note, readText, section, skip, summary, tmpDir } from './_check.mjs'
 
@@ -95,6 +95,98 @@ if (phones) {
   const hitMerged = checkedUrls.filter((u) => u.includes('dsh-github-resident-v2'))
   check(hitMerged.length === checkedUrls.length, '所有请求都指向合并包名：' + JSON.stringify(checkedUrls))
   note('查新版结果 ok=' + (checkResult && checkResult.ok) + '（404 被如实吸收，不伪称成功）')
+}
+
+section('4b) 使用范围目录探测：链接式安装也要认得出（票 #10 回归）')
+// 为什么单开这一段：**生产路径**（不注入 readerOverrides.profileDir）正是 2026-10-12 报
+// `unknown-profile` 的那条路 —— 更新包靠「路径里有没有 /node_modules/<包名>」倒推使用范围目录，
+// 而链接式安装 realpath 后落在源码工作区，永远命中不了那个标记。宿主必须自己把目录交出去。
+{
+  const mkWorkspace = async (tag) => {
+    const ws = tmpDir('ws-' + tag)
+    await writeFile(join(ws, 'package.json'), JSON.stringify({ name: MERGED, version: '1.7.0' }, null, 2) + '\n', 'utf8')
+    return ws
+  }
+  // 真安装形态：profile/node_modules/<包名> 是指向工作区的**符号链接**（本机就是这么装的）
+  const mkLinkedProfile = async (home, name, ws) => {
+    const prof = join(home, '.dsh', 'profiles', name)
+    await mkdir(join(prof, 'node_modules', '@local'), { recursive: true })
+    await symlink(ws, join(prof, 'node_modules', MERGED), 'dir')
+    return prof
+  }
+
+  const home1 = tmpDir('home1')
+  const ws1 = await mkWorkspace('a')
+  const prof1 = await mkLinkedProfile(home1, 'web', ws1)
+  check(
+    mod.__detectProfileDir({}, home1) === prof1,
+    '链接式安装（node_modules 下是符号链接）也能认出使用范围目录：' + mod.__detectProfileDir({}, home1)
+  )
+
+  // 环境变量优先：宿主自己报的目录最准，哪怕它指的不是扫描会命中的那一个
+  check(
+    mod.__detectProfileDir({ DSH_PROFILE_DIR: '/explicit/scope' }, home1) === '/explicit/scope',
+    'DSH_PROFILE_DIR 优先于扫描结果'
+  )
+  check(
+    mod.__detectProfileDir({ DSH_PROFILE_DIR: '   ' }, home1) === prof1,
+    'DSH_PROFILE_DIR 只有空白时按缺失处理，退回扫描（不把空白当目录）'
+  )
+
+  // 扫不到就如实回 null：绝不猜一个目录出来（猜错会把更新写进别的使用范围）
+  const home2 = tmpDir('home2')
+  check(mod.__detectProfileDir({}, home2) === null, '没有 profile 装着本包时回 null（不猜）')
+  check(mod.__detectProfileDir({}, join(home2, 'nope')) === null, '家目录不存在时回 null，不抛错')
+  check(mod.__detectProfileDir({}, '') === null, '家目录为空时回 null，不抛错')
+
+  // 多份使用范围并存时，认的是「那个目录里真装着本包」，不是目录名
+  const home3 = tmpDir('home3')
+  await mkdir(join(home3, '.dsh', 'profiles', 'desktop'), { recursive: true })
+  const ws3 = await mkWorkspace('c')
+  const prof3 = await mkLinkedProfile(home3, 'web', ws3)
+  check(mod.__detectProfileDir({}, home3) === prof3, '空壳使用范围（desktop）不会被误认成本包的家')
+
+  // 生产路径必须真的调用它：源码里不能只剩一个没人用的探测器
+  const callsDetector = /__detectProfileDir\s*\(/.test(updateSrc.replace(/export function __detectProfileDir[\s\S]*?\n}\n/, ''))
+  check(callsDetector, 'createUpdatePhoneHandlers 那条路真的调用了探测（不是只导出不用）')
+}
+
+section('4c) 不注入使用范围目录时，不再退化成 unknown-profile（票 #10 的原始现象）')
+{
+  const home = tmpDir('home-noprof')
+  const ws = tmpDir('ws-noprof')
+  await writeFile(join(ws, 'package.json'), JSON.stringify({ name: MERGED, version: '1.7.0' }, null, 2) + '\n', 'utf8')
+  const prof = join(home, '.dsh', 'profiles', 'web')
+  await mkdir(join(prof, 'node_modules', '@local'), { recursive: true })
+  await symlink(ws, join(prof, 'node_modules', MERGED), 'dir')
+
+  // 这一段是本次修复的**原始现象**回归：宿主在生产形状（只给 DSH_PROFILE_DIR、不注入 profileDir）下
+  // 打一次查状态，不允许再出现 unknown-profile。允许后续档位（如 invalid-installation）如实出现。
+  const savedProfileDir = process.env.DSH_PROFILE_DIR
+  const savedHome = process.env.DSH_HOME
+  mod.__resetSharedUpdateReaderForTests()
+  process.env.DSH_PROFILE_DIR = prof
+  process.env.DSH_HOME = home
+  let status = null
+  let threw = null
+  try {
+    const prodShaped = mod.createUpdatePhoneHandlers({ ctx: null, logCtx: quietLog })
+    status = await prodShaped.handleUpdateStatus({})
+  } catch (e) {
+    threw = e
+  } finally {
+    if (savedProfileDir === undefined) delete process.env.DSH_PROFILE_DIR
+    else process.env.DSH_PROFILE_DIR = savedProfileDir
+    if (savedHome === undefined) delete process.env.DSH_HOME
+    else process.env.DSH_HOME = savedHome
+    mod.__resetSharedUpdateReaderForTests()
+  }
+  check(threw === null, '生产形状下查状态没有抛错' + (threw ? '：' + String(threw && threw.message) : ''))
+  check(!!status, '生产形状下查状态回了对象')
+  check(
+    !status || status.error !== 'unknown-profile',
+    '不再退化成 unknown-profile（实际 error = ' + (status ? status.error : '(无回包)') + '）'
+  )
 }
 
 section('5) 身份证验明正身：合并包布局（根按包名向上找 + dist/client.js 横幅）')
