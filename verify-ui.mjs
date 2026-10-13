@@ -199,14 +199,19 @@ check('登记库页与 GitHub 页共用同一份账号快照（/state?cached=1�
 check('登记库页显式声明与账号登录无关', regRegion.includes('和账号登录是两件事') || regRegion.includes('不涉及账号登录'), '');
 
 // 文案预算：这一页被要求「清理与压缩」，给它一个上限，长回去就红。
-// 合并期调整（2026-10-11，构建负责人）：登记库页按实施计划 ⑦⑧⑨⑩ 并入了 Deck 的 4 个区块
-//（工作区与插件 / 更新入口说明 / 诊断与日志 / 作者其他插件），可见汉字从压缩后的 337 涨到 432。
-// 这是「合并本身带来的正文」，不是这页自己长胖；阈值 400 → 480（留 ~11% 余量），
-// 仍然拦「继续往里堆文案」这类退化。数值与理由记录在 docs/merge-work-build.md 第 4 节。
+// 合并期调整（2026-10-11，构建负责人）：登记库页按实施计划 ⑦⑧⑨⑩ 并入了 Deck 的 4 个区块，
+// 可见汉字从压缩后的 337 涨到 432 —— 这是「合并本身带来的正文」，不是这页自己长胖；
+// 阈值 400 → 480（留 ~11% 余量），仍然拦「继续往里堆文案」这类退化。
+// 1.8.2 两处订正：
+//   a) 标签里不再写死「实测 N」——按本包 1.8.1 自己立的规矩（数字没有真源就会过期），现值由
+//      这条断言每次自己报（detail 字段）。写死的那个 432 到 1.8.2 时早已是 441，没人发现。
+//   b) 作者其他插件区块（1.8.2 删除）**从来不在本区间内**：本区间取的是 RegistryPanel 的函数体，
+//      而那个区块住在 SettingsPage 的 DeckSettingsSections 里 —— 删它不会让这个数字变小，
+//      所以别拿这条预算去论证「删了文案所以变短」。区间与理由记录在 docs/merge-work-build.md 第 4 节。
 const REG_CJK_BUDGET = 480;
 const regLits = [...regRegion.matchAll(/'([^'\n]*)'/g)].map((m) => m[1]).filter((x) => /[\u4e00-\u9fff]/.test(x));
 const regCjk = (regLits.join('').match(/[\u4e00-\u9fff]/g) || []).length;
-check(`登记库页文案预算：可见汉字 ≤ ${REG_CJK_BUDGET}（合并并入 Deck 4 区块后实测 432）`, regCjk <= REG_CJK_BUDGET, regCjk);
+check(`登记库页文案预算：可见汉字 ≤ ${REG_CJK_BUDGET}`, regCjk <= REG_CJK_BUDGET, regCjk);
 check('登记库页最长一句 ≤ 60 字', Math.max(...regLits.map((x) => x.length)) <= 60, Math.max(...regLits.map((x) => x.length)));
 
 // ---------- C. 接线判据：客户端用的路径 ⊆ 宿主路由 ----------

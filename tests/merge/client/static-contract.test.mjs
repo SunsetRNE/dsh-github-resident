@@ -51,23 +51,23 @@ test('root client.js：两个 Resident 设置页仍在（60 / 61），并接住 
   assert.ok(src.includes('刷新登记快照'), '写库快照的按钮必须与只读总览区分命名')
 })
 
-test('SettingsPage：三个分区组件可复用，本页不再挂第二个更新入口', () => {
+test('SettingsPage：两个分区组件可复用，本页不再挂第二个更新入口', () => {
   const src = readRepoFile(SETTINGS_PAGE)
   assert.ok(src.includes('const DeckWorkspacesSection'))
   assert.ok(src.includes('const DeckDiagnosticsSection'))
-  assert.ok(src.includes('const DeckAuthorPluginsSection'))
   assert.ok(src.includes('const SettingsPage'))
   assert.ok(src.includes("tr('cfg.updateInRegistry')"))
   assert.equal(count(src, 'h(UpdateEntryHost'), 0, '更新入口不在本页第二次挂载')
   assert.equal(count(src, 'h(DeckWorkspacesSection'), 1)
   assert.equal(count(src, 'h(DeckDiagnosticsSection'), 1)
-  assert.equal(count(src, 'h(DeckAuthorPluginsSection'), 1)
 })
 
-test('作者链接默认折叠（<details>），不是默认展开的分组', () => {
+test('作者其他插件分区已删除（1.8.2），不留残件', () => {
   const src = readRepoFile(SETTINGS_PAGE)
-  assert.ok(src.includes("h('details'"), '作者其他插件必须是默认收起的 details')
-  assert.ok(src.includes('MORE_PLUGINS'), '作者链接一个不删')
+  assert.equal(count(src, 'DeckAuthorPluginsSection'), 0, '该区块不得再被定义或挂载')
+  assert.equal(count(src, 'MORE_PLUGINS'), 0, '随区块一起删掉的静态清单不得回流')
+  // 反向护栏：删的是「上游作者插件清单」这一段，不是页面本身的分区骨架。
+  assert.ok(src.includes('DeckWorkspacesSection') && src.includes('DeckDiagnosticsSection'), '另两个分区仍在')
 })
 
 test('唯一更新入口用去 scope 的本地 pluginId，且与 Host UPDATE_PLUGIN_ID 逐字一致', () => {

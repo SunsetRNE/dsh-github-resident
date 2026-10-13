@@ -21,22 +21,33 @@ function withCap(promise, ms) {
 }
 const SANDBOX_TIMEOUT_MS = 5000
 
+// 参数面纪律（1.8.2 实测，勿回退）：本工具**任何一层都不写 required**。
+// 契约是「key（单票，可带 parentKey/blockedBy）」或「edges（批量）」二选一，两者都没有才拒绝 ——
+// 所以顶层本就没有必填。原先 edges.items 里写着 required: ['key']（每项边必须写 key），
+// 但渲染给模型的参数面会**按属性名**把嵌套必填合并到顶层：于是顶层凭空多出 "required": ["key"]，
+// 纯 edges 的批量模式在模型侧被误判成「必须给 key」。同包里 deck_map_plan_create 也有嵌套 required
+// 但不与顶层属性撞名，顶层就没被污染 —— 撞名才触发，这是判据。
+// 处置：必填语义写进描述（见 edges 与 items.properties.key），运行期由下面的 BAD_ARGS 兜底；
+// 不变量由 tests/merge/host/deck-params-surface.test.mjs 钉住。
 export const definition = {
   name: 'deck_map_link',
   description: '同属 GitHub 常驻（本插件）的 ISSUE 与 map 管理能力，只处理当前 workspace 对应的 repo；动 ISSUE 前先调用 deck_context 确认 workspace 与 backend，若它说没 backend 就停下。给已存在的 ISSUE 补 parent 或 blockedBy 边，写完读回并逐条标出落点。',
   parameters: {
     type: 'object',
     properties: {
-      key: { type: 'string', description: '要改的那张票（子票）' },
+      key: { type: 'string', description: '要改的那张票（子票）。单票模式用它；与 edges 二选一' },
       parentKey: { type: 'string', description: '要挂到的父票；不传就不动父子' },
       blockedBy: { type: 'array', items: { type: 'string' }, description: '这张票被哪些票阻塞（整批替换）' },
       edges: {
         type: 'array',
-        description: '一次改多张票的边；与 key/parentKey/blockedBy 二选一',
+        description: '一次改多张票的边（批量模式，与 key/parentKey/blockedBy 二选一）；每一项都要写 key，缺 key 的那一项会被工具拒掉',
         items: {
           type: 'object',
-          properties: { key: { type: 'string' }, parentKey: { type: 'string' }, blockedBy: { type: 'array', items: { type: 'string' } } },
-          required: ['key'],
+          properties: {
+            key: { type: 'string', description: '这一项要改的那张票（每项必填）' },
+            parentKey: { type: 'string', description: '这一项要挂到的父票；不传就不动父子' },
+            blockedBy: { type: 'array', items: { type: 'string' }, description: '这一项被哪些票阻塞（整批替换）' },
+          },
           additionalProperties: false,
         },
       },

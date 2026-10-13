@@ -1,20 +1,15 @@
 /**
  * views/SettingsPage.js — 配置页（TPL 表 + 设置，5.9）真源 ESM，build 拼回 src/client/index.js leaf
  *
- * 合并改造（2026-10-11）：页面拆成「头 + 三个可复用分区」。
- *   - 三个分区（工作区总览 / 诊断日志 / 作者其他插件）与「设置 → 仓库登记库」页里嵌入的是**同一份组件**，
+ * 合并改造（2026-10-11）：页面拆成「头 + 两个可复用分区」。
+ *   - 两个分区（工作区总览 / 诊断日志）与「设置 → 仓库登记库」页里嵌入的是**同一份组件**，
  *     由 panelAssembly.js 的 mergeEmbed 交出去；两处入口共用同一个 store 与同一批宿主电话，
  *     不新增第二套设置状态，也不复制持久化逻辑。
+ *     （1.8.2 删掉第三个分区「作者其他插件」：那是 Deck 上游作者的插件清单，与「常驻 GitHub 身份」
+ *      这件事无关；一并删掉 4 条写死外链、5 个语言键（中英各 5）与两处挂载点。）
  *   - 更新入口只有一份（Deck 半边的 views/UpdateEntryHost.js），落点在「仓库登记库」页的状态区；
  *     本页不再挂第二个按钮，只留一句去向说明（cfg.updateInRegistry）。
  */
-// 增-2（#520）：底部作者其他插件清单（4 个，2026-09-06 已验真；写死网址，不拉取不新增网络请求）
-const MORE_PLUGINS = [
-  { slug: DSW_IDENTITY, url: DSW_REPO_URL, descKey: 'more.desc.deck' },
-  { slug: 'dsh-opencode-palette', url: 'https://github.com/FeatherHunter/dsh-opencode-palette', descKey: 'more.desc.palette' },
-  { slug: 'dsh-prompt', url: 'https://github.com/FeatherHunter/dsh-prompt', descKey: 'more.desc.prompt' },
-  { slug: 'dsh-im-companion', url: 'https://github.com/FeatherHunter/dsh-im-companion', descKey: 'more.desc.companion' },
-]
 // #155 Q1 改：只读全局总览（wf.bindings + workspaces.list + wf.registry 色值，不可改；不调 wf.bind）
 // 数据装载与跳转收进 views/SettingsWorkspaces.js 的 useWsOverview（纯结构搬移，行为零变化）。
 export const DeckWorkspacesSection = function () {
@@ -165,21 +160,6 @@ export const DeckDiagnosticsSection = function () {
   ])
 }
 
-// 增-2（#520）：作者其他插件独立区域。合并后默认折叠（<details>），内容与链接一个不删，不新增本地存档键。
-export const DeckAuthorPluginsSection = function () {
-  const cx = React.useContext(DswsCtx)
-  const h = cx ? cx.h : React.createElement
-  return h('details', { className: 'dsws-cfg-group' }, [
-    h('summary', { className: 'dsws-cfg-gtitle', style: { cursor: 'pointer' } }, [Ic({ n: 'skills', size: 13 }), h('span', null, tr('more.title'))]),
-  ].concat(MORE_PLUGINS.map(function (p) {
-    return h('a', { key: p.slug, href: p.url, target: '_blank', rel: 'noreferrer', style: { display: 'flex', alignItems: 'center', gap: 8, padding: '7px 4px', textDecoration: 'none', color: 'inherit' } }, [
-      h('span', { style: { fontFamily: 'Consolas,Menlo,monospace', fontSize: 12, fontWeight: 650, flex: 'none' } }, p.slug),
-      h('span', { style: { flex: 1, minWidth: 0, fontSize: 11.5, color: 'var(--dsw-alias-label-secondary,#a1a1aa)' } }, tr(p.descKey)),
-      Ic({ n: 'external-link', size: 12 }),
-    ])
-  })))
-}
-
 export     const SettingsPage = (props) => {
       const cx = React.useContext(DswsCtx)
       const h = cx ? cx.h : React.createElement
@@ -213,10 +193,9 @@ export     const SettingsPage = (props) => {
         ]),
         h('div', { className: 'dsws-cfg-sub' }, tr('cfg.sub')),
         h('div', { className: 'dsws-cfg-gdesc', style: { marginTop: 4 } }, tr('cfg.updateInRegistry')),
-        // 以下三个分区与「设置 → 仓库登记库」页里嵌入的是同一份组件（同 store、同宿主电话）。
+        // 以下两个分区与「设置 → 仓库登记库」页里嵌入的是同一份组件（同 store、同宿主电话）。
         h(DeckWorkspacesSection, { key: 'ws' }),
         h(DeckDiagnosticsSection, { key: 'dbg' }),
-        h(DeckAuthorPluginsSection, { key: 'more' }),
         // T2 HoverTip 迁移：移除 sharedSt.cfgTip 全局 portal，改由 HoverTip 统一（行为零变化，翻转/样式走契约）
         null,
       ])

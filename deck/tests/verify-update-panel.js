@@ -103,7 +103,9 @@ async function main() {
   // 本页只留一句去向说明，**不许**再挂第二个入口；旧断言「配置页挂载入口件」是合并前的语义。
   check(!settingsSrc.includes('UpdateEntryHost'), '配置页不再挂第二个更新入口（唯一入口在仓库登记库页）')
   check(settingsSrc.includes('cfg.updateInRegistry'), '配置页留了去仓库登记库页的说明（cfg.updateInRegistry）')
-  check(settingsSrc.includes('DeckWorkspacesSection') && settingsSrc.includes('DeckDiagnosticsSection') && settingsSrc.includes('DeckAuthorPluginsSection'), '配置页仍渲染三个可复用分区（与登记库页同源同状态）')
+  check(settingsSrc.includes('DeckWorkspacesSection') && settingsSrc.includes('DeckDiagnosticsSection'), '配置页仍渲染两个可复用分区（与登记库页同源同状态）')
+  // 1.8.2：第三个分区「作者其他插件」已删（与常驻 GitHub 身份无关的上游作者清单，含 4 条写死外链）。
+  check(!settingsSrc.includes('DeckAuthorPluginsSection') && !settingsSrc.includes('MORE_PLUGINS'), '作者其他插件分区已删除，不留残件')
   check(!settingsSrc.includes('useUpdatePanel') && !settingsSrc.includes('UpdateDialog') && !settingsSrc.includes('UpdateRestartBanner'), '配置页不再引用自有按钮状态机与浮层弹窗')
   check(!settingsSrc.includes('updIsNewer') && !settingsSrc.includes('setUpdDialog'), '配置页不再自带版本比对与弹窗开关（判据收进包内）')
 

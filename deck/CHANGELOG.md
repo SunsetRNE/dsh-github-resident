@@ -1,3 +1,36 @@
+## 2026-10-14 · 合并包 1.8.2：删「作者其他插件」区块 + 修 deck_map_link 参数面（顶层凭空多出必填 key）
+
+- **这是什么**：一处**减法**（设置页删掉与「常驻 GitHub 身份」无关的上游作者插件清单）与一处**参数面修复**
+  （`deck_map_link` 在模型侧被误标成「必须给 key」，把纯 `edges` 的批量模式堵住）。没有新功能。
+- **界面**：
+  - 删掉设置页（及「设置 → 仓库登记库」页内嵌）的第三个分区「作者其他插件」：4 条写死外链、
+    `MORE_PLUGINS` 静态清单、两处挂载点（SettingsPage / panelAssembly 的 mergeEmbed），
+    以及 `more.title` / `more.desc.*` 共 5 个语言键（中英各 5）。页面骨架仍是「头 + 两个可复用分区」。
+  - 硬编码门禁的许可名单同步摘掉 `FeatherHunter/dsh-`（用它的就那 4 条外链，删后不留没人用的口子）。
+- **工具面（`deck_map_link`）**：
+  - 真实契约是「`key`（单票，可带 `parentKey`/`blockedBy`）」或「`edges`（批量）」二选一，两者都没有才拒
+    —— 定义面顶层本来就没有必填。可渲染给模型的参数面会**按属性名**把嵌套必填合并到顶层：原先
+    `edges.items` 里的 `required: ['key']` 让顶层凭空多出 `"required": ["key"]`，于是纯 `edges` 的批量模式
+    在模型侧被误判成「必须给 key」。同包里 `deck_map_plan_create` 也有嵌套 required（`key,title,from,to`）
+    但不与顶层属性撞名 → 顶层没被污染，**这正是「按名字合并」而非「整体上提」的证据**。
+  - 改法：该工具参数面任何一层都不写 `required`；必填语义写进描述（`edges` 说明每项要写 key、
+    `items.properties.key` 标注「每项必填」），运行期由原有的 BAD_ARGS 兜底。**参数一个没删**。
+  - 新增合并期契约 `tests/merge/host/deck-params-surface.test.mjs`（17 项）：逐件断言「不新增顶层必填」，
+    并把 `deck_map_plan_create` 那处**潜在**撞名（顶层本来就必填，当前无害）如实记进 note。
+- **记账订正**：
+  - `verify-ui.mjs` 的登记库页文案预算不再把实测值写死在标签里（写死的 `432` 到本版时已是 `441`，
+    没人察觉）——按 1.8.1 自己立的规矩「数字没有真源就会过期」，现值由断言每次自报。
+  - 同一处注释说明：被删的「作者其他插件」区块**从来不在该预算区间内**（区间取 `RegistryPanel` 函数体，
+    该区块住在 `DeckSettingsSections`），别拿这条预算论证「删了文案所以变短」。
+- **版本号**：合并包 `1.8.1 → 1.8.2`；deck 包 `1.8.0-rc.12 → 1.8.0-rc.13`。
+- **验证**：`tests/merge/run.mjs` **20/20**（新增的参数面门禁 17 项在内）；`check:entries` 全一致；
+  `npm run build` 退出码 0；resident 半边 8 件里**可离线的 7 件**在「无 gh 登录态」与「本机真实环境」
+  两套环境**各 7/7 全绿**（第 8 件 `verify-real-artifact` 打公网，本机出网对 release CDN 不稳而红，
+  同日 CI 侧实测 3/3 绿，见 release.yml 注释）；`verify-client-hardcode-gate` 502 项、
+  `verify-locale-completeness` 196 项、`verify-build-artifacts`、`verify-generated-no-shadow` 18 项、
+  `verify-bundled-skills` 均通过；`verify-update-panel` 里本版新增的两条分区断言 PASS
+  （该件整体在本机因 deck 子树缺 `node_modules/dsh-plugin-update` 这一**存量**缺口跑不完，改前改后一致）。
+
 ## 2026-10-13 · 合并包 1.8.1：清洗（两个死参数、一处会崩的选择器、化石文件与文档数字）
 
 - **这是什么**：P0→P1→P2 分别修了行为、协议、门禁；本版做清洗 —— 把「声明了却不生效」「引用了却不存在」

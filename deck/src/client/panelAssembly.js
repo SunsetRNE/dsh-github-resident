@@ -203,7 +203,6 @@
       return hh('div', { className: 'dsws-embed' }, [
         hh(DeckWorkspacesSection, { key: 'ws' }),
         hh(DeckDiagnosticsSection, { key: 'dbg' }),
-        hh(DeckAuthorPluginsSection, { key: 'more' }),
       ])
     }
     const DeckUpdateEntry = withCx(function () { return h(UpdateEntryHost, null) })

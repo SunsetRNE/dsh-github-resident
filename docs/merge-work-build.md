@@ -152,7 +152,7 @@ panic: bundled: /.l2s/lib.d.ts does not exist; this executable may be misplaced
 |---|---|
 | `deck/tests/smoke-render.test.js` | 取源从 `package/lib/client.js` 改为合并产物 `../dist/client.js`；id 断言改合并身份；插槽断言 6 → 7（Deck 5 + Resident 2），并逐条核对 `settings.section` 的两个 id |
 | `package.json` 的 `verify:deck:smoke` | 原来从仓库根直接 `node deck/tests/…`，这些测试按 `deck/` 为 cwd 读路径，必然 ENOENT；改成 `cd deck && …` |
-| `verify-ui.mjs` 的登记库页文案预算 | 400 → 480（实测 432）。理由：按实施计划 ⑦⑧⑨⑩ 并入了 Deck 的 4 个区块，正文是**合并本身**带来的，不是这页自己长胖；留 ~11% 余量，仍能拦「继续堆文案」。数值与理由写在 `verify-ui.mjs` 的注释里 |
+| `verify-ui.mjs` 的登记库页文案预算 | 400 → 480（合并当时实测 432）。理由：按实施计划 ⑦⑧⑨⑩ 并入了 Deck 的 4 个区块，正文是**合并本身**带来的，不是这页自己长胖；留 ~11% 余量，仍能拦「继续堆文案」。1.8.2 订正：标签里不再写死实测值（写死的 432 到 1.8.2 时已是 441 而无人察觉），现值由断言每次自报；理由与区间口径写在 `verify-ui.mjs` 的注释里 |
 | `verify-bundle.sh` | 隔离化改造（见上）；`node --check` 目标改为 `plugin.js` / `dist/host.js` / `dist/client.js` |
 
 ## 5. 待集成人处理（不在我的写范围内或需要跨任务决定）
