@@ -174,7 +174,14 @@ export function runTypeCheck() {
   }
   const r = spawnSync(process.execPath, [tscBin, '-p', TSCONFIG], { encoding: 'utf8' })
   if (r.status !== 0) {
-    throw new Error(`[refresh-core] tsc --noEmit 未通过：\n${r.stdout || ''}${r.stderr || ''}`)
+    const out = `${r.stdout || ''}${r.stderr || ''}`
+    // 同 label-color-core：检查器自己起不来（tsgo 在异架构容器里 panic，见那边的长注释）不是类型错误，
+    // 如实报「本次没做类型检查」并继续；有真诊断输出时照旧抛错，不放宽。
+    if (/panic:|this executable may be misplaced/i.test(out)) {
+      console.log('[refresh-core] 类型检查器本身跑不起来，本次跳过类型检查（不是类型错误）：' + out.split('\n')[0].slice(0, 200))
+      return { skipped: true }
+    }
+    throw new Error(`[refresh-core] tsc --noEmit 未通过：\n${out}`)
   }
   console.log('[refresh-core] tsc --noEmit 通过')
   return { skipped: false }

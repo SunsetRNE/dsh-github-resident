@@ -2,8 +2,10 @@
  * shared/gh-timeout-tiers.js —— 去 GitHub 的分档超时（#969 暂定值）。
  *
  * 为什么分三档：读操作等得久会拖住界面，写操作杀得早会让用户不敢重试，
- * 查登录态与版本号的探活本该最快回来。从前全仓只有一档 30000，谁都要等满才放弃。
+ * 版本号自检（探活）本该最快回来。从前全仓只有一档 30000，谁都要等满才放弃。
  * 慢网下超时一律归网络档（未知、稍后再试），不能说成没登录让用户去重登。
+ * 注（合并包 1.7.8）：探活档只服务 `gh --version`；会出网的 `auth status` / `api user` 走读档，
+ *   判据与实测理由见下面 isProbeGhArgs 的注释。
  *
  * 暂定值（终值等 #967 测出耗时分布后回填，由 #966 收口执行）：
  *   读 12000 毫秒、写 30000 毫秒、探活 3000 毫秒。
@@ -52,14 +54,22 @@ export function isWriteGhArgs(args) {
   return false
 }
 
-/** 探活动词：查登录态与版本号，走最短档。 */
+/**
+ * 探活动词：**只**认真正的探活（版本号自检），走最短档。
+ *
+ * 为什么 `auth status` / `api user` 不在这里（合并包 1.7.8 修）：
+ *   这两个命令**会出网**，与「探活本该最快回来」这个前提不符。本机实测 `gh auth status` 六次 =
+ *   1211 / 7275 / 1443 / 1992 / 1797 / 1741 毫秒，而 `gh --version` 稳定 130 毫秒 —— 差 50 倍，
+ *   却被归进同一档。后果落在 `backends/github/preflight.js` 第 2 步（登录态门禁）上：
+ *   网络一慢就撞 3000 毫秒档 → 预检报「环境没过」→ 用户被引去重登，而其实环境好得很。
+ *   #967 那个量测件（scripts/measure-967-outbound.js）的分桶是 100ms / 500ms / 2s / **12s** / 30s，
+ *   以 12 秒为读操作参考线 —— 那里根本没有 3 秒档。所以联网命令一律落读档。
+ *   判据收在这一处：探活档只服务 `--version`（真·毫秒级自检）。
+ */
 export function isProbeGhArgs(args) {
   const parts = partsOf(args)
   if (parts.length === 0) return false
-  if (parts[0] === '--version') return true
-  if (parts[0] === 'auth' && parts[1] === 'status') return true
-  if (parts[0] === 'api' && String(parts[1] || '').indexOf('user') === 0 && parts.length <= 3) return true
-  return false
+  return parts[0] === '--version'
 }
 
 /** 这条调用走哪一档：写最久、探活最短，其余读。 */

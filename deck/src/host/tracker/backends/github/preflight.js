@@ -61,11 +61,12 @@ export async function ghPreflight(handle, ctx) {
     const r = await c.execGh(['auth', 'status'], { cwd })
     if (!r.ok) {
       const kind = r.error && r.error.kind ? r.error.kind : classifyGhError(r.error)
-      // auth status 非 0 → auth（若 classify 为 env 则仍按 env，不强行 auth）
-      if (kind === ERROR_KIND.ENV) return { ok: false, error: r.error }
-      // gh auth status 的 stderr 含 not logged in 文案时 classifyGhError 已归 auth
-      if (kind === ERROR_KIND.AUTH) return { ok: false, error: r.error }
-      // 其他错误按分类返回
+      // 网络/超时**不是**「环境没过」：如实说未知（pending）。口径与 detectChain 的 `preflight:ghAuth`
+      //   一致 —— 那里一直是这么分的（network → pending），只有这里把三类回成同一个形状，于是
+      //   「网络慢」被上游读成「预检失败」，人就被引去重登或重装 gh。慢网下唯一诚实的答复是「暂时无法确认」。
+      //   （合并包 1.7.8 修；同批把 auth status 移出 3 秒探活档，见 shared/tracker/outbound-tiers.js）
+      if (kind === ERROR_KIND.NETWORK) return { ok: false, pending: true, error: r.error }
+      // 其余（env / auth / exit…）按分类如实返回：未登录才说未登录，缺 gh 才说缺 gh。
       return { ok: false, error: r.error }
     }
   } catch (e) {

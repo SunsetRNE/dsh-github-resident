@@ -109,7 +109,15 @@ export function runTypeCheck() {
   }
   const r = spawnSync(process.execPath, [tscBin, '-p', TSCONFIG], { encoding: 'utf8' })
   if (r.status !== 0) {
-    throw new Error(`[version-control-core] tsc --noEmit 未通过：\n${r.stdout || ''}${r.stderr || ''}`)
+    const out = `${r.stdout || ''}${r.stderr || ''}`
+    // 同 label-color-core：检查器自己起不来（typescript 7 的 native 核 tsgo 在异架构容器里 panic，
+    // 实测 arm64/Android：「bundled: /.l2s/lib.d.ts does not exist; this executable may be misplaced」）
+    // 不是类型错误，如实报「本次没做类型检查」并继续；有真诊断输出时照旧抛错，不放宽。
+    if (/panic:|this executable may be misplaced/i.test(out)) {
+      console.log('[version-control-core] 类型检查器本身跑不起来，本次跳过类型检查（不是类型错误）：' + out.split('\n')[0].slice(0, 200))
+      return { skipped: true }
+    }
+    throw new Error(`[version-control-core] tsc --noEmit 未通过：\n${out}`)
   }
   console.log('[version-control-core] tsc --noEmit 通过')
   return { skipped: false }

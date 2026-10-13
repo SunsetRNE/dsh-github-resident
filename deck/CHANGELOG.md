@@ -1,3 +1,49 @@
+## 2026-10-13 · 合并包 1.7.8：探活档不再把「网络慢」报成「环境没过」+ 本机构建与门禁可跑
+
+- **这是什么**：合并包的补丁版，修一个**分类错误**（不是新功能）。上一版（1.7.7）的遗留项写着
+  「装机级验收：重启后 `deck_context` 回 `initialized:true` / `preflight.ok:true` 待做」——
+  这台设备上实测**没通过**：`deck_context` 两次都回 `preflight.ok:false`。本版就是接这条验收。
+- **真因（一条链，全部实测）**：
+  - `shared/tracker/outbound-tiers.js` 的 `isProbeGhArgs` 把 `auth status` / `api user` 与 `--version`
+    一起归进「探活档」（3000 毫秒）。但前两个命令**会出网**：本机实测 `gh auth status` 六次 =
+    1211 / 7275 / 1443 / 1992 / 1797 / 1741 毫秒，而 `gh --version` 稳定在 130 毫秒 —— 差 50 倍。
+  - 于是 `backends/github/preflight.js` 第 2 步（登录态门禁）网络一慢就撞档，被上游读成「环境没过」，
+    用户被引去重登/重装 gh，而环境其实好得很。
+  - 佐证：本仓 #967 的量测件（`scripts/measure-967-outbound.js`）分桶是 100ms / 500ms / 2s / **12s** / 30s，
+    注释写明「12 秒是读操作建议上限的参考线」—— **那里根本没有 3 秒档**；量测时还特意用 `timeout: 30000`
+    不截断真实耗时。分档值文件头也自认是「暂定值，终值等 #967 测出耗时分布后回填」。
+- **改了什么**：
+  - `deck/src/shared/tracker/outbound-tiers.js`：`isProbeGhArgs` **只认 `--version`**；会出网的命令一律落读档
+    （12 秒）。判据收在这一处，4 个调用点（client / platformChannel / repoKeys ×2）经 `timeoutForGhArgs` 一并受益。
+  - `deck/src/host/tracker/backends/github/preflight.js`：网络/超时**不再**回成「预检失败」，改回
+    `{ ok:false, pending:true }` —— 与 `detectChain.js` 的 `preflight:ghAuth` 本来就是同一口径
+    （那里一直分 network → pending）。原来三个分支返回完全相同的东西，是冗余且误导的写法。
+  - `deck/src/host/tools/deckContext.js`：**删掉 `initialized` 字段**。它的值是 `preflight.ok`，
+    却与链检查 `tracker:initialized`（判据是锚文件在不在）同名不同义 —— 实测把「探活超时」报成
+    「工作区未初始化」。全仓无任何代码消费它，`preflight` 字段已提供同样信息。同批给 `preflight` 补 `pending`。
+  - **本机构建与门禁可跑**（f2fs 适配，是上面几条能被验证的前提）：本机文件系统是 f2fs（挂载带
+    `inline_dentry`），`readdirSync` 的 `d_type` 会把**镜像层里的旧文件**报成 symlink
+    （实测 `plugin.js`、`tests/**`、`deck/package/**` 一律 `isSymbolicLink()=true` 而 `lstat().isFile()=true`）。
+    受影响的三处一并改到 `statSync` 口径：`tools/merge/build-merge-entries.ts` 的 `listFiles`（原来技能副本
+    比对恒红）与 `cpSync`→`copyTree`（原来复制第一个技能目录就抛 `EINVAL`，且发生在 `rmSync` 清空**之后**，
+    会把整棵随包技能搞空）、`tests/merge/build/_lib.mjs` 的同形两处。另有 4 个 core 的 `runTypeCheck`
+    区分「检查器自己跑不起来」与「类型检查未通过」：typescript 7 的 native 核（tsgo）在 arm64 容器里
+    panic（`bundled: /.l2s/lib.d.ts does not exist`），此前会挡住整条构建，而转译走 esbuild，与它无关；
+    有真类型诊断时照旧抛错，不放宽。
+- **版本号**：合并包 `1.7.7 → 1.7.8`；deck 包 `1.8.0-rc.8 → 1.8.0-rc.9`（本次有 deck 侧源码改动）。
+- **验证**：`node tools/merge/build-merge-entries.ts --check` 全绿（**修前恒红**：技能副本清单 0 vs 109）；
+  `node deck/tests/verify-969-tiered-timeout.js` **39/39**；`node tests/merge/run.mjs` **18/18**（修前 17/1，
+  那 1 条正是上面的 `cpSync` EINVAL）；`bash verify-bundle.sh` `pass=8 fail=0`；`npm run build` 退出码 0
+  且产物带 `v1.7.8`（`dist/client.js` 里 `v1.7.7` 残留 0 处）。直接探分档：
+  `timeoutForGhArgs(['auth','status'])` = **12000**、`['--version']` = 3000。
+- **影响**：慢网下预检不再误报「环境没过」；`deck_context` 回包的 `initialized` 误导字段消失。
+  注意本版**没有**阻断过写操作（写工具的拒绝路径里从来没有 preflight），改的是误报与诊断方向。
+- **遗留**：装机级验收（重启宿主后 `deck_context` 的 `preflight.ok` 与 note 应转正）待装了本版之后做；
+  deck 侧另有一批**存量红**门禁（`verify-deck-tools.js`、`verify-deck-tools-matrix.js` 等），
+  已用 `git stash` 基线对比确认与本版无关，另单跟进。
+
+---
+
 ## 2026-10-13 · 合并包 1.7.7：deck 半边 gh 执行路径修复（#15）
 
 - **这是什么**：合并包的补丁版。在「插件自带 gh + 系统 PATH 里没有 gh」（DSHA 容器的默认形态）的机器上，

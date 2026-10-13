@@ -30,12 +30,13 @@
  */
 
 import {
-  cpSync,
+  copyFileSync,
   existsSync,
   mkdirSync,
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from 'node:fs'
 import { dirname, join, resolve, sep } from 'node:path'
@@ -243,9 +244,31 @@ function listFiles(dir: string, base = dir): string[] {
   for (const ent of readdirSync(dir, { withFileTypes: true })) {
     const abs = join(dir, ent.name)
     if (ent.isDirectory()) out.push(...listFiles(abs, base))
-    else if (ent.isFile()) out.push(abs.slice(base.length + 1).split(sep).join('/'))
+    // 为什么文件判定不用 ent.isFile()：dirent 的类型来自 d_type，而它在 f2fs（挂载带 inline_dentry，
+    // Android/DSHA 容器就是）上会把**镜像层里的旧文件**报成 symlink —— 本机实测 plugin.js、tests/**、
+    // deck/package/** 一律 isSymbolicLink()=true 而 lstat().isFile()=true，于是 listFiles 对它们返回 0 项，
+    // 技能副本逐字比对恒红（`npm run verify` 第一步就挂，与内容无关）。真值以 statSync 为准：
+    // dirent 只用来分流目录，文件判定一律回落 stat。
+    else if (statSync(abs).isFile()) out.push(abs.slice(base.length + 1).split(sep).join('/'))
   }
   return out.sort()
+}
+
+/**
+ * 复制一棵目录树（覆盖式，与 fs.cpSync(force) 同语义）。
+ *
+ * 为什么不用 fs.cpSync：它内部按 dirent 的类型分流，而 d_type 在 f2fs（挂载带 inline_dentry，
+ * Android/DSHA 容器就是）上会把镜像层里的旧文件报成 symlink —— 于是 cpSync 复制第一个技能目录就抛
+ * `EINVAL, Invalid argument`，而它是在 rmSync 清空目标**之后**才失败的，结果是随包技能整棵空掉
+ * （本机实测：bundled-skills/ 只剩一个空目录）。这里判定一律走 statSync，与 listFiles 同一口径。
+ */
+function copyTree(src: string, dest: string): void {
+  if (statSync(src).isDirectory()) {
+    mkdirSync(dest, { recursive: true })
+    for (const name of readdirSync(src)) copyTree(join(src, name), join(dest, name))
+    return
+  }
+  copyFileSync(src, dest)
 }
 
 /** 目标目录的绝对路径守卫：只允许删本仓包根的 bundled-skills。 */
@@ -272,7 +295,7 @@ function syncBundledSkills(mode: 'write' | 'check'): void {
     assertSafeSkillsOut(dest)
     rmSync(dest, { recursive: true, force: true })
     mkdirSync(dest, { recursive: true })
-    cpSync(src, dest, { recursive: true, force: true })
+    copyTree(src, dest)
     const dirs = collectSkillDirs(dest)
     if (dirs.length !== BUNDLED_SKILLS_EXPECTED) {
       fail(`复制后 ${BUNDLED_SKILLS_OUT}/ 只有 ${dirs.length} 个技能目录，期望 ${BUNDLED_SKILLS_EXPECTED}`)

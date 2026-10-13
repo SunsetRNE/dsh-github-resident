@@ -120,8 +120,12 @@ export function createDeckContext(deps) {
             workspace: { root: s.cwd, key: s.workspaceKey, sessionId: s.sessionId, source: s.source },
             backend: { id: pick.backendId, source: pick.source, label: '' },
             repo: { backend: repo.backend, refId: repo.refId, name: repo.name, url: repo.url, permissions: permissions },
-            initialized: pre ? pre.ok === true : null,
-            preflight: pre ? { ok: pre.ok === true, message: String((pre.error && pre.error.message) || '').slice(0, 300) } : null,
+            // 这里曾有 `initialized` 字段，值取的是 `preflight.ok` —— 名不副实：它与链检查
+            //   `tracker:initialized`（「工作区是否已初始化」，判据是锚文件在不在）同名不同义，
+            //   实测会把「探活超时」报成「工作区未初始化」。全仓无任何代码消费它，只误导读回包的
+            //   模型与人，故删除（合并包 1.7.8）。要判「预检过没过」看下面 preflight；
+            //   要判「工作区初始化没初始化」看链检查结果，别再让一个字段担两个含义。
+            preflight: pre ? { ok: pre.ok === true, pending: pre.pending === true, message: String((pre.error && pre.error.message) || '').slice(0, 300) } : null,
             maps: maps,
             // 这一句是给 AI 的用法说明（描述只有路由，语义放这里）。
             howto: '写票之前先用本工具确认工作区与后端；建票用 deck_issue_create，建整张地图骨架用 deck_map_plan_create，补边用 deck_map_link，改票用 deck_issue_patch，上报当前在办哪张票用 deck_issue_report，读一张票用 deck_issue_get，看一张地图的全部子票用 deck_map_snapshot，按状态与 label 和 assignee 列薄行用 deck_issue_list。要快数：扫数先用 deck_issue_list 薄行；单票反向边不急就 deck_issue_get 传 blocking=false（跳过一次全仓扫描）；子票清单要全不断就 deck_map_snapshot 传 detail=thin（统计不变）。工作区与仓库不接受参数：它们只从当前会话取。',

@@ -105,7 +105,17 @@ export function runTypeCheck() {
   }
   const r = spawnSync(process.execPath, [tscBin, '-p', TSCONFIG], { encoding: 'utf8' })
   if (r.status !== 0) {
-    throw new Error(`[label-color-core] tsc --noEmit 未通过：\n${r.stdout || ''}${r.stderr || ''}`)
+    const out = `${r.stdout || ''}${r.stderr || ''}`
+    // 编译器**自己跑不起来**，不是类型错误：typescript 7 的 native 核（tsgo）在异架构容器里会 panic
+    // （实测 arm64/Android：「bundled: /.l2s/lib.d.ts does not exist; this executable may be misplaced」），
+    // 此时退出码非 0 但没有任何类型诊断。这一档如实报「本次没做类型检查」并继续 ——
+    // 转译走 esbuild（见上面的 transpileUnit），与 tsc 能否启动无关；不这样分，
+    // 一个跑不起来的检查器会挡住整条构建。真类型错误（有诊断输出）照旧抛错，不放宽。
+    if (/panic:|this executable may be misplaced/i.test(out)) {
+      console.log('[label-color-core] 类型检查器本身跑不起来，本次跳过类型检查（不是类型错误）：' + out.split('\n')[0].slice(0, 200))
+      return
+    }
+    throw new Error(`[label-color-core] tsc --noEmit 未通过：\n${out}`)
   }
   console.log('[label-color-core] tsc --noEmit 通过')
 }

@@ -7,7 +7,7 @@
 
 import { spawnSync } from 'node:child_process'
 import {
-  cpSync,
+  copyFileSync,
   existsSync,
   mkdirSync,
   mkdtempSync,
@@ -108,6 +108,24 @@ export function packRepo(root) {
 }
 
 /**
+ * 复制一棵目录树，判定一律走 statSync（等价于 cpSync 的 dereference: true）。
+ *
+ * 为什么不用 fs.cpSync：它内部按 dirent 的类型分流，而 d_type 在 f2fs（挂载带 inline_dentry，
+ * Android/DSHA 容器就是）上会把镜像层里的旧文件报成 symlink —— 实测复制 pnpm 装出来的
+ * `node_modules/yaml` 时直接抛 `EINVAL, Invalid argument`，整道 pack-contract 门禁因此挂掉
+ * （与内容无关的环境问题）。statSync 口径同时也正好满足这里要的「跟随符号链接」：
+ * pnpm 的包目录内部到处是 symlink，必须 dereference。
+ */
+function copyTree(src, dest) {
+  if (statSync(src).isDirectory()) {
+    mkdirSync(dest, { recursive: true })
+    for (const name of readdirSync(src)) copyTree(join(src, name), join(dest, name))
+    return
+  }
+  copyFileSync(src, dest)
+}
+
+/**
  * 解包 + 在临时 fixture 里做出一份**真实的 npm 安装布局**：
  *   <fixture>/node_modules/@sunsetrne/dsh-github-resident-v2/**   ← tarball 解出来的内容
  *   <fixture>/node_modules/{yaml,dsh-plugin-update}           ← 声明的运行时依赖（从本仓已装副本真拷贝）
@@ -124,13 +142,13 @@ export function installFromTarball(tgzPath, name) {
   mkdirSync(stage, { recursive: true })
   const untar = run('tar', ['-xzf', tgzPath, '-C', stage])
   if (untar.status !== 0) throw new Error('tar 解包失败：' + untar.stderr)
-  cpSync(join(stage, 'package'), pkgDir, { recursive: true, force: true })
+  copyTree(join(stage, 'package'), pkgDir)
   rmSync(stage, { recursive: true, force: true })
 
   // 声明过的运行时依赖：按 npm 会做的事放进 fixture 自己的 node_modules（真拷贝，不用软链）。
   for (const dep of ['yaml', 'dsh-plugin-update']) {
     const real = realpathSync(dirname(requireFromRepo.resolve(dep + '/package.json')))
-    cpSync(real, join(fixture, 'node_modules', dep), { recursive: true, force: true, dereference: true })
+    copyTree(real, join(fixture, 'node_modules', dep))
   }
   mkdirSync(join(fixture, 'node_modules', '.bin'), { recursive: true })
 

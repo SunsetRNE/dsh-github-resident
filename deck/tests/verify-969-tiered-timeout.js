@@ -1,8 +1,10 @@
 // tests/verify-969-tiered-timeout.js —— 门禁：分档超时暂定值（#969）
 // 为什么需要它：以前全仓只有一档 30000，读等得久拖住界面，写杀得早害用户不敢重试，
-// 探活本该最快却也要等满；慢网超时还可能被说成没登录，写超时还可能被自动重试写两遍。
+// 版本自检本该最快却也要等满；慢网超时还可能被说成没登录，写超时还可能被自动重试写两遍。
 // 它守三件事（只看外部行为，不看内部队列数组长什么样）：
 //   一、读与写各走各的档（读 12000、写 30000、探活 3000，调用方显式传超时优先）；
+//      合并包 1.7.8 起探活档只服务 `gh --version`：会出网的 `auth status` / `api user` 改走读档
+//      （实测 auth status 最慢 7.3 秒，撞 3 秒档会把「网络慢」报成「环境没过」）。
 //   二、慢网超时归网络档（未知、稍后），不报没登录；
 //   三、写超时只试一次就停，把超时原样交回调用方人工核对，不自动再发一次。
 // 用法：node tests/verify-969-tiered-timeout.js
@@ -32,7 +34,7 @@ if (tiers) {
   const { READ_TIMEOUT_MS, WRITE_TIMEOUT_MS, PROBE_TIMEOUT_MS, tierForGhArgs, timeoutForGhArgs, timeoutForTier } = tiers
   check(READ_TIMEOUT_MS === 12000, '一、读档是 12 秒（暂定值，终值等测量回填）', '实得 ' + String(READ_TIMEOUT_MS))
   check(WRITE_TIMEOUT_MS === 30000, '一、写档是 30 秒（暂定值，写超时不提前杀）', '实得 ' + String(WRITE_TIMEOUT_MS))
-  check(PROBE_TIMEOUT_MS === 3000, '一、探活档是 3 秒（登录态与版本自检最短）', '实得 ' + String(PROBE_TIMEOUT_MS))
+  check(PROBE_TIMEOUT_MS === 3000, '一、探活档是 3 秒（只服务版本自检）', '实得 ' + String(PROBE_TIMEOUT_MS))
   // 读：列票与看票走读档
   check(tierForGhArgs(['issue', 'list', '--repo', 'a/b']) === 'read', '一、列票走读档')
   check(timeoutForGhArgs(['issue', 'view', '1']) === 12000, '一、看票超时 12 秒')
@@ -42,10 +44,13 @@ if (tiers) {
   check(tierForGhArgs(['issue', 'comment', '1', '--body', 'hi']) === 'write', '一、评论走写档')
   check(tierForGhArgs(['api', 'repos/a/b/issues', '--method', 'POST']) === 'write', '一、经接口写票（POST）走写档')
   check(tierForGhArgs(['api', 'repos/a/b/issues/1']) === 'read', '一、经接口读票（GET）走读档')
-  // 探活：登录态与版本自检走最短档
-  check(tierForGhArgs(['auth', 'status']) === 'probe', '一、查登录态走探活档')
-  check(timeoutForGhArgs(['auth', 'status']) === 3000, '一、查登录态超时 3 秒')
   check(tierForGhArgs(['--version']) === 'probe', '一、查版本号走探活档')
+  // 合并包 1.7.8：会出网的命令不再占 3 秒探活档（实测 gh auth status 最慢 7.3 秒，
+  //   撞档后预检会把它报成「环境没过」）。查登录态、查账号一律落读档。
+  check(tierForGhArgs(['auth', 'status']) === 'read', '一、查登录态走读档（出网命令，不占探活档）')
+  check(timeoutForGhArgs(['auth', 'status']) === 12000, '一、查登录态超时 12 秒（够一次慢网往返）')
+  check(tierForGhArgs(['api', 'user']) === 'read', '一、查账号 api user 同样走读档')
+  check(timeoutForGhArgs(['api', 'user']) === 12000, '一、查账号超时 12 秒')
   // 调用方显式传的超时优先，不被档位覆盖
   check(timeoutForGhArgs(['issue', 'list'], 5000) === 5000, '一、调用方显式传的超时优先')
   check(timeoutForTier('write') === 30000 && timeoutForTier('probe') === 3000 && timeoutForTier('read') === 12000, '一、按档名取超时各走各的档')
@@ -89,7 +94,10 @@ if (tiers) {
   check(seen.length === 1 && seen[0].timeout === 30000, '三、写调用默认等 30 秒', '实得 ' + JSON.stringify(seen[0] && seen[0].timeout))
   seen.length = 0
   await c.execGh(['auth', 'status'], { cwd: '.' })
-  check(seen.length === 1 && seen[0].timeout === 3000, '三、探活调用默认等 3 秒', '实得 ' + JSON.stringify(seen[0] && seen[0].timeout))
+  check(seen.length === 1 && seen[0].timeout === 12000, '三、查登录态默认等 12 秒（不再 3 秒就杀）', '实得 ' + JSON.stringify(seen[0] && seen[0].timeout))
+  seen.length = 0
+  await c.execGh(['--version'], { cwd: '.' })
+  check(seen.length === 1 && seen[0].timeout === 3000, '三、版本自检仍走 3 秒探活档', '实得 ' + JSON.stringify(seen[0] && seen[0].timeout))
   // 调用方显式传的超时不被档位覆盖
   seen.length = 0
   await c.execGh(['issue', 'list'], { cwd: '.', timeout: 5000 })
