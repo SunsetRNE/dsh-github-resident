@@ -1,0 +1,8 @@
+{
+  "name": "@sunsetrne/dsh-github-resident-v2",
+  "version": "1.7.4",
+  "dist": {
+    "tarball": "https://sunsetrne.github.io/dsh-github-resident/@sunsetrne/dsh-github-resident-v2/-/@sunsetrne/dsh-github-resident-v2-1.7.4.tgz",
+    "integrity": "sha512-3GSLgiBhsQngfqnpFWUbG7RwCIjpueWjUzfx+xBKS5fsNQQUl8zfcnvmlcTUesgN3kbC3nH38QghiId5VLFqOA=="
+  }
+}
