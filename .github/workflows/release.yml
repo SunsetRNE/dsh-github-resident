@@ -1,0 +1,101 @@
+name: release
+
+# 仓库发布：推一个 v* tag（或在 Actions 里手动 dispatch）→ 构建 → 门禁 → 打包 → 发 Release → 更新两条自托管通道。
+# 纪律：本地改产物不算数，一切以这一次工作流的产物为准。
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 要发布的版本（不带 v，需与 package.json 一致）
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: 'release-${{ github.ref }}'
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      CHANNEL_TOKEN: ${{ secrets.CHANNEL_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: '10'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: pnpm
+
+      - name: 安装依赖（只装依赖，构建一律显式跑）
+        run: pnpm install --frozen-lockfile || pnpm install --no-frozen-lockfile
+
+      - name: 版本闸门（tag 与 package.json 必须一致）
+        run: |
+          node -e "const v=require('./package.json').version;const t=(process.env.GITHUB_REF_NAME||'').replace(/^v/,'')||'${{ inputs.version }}';if(t&&v!==t){console.error('tag='+t+' package.json='+v);process.exit(1)}console.log('版本一致：'+v)"
+
+      - name: 构建
+        run: npm run build
+
+      - name: 门禁
+        run: npm run check:entries && node tests/merge/run.mjs
+
+      - name: 装载自检（不通过不许打包）
+        run: node --input-type=module -e "import('./dist/host.js').then(()=>console.log('LOADED-OK'))"
+
+      - name: 打包
+        run: npm pack
+
+      - name: 发 Release（存在则覆盖资产）
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          TGZ=$(ls *.tgz | head -1)
+          TAG="${GITHUB_REF_NAME:-v${{ inputs.version }}}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$TGZ" --clobber
+          else
+            gh release create "$TAG" "$TGZ" --title "$TAG" --generate-notes
+          fi
+
+      - name: 通道 · 项目站 gh-pages（包体 + index.json）
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          TGZ=$(ls *.tgz | head -1)
+          VER=$(node -p "require('./package.json').version")
+          git config --global user.name 'github-actions[bot]'
+          git config --global user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          rm -rf /tmp/ch
+          git clone --branch gh-pages "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" /tmp/ch
+          node tools/channel/update-index.mjs --dir /tmp/ch --tgz "$PWD/$TGZ" --version "$VER" --ref "CI 发布 · ${GITHUB_SHA:0:7}"
+          cd /tmp/ch
+          git add -A
+          git diff --cached --quiet || git commit -m "channel: $VER（CI 发布）"
+          git push origin gh-pages
+
+      - name: 通道 · 用户站根（面板自更新的源；需要 secret CHANNEL_TOKEN，缺省跳过）
+        run: |
+          set -e
+          if [ -z "$CHANNEL_TOKEN" ]; then echo "没有 CHANNEL_TOKEN，跳过用户站根"; exit 0; fi
+          TGZ=$(ls *.tgz | head -1)
+          VER=$(node -p "require('./package.json').version")
+          rm -rf /tmp/site
+          git clone "https://x-access-token:${CHANNEL_TOKEN}@github.com/SunsetRNE/SunsetRNE.github.io.git" /tmp/site
+          node tools/channel/update-origin-root.mjs --dir /tmp/site --tgz "$PWD/$TGZ" --version "$VER"
+          cd /tmp/site
+          git add -A
+          git diff --cached --quiet || git commit -m "channel: $VER（CI 发布）"
+          git push origin HEAD:main
