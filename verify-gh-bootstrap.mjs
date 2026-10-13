@@ -30,6 +30,10 @@ process.env.DSH_GH_DATA_DIR = DATA_DIR;
 
 const steps = [];
 const check = (label, cond, detail) => steps.push({ label, pass: Boolean(cond), detail });
+// 阶段进度：本件原先只在最后打印一次汇总，于是 CI 上超时被杀时日志里只有一句 timeout，
+// 连走到了哪个阶段都看不出来（2026-10-13 v1.8.1 发布实测）。每进一个阶段打一行带时刻的账。
+const PHASE_T0 = Date.now();
+const phase = (name) => console.log(`[phase +${((Date.now() - PHASE_T0) / 1000).toFixed(1)}s] ${name}`);
 const exists = async (p) => { try { await fs.stat(p); return true; } catch { return false; } };
 function sh(cmd, args, env = {}) {
   return new Promise((r) => execFile(cmd, args, { env: { ...process.env, ...env } },
@@ -95,6 +99,7 @@ const realCacheExistedBefore = await exists(path.join(REAL_HOME, '.dsh', 'gh-cli
 const systemGhExistedBefore = await exists('/usr/bin/gh');
 const systemGhPackageBefore = await sh('dpkg', ['-l', 'gh'], { PATH: REAL_PATH });
 
+phase('父进程：import plugin.js（含加载期自动落地）')
 // ---- 装进假 ctx ----
 const mod = await import(new URL('./plugin.js', import.meta.url).href);
 const tools = new Map();
@@ -108,6 +113,7 @@ const statusTool = tools.get('gh_cli_status');
 check('gh_cli_resolve 已注册', Boolean(resolveTool));
 check('gh_cli_install 已注册', Boolean(installTool));
 
+phase('A–F：夹具检查（系统层 / 缓存落地 / 状态面）')
 // ---- A. 系统没有 gh：resolve 报告 none 且带自动落地计划 ----
 const before = await resolveTool.execute({}, {});
 check('A 系统层判定为不可用', before.system.ok === false, before.system);
@@ -198,25 +204,44 @@ async function runChild(mode, extraEnv) {
   const childHome = await fs.mkdtemp(path.join(os.tmpdir(), 'ghboot-child-'));
   const childFake = await fs.mkdtemp(path.join(os.tmpdir(), 'ghboot-cpath-'));
   await fs.writeFile(path.join(childFake, 'gh'), '#!/bin/sh\nexit 127\n', { mode: 0o755 });
-  const r = await new Promise((res) => execFile(process.execPath, ['--input-type=module', '-e', CHILD], {
-    env: {
-      ...process.env, CHILD_HOME: childHome, CHILD_FAKE: childFake, CHILD_MODE: mode,
-      REAL_PATH, PLUGIN_URL: new URL('./plugin.js', import.meta.url).href, ...(extraEnv || {}),
-      DSH_GH_RELEASE_API: process.env.DSH_GH_RELEASE_API, DSH_GH_DOWNLOAD_BASE: process.env.DSH_GH_DOWNLOAD_BASE,
-    },
-    maxBuffer: 8 * 1024 * 1024,
-    // 子进程上界：它真的会去走 gh 的落地路径。原来没有 timeout，子进程卡在网络等待上时
-    // 父进程只能无限期挂着 —— 挂的又是发布门禁的一环，整条流水线会静默地耗掉几十分钟。
-    // 超时按失败记账（下方把 TIMEOUT 写进 err，重试回执里看得见），不吞成通过。
-    timeout: 90_000,
-    killSignal: 'SIGKILL',
-  }, (e, out, err) => res({
-    code: e ? 1 : 0,
-    out: out || '',
-    err: (e && e.killed) ? ('TIMEOUT(' + (e.signal || '') + ') ' + String(err || '')) : String(err || ''),
-  })));
+  // 父进程要的是子进程**打印的那份报告**，不是它的退出码 —— 所以读到 `__CHILD__` 就结算，
+  // 然后显式杀掉子进程，不等它自己退。为什么（2026-10-13 v1.8.1 发布实测）：CI 上子进程
+  // 加载期会起与本检查无关的后台探活，句柄留着不退出，于是 execFile 的回调永远不来，
+  // 父进程无限期挂着 —— 门禁在 CI 上静默 20 分钟就是这么来的（本机子进程会自己退，
+  // 所以本机一路绿，这个洞只在 CI 上现形）。超时（90 秒 + SIGKILL）仍留作最后一道上界。
+  const r = await new Promise((res) => {
+    let settled = false;
+    let buf = '';
+    let errBuf = '';
+    const settle = (v) => { if (settled) return; settled = true; try { child.kill('SIGKILL'); } catch (eKill) {} res(v); };
+    const child = execFile(process.execPath, ['--input-type=module', '-e', CHILD], {
+      env: {
+        ...process.env, CHILD_HOME: childHome, CHILD_FAKE: childFake, CHILD_MODE: mode,
+        REAL_PATH, PLUGIN_URL: new URL('./plugin.js', import.meta.url).href, ...(extraEnv || {}),
+        DSH_GH_RELEASE_API: process.env.DSH_GH_RELEASE_API, DSH_GH_DOWNLOAD_BASE: process.env.DSH_GH_DOWNLOAD_BASE,
+        // 与本次检查无关的后台探活（更新 / 状态体检）一律关掉：它们会连网、会留句柄，
+        // 而这里要验的只是「gh 有没有落地」。更新那一路由 verify-update-gc 专门覆盖。
+        DSH_GH_NO_UPDATE: '1', DSH_GH_NO_STATE_CHECK: '1',
+      },
+      maxBuffer: 8 * 1024 * 1024,
+      timeout: 90_000,
+      killSignal: 'SIGKILL',
+    }, (e, out, err) => settle({
+      code: e ? 1 : 0,
+      out: out || '',
+      err: (e && e.killed) ? ('TIMEOUT(' + (e.signal || '') + ') ' + String(err || '')) : String(err || ''),
+      via: (e && e.killed) ? 'timeout' : 'exit',
+    }));
+    child.stdout.on('data', (b) => {
+      buf += b.toString();
+      if (buf.split('\n').some((l) => l.startsWith('__CHILD__'))) {
+        settle({ code: 0, out: buf, err: errBuf, via: 'report' });
+      }
+    });
+    child.stderr.on('data', (b) => { errBuf += b.toString(); });
+  });
   const line = r.out.split('\n').find((l) => l.startsWith('__CHILD__')) || '';
-  if (!line) console.error('[child ' + mode + '] code=' + r.code + ' out=' + r.out.slice(0, 300) + ' err=' + r.err.slice(0, 300));
+  if (!line) console.error('[child ' + mode + '] via=' + r.via + ' code=' + r.code + ' out=' + r.out.slice(0, 300) + ' err=' + r.err.slice(0, 300));
   const parsed = line ? JSON.parse(line.slice(9)) : null;
   await fs.rm(childHome, { recursive: true, force: true });
   await fs.rm(childFake, { recursive: true, force: true });
@@ -229,13 +254,14 @@ async function runChildUntilPass(mode, env, tries = 3) {
   const reports = [];
   for (let i = 0; i < tries; i++) {
     const r = await runChild(mode, env);
-    reports.push({ code: r.code, hasJson: Boolean(r.parsed), err: r.err.slice(0, 160) });
+    reports.push({ code: r.code, via: r.via, hasJson: Boolean(r.parsed), err: r.err.slice(0, 160) });
     if (r.code === 0 && r.parsed) return { ...r, reports };
     await new Promise((res) => setTimeout(res, 400));
   }
   return { code: 1, parsed: null, out: '', err: '', reports };
 }
 
+phase('G：子进程 fetch 兜底（最多 3 次）')
 const g = await runChildUntilPass('fetch', { DSH_GH_FORCE_FETCH: '1' });
 check('G 子进程跑通（fetch 兜底）', g.code === 0 && Boolean(g.parsed), g.reports);
 if (g.parsed) {
@@ -245,6 +271,7 @@ if (g.parsed) {
   check('G 下载走的是 fetch（不是 curl）', a.ok === true, { method: a.method, entry: a.entry });
 }
 
+phase('H：子进程加载期自动落地（最多 3 次）')
 const h = await runChildUntilPass('boot', { DSH_GH_NO_BOOTSTRAP: '0' });
 check('H 子进程跑通（加载期自动落地）', h.code === 0 && Boolean(h.parsed), h.reports);
 if (h.parsed) {
@@ -252,6 +279,7 @@ if (h.parsed) {
   check('H 落地报告标记为自动', (h.parsed.resolve.lastInstall && h.parsed.resolve.lastInstall.version) || '', h.parsed.resolve.lastInstall);
 }
 
+phase('H2：子进程关闭开关后不落地')
 const n = await runChildUntilPass('boot', { DSH_GH_NO_BOOTSTRAP: '1', CHILD_WAIT_MS: '3000' });
 if (n.parsed) {
   check('H2 关闭开关后不自动落地', n.parsed.resolve.resolved === 'none' && n.parsed.resolve.landedDuringWindow === false, { resolved: n.parsed.resolve.resolved, landed: n.parsed.resolve.landedDuringWindow });
