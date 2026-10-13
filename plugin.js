@@ -96,6 +96,14 @@ async function writeState(patch) {
 }
 
 /**
+ * 目录可写性判定 —— **只读**：`fs.access(W_OK)`，不写探针文件。
+ * 探针的职责是「如实报告宿主」，不是「顺便在宿主上留个文件」。
+ */
+async function canWriteDir(p) {
+  try { await fs.access(p, fsSync.constants.W_OK); return true; } catch { return false; }
+}
+
+/**
  * 读 gh CLI 的 hosts.yml（**只读**，绝不写回）里某个 host 的凭据。
  * 返回 { host, login, token }：缺失的字段各自回 ''，文件不在或格式不认得一律回空，**不抛**。
  * 兼容 gh 的实际写法：host 块以顶格 `<host>:` 起头；块内 `user:` 是登录名、`oauth_token:` 是令牌，
@@ -928,6 +936,7 @@ const TOOL_PROTOCOL = [
   { name: 'gh_cli_logout', kind: 'write', required: [], optional: ['hostname', 'confirm', 'revoke', 'purge_git', 'reset_state', 'uninstall_gh', 'remove_gh_cache', 'remove_gh_config', 'dry_run'], returns: ['ok', 'dryRun', 'hostname', 'tokenMasked', 'steps', 'verify', 'leftover'] },
   { name: 'gh_cli_resolve', kind: 'read', required: [], optional: [], returns: ['resolved', 'system', 'pluginCache', 'dataDir', 'arch', 'autoLandOnNextUse', 'lastInstall'] },
   { name: 'gh_identity', kind: 'read', required: [], optional: [], returns: ['identity', 'points', 'config', 'summary'] },
+  { name: 'gh_env_probe', kind: 'read', required: [], optional: ['network_targets', 'attempts', 'timeout_ms'], returns: ['capabilities', 'network', 'proxy', 'dirs', 'summary', 'bounds', 'notes'] },
   { name: 'gh_cli_version', kind: 'write', required: [], optional: ['update', 'force'], returns: ['current', 'latest', 'layer', 'updateAvailable', 'checkedAt', 'updated', 'reason', 'lastUpdate'] },
   { name: 'gh_cache_gc', kind: 'write', required: [], optional: ['dry_run', 'keep_versions'], returns: ['dir', 'removed', 'removedCount', 'freedBytes', 'kept', 'keptVersions'] },
   { name: 'gh_protocol', kind: 'read', required: [], optional: [], returns: ['id', 'version', 'spec', 'service', 'http', 'envelope', 'tools', 'errors', 'registry', 'guarantees'] },
@@ -1280,8 +1289,8 @@ export function apply(ctx) {
   }
 
   /** 从 PATH 解析命令的真实绝对路径（N5：原来把 PATH 里的 gh 报成 /usr/bin/gh）。 */
-  async function whichCmd(name) {
-    const r = await run('sh', ['-c', 'command -v ' + name]);
+  async function whichCmd(name, timeoutMs = 0) {
+    const r = await run('sh', ['-c', 'command -v ' + name], timeoutMs > 0 ? { timeout: timeoutMs, killSignal: 'SIGKILL' } : {});
     const p = (r.stdout || '').trim().split('\n')[0].trim();
     return p.startsWith('/') ? p : null;
   }
@@ -1293,7 +1302,7 @@ export function apply(ctx) {
    * 真跑一次 --version。带 mtime+size 缓存：文件没换就不重复 fork；
    * 文件被换掉（自更新）时 mtime 变了，缓存自然失效。
    */
-  async function probeGh(bin, { fresh = false } = {}) {
+  async function probeGh(bin, { fresh = false, timeoutMs = 0 } = {}) {
     if (!bin) return { ok: false, bin: null };
     let st = null;
     try { st = await fs.stat(bin); } catch { /* PATH 里的名字 stat 不到，按无缓存处理 */ }
@@ -1302,7 +1311,8 @@ export function apply(ctx) {
     if (!fresh && hit && st && hit.mtimeMs === st.mtimeMs && hit.size === st.size) {
       return { ok: hit.ok, bin, version: hit.version };
     }
-    const r = await run(bin, ['--version']);
+    // timeoutMs > 0 时给这次探测加上界（环境探针要「最坏情况也能返回」；其它调用点不传，行为不变）。
+    const r = await run(bin, ['--version'], timeoutMs > 0 ? { timeout: timeoutMs, killSignal: 'SIGKILL' } : {});
     const version = r.code === 0 ? versionLine(r.stdout) : null;
     if (st) probeCache.set(key, { mtimeMs: st.mtimeMs, size: st.size, ok: Boolean(version), version });
     return { ok: Boolean(version), bin, version };
@@ -2361,6 +2371,199 @@ sys.stdout.flush()
         fixes,
       };
       return { identity, points, config, summary };
+    },
+  }));
+
+  // ---------- 环境能力矩阵（只读；票「新工具 gh_env_probe（环境能力矩阵）」） ----------
+  // 一次调用报全「这台机器能不能干活」：gh 能否**真跑**、curl、node/arch、HOME 可写性、三路连通性、
+  // 代理变量、环境入口目录。与 gh_identity 的分工：那边答「身份接好没」，这边答「机器行不行」——
+  // **同一事实只报一处**（配置类路径 reposRoot / stateFile / hostsFile 的存在性在 gh_identity.config）。
+  // **有界**：每个网络探测各自 4 秒上界、每个子进程探测 5 秒上界 —— 最坏情况也能返回，不出现「不退出」。
+  // 只读：不写探针文件、不改配置（目录可写性用 fs.access(W_OK) 判，不落地试写）。
+  ctx.tools.register(textTool({
+    toolName: 'gh_env_probe',
+    description: 'Read-only environment capability matrix: in one call it reports whether gh can really run (path, layer, version), whether curl exists, node version, arch/platform, HOME writability, reachability of the three network routes the plugin depends on (REST API / codeload / release CDN), which proxy variables are set (presence only, values are never echoed), and whether the environment input directories exist and are writable. Every non-ok item carries the exact next step. Reachability is treated as inherently random (China/VPN routes): each route is tried several times (default 3, override with `attempts`) over two channels — Node fetch and the system curl, since only curl honours HTTP(S)_PROXY — and the receipt reports successes, success rate, redirect landing and the channel that worked, never a bare yes/no. Bounded: 4s per fetch attempt, 15s total network budget, 8s curl ceiling, 5s per subprocess probe, so it always returns.',
+    parameters: {
+      network_targets: {
+        type: 'array',
+        description: 'Override the reachability targets (each {name,url}) — used by hermetic gates to point the probes at a local stub. Omit to probe the three canonical routes.',
+        items: {
+          type: 'object',
+          properties: { name: { type: 'string' }, url: { type: 'string' } },
+          required: ['name', 'url'],
+        },
+      },
+      attempts: {
+        type: 'number',
+        description: 'How many times to try each route on the fetch channel (default 3, clamped 1..5). Reachability is treated as random, so more attempts give a truer picture.',
+      },
+      timeout_ms: {
+        type: 'number',
+        description: 'Per-attempt ceiling in ms (default 4000, clamped 500..15000). The total network budget stays 15000ms regardless.',
+      },
+    },
+    readOnly: true,
+    execute: async (args) => {
+      const startedAt = Date.now();
+      // 单次上界可调（慢链路/挂代理时可以把单次放宽），但整体预算固定 —— 上界可调不等于无界。
+      const NET_TIMEOUT_MS = Math.min(15000, Math.max(500, Number(args && args.timeout_ms) || 4000));
+      const CURL_TIMEOUT_MS = Math.min(8000, NET_TIMEOUT_MS * 2);
+      const PROC_TIMEOUT_MS = 5000;
+      const DEFAULT_TARGETS = [
+        { name: 'api', url: 'https://api.github.com/', what: 'REST API（gh api / 权限预检走这里）；用根路径，因为端点自身未必支持 HEAD' },
+        { name: 'codeload', url: 'https://codeload.github.com/', what: '源码归档下载（tarball / clone 走这里）' },
+        { name: 'release-cdn', url: 'https://objects.githubusercontent.com/', what: 'Release 资产 CDN（自带 gh 落地走这里）；只测主机可达，不是完整下载' },
+      ];
+      const custom = Array.isArray(args && args.network_targets)
+        ? args.network_targets.filter((t) => t && t.url)
+        : [];
+      const targets = custom.length
+        ? custom.map((t) => ({ name: String(t.name || 'custom'), url: String(t.url), what: '调用方指定的目标' }))
+        : DEFAULT_TARGETS;
+
+      const items = [];   // 统一形状：{ name, state: ok|degraded|missing, detail, next }
+
+      // ---- 能力 ----
+      const gh = await resolveGh({ install: false });
+      const ghProbe = (gh.ok && gh.path) ? await probeGh(gh.path, { fresh: true, timeoutMs: PROC_TIMEOUT_MS }) : { ok: false, version: null };
+      items.push({
+        name: 'gh',
+        state: (gh.ok && ghProbe.ok) ? 'ok' : gh.ok ? 'degraded' : 'missing',
+        detail: { layer: gh.ok ? gh.layer : 'none', path: gh.path || null, runnable: Boolean(ghProbe.ok), version: ghProbe.version || null },
+        next: (gh.ok && ghProbe.ok) ? null
+          : gh.ok ? '解析到了 gh（' + gh.path + '）但它跑不起来：多半是架构不符或缺动态库 —— 跑 gh_cli_install {force:true} 重落地'
+            : '跑 gh_cli_install（本插件工具）落地一份自带 gh；或装系统 gh 后重试',
+      });
+      const curlPath = await whichCmd('curl', PROC_TIMEOUT_MS);
+      items.push({
+        name: 'curl', state: curlPath ? 'ok' : 'missing', detail: { path: curlPath || null },
+        next: curlPath ? null : '装 curl；或依赖插件的 fetch 兜底路径（能跑，但大文件更慢）',
+      });
+      items.push({ name: 'node', state: 'ok', detail: { version: process.version, execPath: process.execPath }, next: null });
+      items.push({ name: 'arch', state: 'ok', detail: { arch: process.arch, platform: process.platform }, next: null });
+      const homeWritable = await canWriteDir(HOME);
+      items.push({
+        name: 'home-writable', state: homeWritable ? 'ok' : 'degraded', detail: { path: HOME, writable: homeWritable },
+        next: homeWritable ? null : 'HOME 不可写（或不存在）：插件要往 ~/.dsh 写 state / 缓存 / 日志 —— 换一个可写的 HOME，或修权限',
+      });
+
+      // ---- 网络：三路连通性（**冗余 + 双通道 + 上界**） ----
+      // 前提（2026-10-14 维护者给的域知识 + 本机实测）：到 GitHub 的可达性**本身就随机** ——
+      // 国内链路、VPN 抖动是常态，「测一次不通」不代表不能用。所以：
+      //   ① 冗余：每路多次尝试，如实报成功次数与成功率，**不做二元判断**；时通时不通就是 degraded；
+      //   ② 重定向：跟随（真链路上 github.com 的下载会 302 到 CDN；不跟就测不到真实通路），并报出最终落点；
+      //   ③ 双通道：Node fetch 与系统 curl 各自尝试 —— **fetch 不读 HTTP(S)_PROXY，curl 读**，
+      //      所以 VPN/代理环境下「fetch 不通、curl 通」是常态，分开报才不会把能干活冤枉成不能。
+      const attemptsWanted = Math.min(5, Math.max(1, Number(args && args.attempts) || 3));
+      const net = [];
+      const netBudgetMs = 15000;
+      const netStartedAt = Date.now();
+      const budgetLeft = () => Math.max(0, netBudgetMs - (Date.now() - netStartedAt));
+      for (const t of targets) {
+        const t0 = Date.now();
+        const rec = { attempts: 0, okCount: 0, firstOkMs: null, httpCode: null, redirects: false, finalUrl: null, error: null };
+        // 通道一：Node fetch（插件自己的 REST 工具走它）
+        for (let i = 0; i < attemptsWanted; i += 1) {
+          const budget = Math.min(NET_TIMEOUT_MS, budgetLeft());
+          if (budget <= 0) { rec.error = 'budget-exhausted（网络总预算 ' + netBudgetMs + 'ms 用完）'; break; }
+          rec.attempts += 1;
+          const a0 = Date.now();
+          try {
+            const res = await fetch(t.url, { method: 'HEAD', redirect: 'follow', signal: AbortSignal.timeout(budget) });
+            rec.okCount += 1;
+            if (rec.firstOkMs === null) rec.firstOkMs = Date.now() - a0;
+            rec.httpCode = res.status;
+            if (res.redirected) { rec.redirects = true; rec.finalUrl = res.url; }
+          } catch (e) {
+            const msg = String((e && (e.message || e.name)) || e);
+            rec.error = /abort|timeout/i.test(msg) ? 'timeout（单次上界 ' + NET_TIMEOUT_MS + 'ms）' : msg.slice(0, 120);
+          }
+        }
+        // 通道二：系统 curl（读 HTTP(S)_PROXY + 自己的 DNS/TLS 栈；VPN 环境下常常只有它通）
+        let curl = null;
+        if (rec.okCount < attemptsWanted) {
+          const budget = Math.min(CURL_TIMEOUT_MS, budgetLeft());
+          if (budget > 0) {
+            const c0 = Date.now();
+            // `--max-time` 用**小数秒**（curl 支持）：取整到整秒会让 1200ms 的预算实际变成 2s。
+            const r = await run('curl', ['-sS', '-o', '/dev/null', '-w', '%{http_code}', '-I', '--max-time', (budget / 1000).toFixed(2), t.url], { timeout: budget + 800, killSignal: 'SIGKILL' });
+            const code = Number(String(r.stdout).trim().split('\n').pop()) || 0;
+            curl = {
+              ok: r.code === 0 && code > 0,
+              httpCode: code || null,
+              ms: Date.now() - c0,
+              viaProxyEnv: Boolean(process.env.HTTPS_PROXY || process.env.HTTP_PROXY || process.env.https_proxy || process.env.http_proxy),
+              ...(r.code !== 0 && r.stderr ? { error: String(r.stderr).trim().slice(0, 120) } : {}),
+            };
+          } else {
+            curl = { ok: false, httpCode: null, ms: 0, viaProxyEnv: false, error: 'budget-exhausted' };
+          }
+        }
+        const rate = rec.attempts ? rec.okCount / rec.attempts : 0;
+        const state = rec.okCount === attemptsWanted ? 'ok' : (rec.okCount > 0 || (curl && curl.ok)) ? 'degraded' : 'missing';
+        const next = state === 'ok' ? null
+          : rec.okCount > 0
+            ? '时通时不通（' + rec.okCount + '/' + rec.attempts + ' 次成功）：国内链路 / VPN 抖动下这是常态 —— 关键动作失败就重试；要稳定就把 HTTPS_PROXY 配上'
+            : (curl && curl.ok)
+              ? '插件自己的 fetch 通道不通，但系统 curl 通（curl 读 HTTP(S)_PROXY，Node fetch 不读）—— 设 HTTPS_PROXY 让 fetch 也走代理，或让关键动作走 curl 通道'
+              : '这台机器到「' + t.name + '」不通（' + rec.attempts + ' 次都没成）：依赖它的动作会失败（' + t.what + '）—— 换网络 / 配代理（HTTPS_PROXY），或先只用不需要它的功能';
+        net.push({
+          name: t.name, url: t.url, what: t.what, state,
+          detail: {
+            via: rec.okCount > 0 ? 'fetch' : (curl && curl.ok ? 'curl' : null),
+            attempts: rec.attempts, okCount: rec.okCount, successRate: rate,
+            httpCode: rec.httpCode,
+            // ms = 这一路**总耗时**（全部失败时也要有值 —— 「卡了多久」正是失败时最该看的数）；
+            // firstOkMs = 首次成功的那次延迟（全失败时为 null）。
+            ms: Date.now() - t0, firstOkMs: rec.firstOkMs,
+            redirects: rec.redirects, finalUrl: rec.finalUrl,
+            boundMs: NET_TIMEOUT_MS, budgetMs: netBudgetMs,
+            ...(curl ? { curl } : {}),
+            ...(rec.error ? { error: rec.error } : {}),
+          },
+          next,
+        });
+      }
+
+      // ---- 代理变量：**只报有无**（值里可能带凭据，一律不回显） ----
+      const proxyKeys = ['HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'all_proxy', 'no_proxy'];
+      const proxy = {};
+      for (const k of proxyKeys) proxy[k] = Boolean(process.env[k]);
+
+      // ---- 环境入口目录（配置类路径不在这里，见 notes） ----
+      const dirs = [];
+      for (const [label, p] of [['home', HOME], ['cwd', process.cwd()], ['data-dir', GH_DATA_DIR], ['tmp', os.tmpdir()]]) {
+        const exists = await pathExists(p);
+        const writable = exists ? await canWriteDir(p) : false;
+        dirs.push({
+          name: label, path: p, exists, writable,
+          next: !exists
+            ? '目录不存在：确认这个路径（配置或环境变量）指的是不是真地方 —— 指向不存在的目录时，扫描与落地都会静默落空'
+            : writable ? null : '目录在但不可写：落地 / 缓存会失败 —— 修权限或换路径',
+        });
+      }
+
+      const flat = items.concat(net.map((n) => ({ name: 'net:' + n.name, state: n.state, next: n.next })));
+      return {
+        capabilities: items,
+        network: net,
+        proxy,
+        dirs,
+        summary: {
+          ok: flat.filter((i) => i.state === 'ok').length,
+          degraded: flat.filter((i) => i.state === 'degraded').length,
+          missing: flat.filter((i) => i.state === 'missing').length,
+          next: [...new Set(flat.map((i) => i.next).concat(dirs.map((d) => d.next)).filter(Boolean))],
+        },
+        bounds: { networkMs: NET_TIMEOUT_MS, networkTotalMs: netBudgetMs, curlMs: CURL_TIMEOUT_MS, attempts: attemptsWanted, processMs: PROC_TIMEOUT_MS, elapsedMs: Date.now() - startedAt, targets: targets.length },
+        notes: [
+          '代理变量只报有无，不回显值（值里可能带凭据）',
+          '同一事实只报一处：配置类路径（reposRoot / stateFile / hostsFile）的存在性在 gh_identity.config',
+          '网络探测是 HEAD 可达性判断，任何 HTTP 状态码都算「通」；不代表某个具体资产能下载',
+          '可达性按**随机**对待：每路多次尝试（默认 3 次，可传 attempts 覆盖），回执报成功次数/成功率/最终落点，不做二元判断',
+          '双通道：先 Node fetch（不读 HTTP(S)_PROXY），再系统 curl（读代理）；只有 curl 通 = degraded，不是 missing',
+        ],
+      };
     },
   }));
 
