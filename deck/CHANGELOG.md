@@ -1,3 +1,24 @@
+## 2026-10-13 · 合并包 1.7.7：deck 半边 gh 执行路径修复（#15）
+
+- **这是什么**：合并包的补丁版。在「插件自带 gh + 系统 PATH 里没有 gh」（DSHA 容器的默认形态）的机器上，
+  deck 半边（`deck_*` 工具 / 面板取数 / 预检）此前会**整片失败**，而 Resident 半边（`gh_*` 工具、登录、更新）一直正常 ——
+  半边活、半边死，最难查。
+- **改了什么**：
+  - `deck/src/host/tracker/backends/github/client.js`：`execGh` 起进程改用 `platform.resolveExecutable('gh')`
+    解析出的路径。此前解析到了却传裸名 `'gh'`：spawn ENOENT → 空输出 + 退出码 -1 → 被归一成
+    「gh 这一次没拿到退出码（命令可能被中断，或者根本没起来）」。解析结果缺失时**如实 env 失败**，不再退回裸名。
+    `--version` 回退探针**保持裸名** —— 它探的就是「这个执行世界里裸名 gh 能不能跑」，探通才回 `'gh'` 供执行点照跑。
+  - 新增 `tests/merge/host/gh-exec-path.test.mjs`（6 节 20 项，随 `tests/merge/run.mjs` 自动收编）。
+- **版本号**：合并包 `1.7.6 → 1.7.7`；deck 包不动（`1.8.0-rc.8`，本次无 deck 包侧改动）。
+- **对应提交**：`b83c91b`（修复本体）+ 本次版本提交。
+- **验证**：新门禁 20/20 全绿；同一门禁在修复前 `79d30bf` 上 **5 FAIL / 17**（复现现场原话）；突变测试
+  （把执行点改回裸名）**8 条红**；真进程 + 真 API（执行世界 `PATH=/usr/bin:/bin`，本机该 PATH 无 gh）走 deck 的
+  `listIssues` 链：改前 `exec_cmd:["gh"]` → ENOENT → `ok:false/kind:env`，改后 `exec_cmd:["/root/.dsh/gh-cli/bin/gh"]`
+  → `ok:true` 取回线上 15 条 issue。
+- **影响**：deck 半边在「PATH 无 gh」的机器上开箱可用，不再需要「把插件自带 gh 暴露进系统 PATH」的环境绕过。
+- **遗留**：`gitlab/client.js` 同形（`exec('glab', …)`）未修，另单跟进；装机级验收（重启后 `deck_context` 回
+  `initialized:true` / `preflight.ok:true`）待装了本版之后再做。
+
 ## 2026-10-13 · v1.8.0-rc.8 / 合并包 1.7.2：真机「字被图标替代」修复 + 构建装配坑补齐
 
 - **这是什么**：一次工作树内的真机修复版。宿主加载的是**合并包** `dist/*`（`package.json` 的 exports 指向它），
