@@ -1,6 +1,19 @@
-import * as ElectronMod from 'electron'
-import * as ElectronMod2 from 'electron'
 // src/host/pickerShell.js —— 文件夹打开与原生选择器（H6 #450 从 host/index.js 823–853/1030–1133 搬出，纯结构、行为零变化）。
+//
+// 为什么不再在文件头静态 `import 'electron'`（2026-10-13 修）：electron 不在本包依赖里，而静态 import 一个
+// 不存在的模块会**在模块加载时**抛 ERR_MODULE_NOT_FOUND —— 本文件是懒加载的（host/index.js 的 `_picker()`
+// 在用到选择器时才 import），于是后果不是它承诺的「没有原生对话框就回落成手输提示」，而是「Web/Android 宿主里
+// 点一下『浏览…』就崩」。改成按需动态导入：探测不到就交回 null，走下面第 ③ 条回落分支。
+// 顺带：原实现那处判据 `typeof require === 'function'` 在 ESM 里恒假，三元永远取 null —— 也就是说 Electron
+// 那条路从来没生效过；改用动态导入后这处假判据不再需要。原文件还把同一行 import 写了两遍（ElectronMod/2）。
+async function loadElectron() {
+  try {
+    const m = await import('electron')
+    return m && m.default ? m.default : m
+  } catch (_) {
+    return null
+  }
+}
 // 以后谁改它：改打开文件夹或原生目录/文件选择器的人。预估约150行，超 350 打回。
 // 接线：由 index.js 动态 import 加载；本文件不引用其他新文件。
 // 五方职责：本文件只表达意图（开目录/开文件），系统分支由平台抽象层拥有（各 OS 底座的可见打开配方），此处不出现按系统分发的分支。
@@ -31,7 +44,7 @@ export function createPickerShell(deps) {
     try {
       // 1) 尝试 Electron dialog（DSH Desktop 主进程）
       let electron = null
-      try { electron = typeof require === 'function' ? ElectronMod : null } catch(_){}
+      electron = await loadElectron()
       if (electron && electron.dialog && typeof electron.dialog.showOpenDialogSync === 'function') {
         try {
           const picked = electron.dialog.showOpenDialogSync({ properties: ['openDirectory'], defaultPath: initial || cwd })
@@ -59,7 +72,7 @@ export function createPickerShell(deps) {
     const initial = args && args.initial ? String(args.initial) : cwd
     try {
       let electron = null
-      try { electron = typeof require === 'function' ? ElectronMod2 : null } catch(_){}
+      electron = await loadElectron()
       if (electron && electron.dialog && typeof electron.dialog.showOpenDialogSync === 'function') {
         try {
           const picked = electron.dialog.showOpenDialogSync({ properties: ['openFile'], defaultPath: initial || cwd })

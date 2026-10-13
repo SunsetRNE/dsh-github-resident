@@ -830,7 +830,7 @@ const TOOL_PROTOCOL = [
   { name: 'gh_sync', kind: 'write', required: [], optional: ['root', 'depth', 'message', 'push', 'dry_run'], returns: ['root', 'scanned', 'committed', 'failed', 'results'] },
   { name: 'gh_pr', kind: 'write', required: ['repo', 'title'], optional: ['head', 'base', 'body', 'draft'], returns: ['ok', 'number', 'url', 'base', 'status'] },
   { name: 'gh_cli_install', kind: 'write', required: [], optional: ['force', 'prefer'], returns: ['installed', 'layer', 'path', 'version', 'attempts'] },
-  { name: 'gh_cli_auth_web', kind: 'write', required: [], optional: ['setup_git', 'open_browser'], returns: ['ok', 'user_code', 'verification_uri', 'opened'] },
+  { name: 'gh_cli_auth_web', kind: 'write', required: [], optional: ['open_browser'], returns: ['ok', 'version', 'ghLayer', 'ghPath', 'user_code', 'verification_uri', 'opened', 'note', 'logTail'] },
   { name: 'gh_cli_status', kind: 'read', required: [], optional: [], returns: ['version', 'authenticated', 'activeAccount', 'gitCredentialHelper', 'hosts'] },
   { name: 'gh_cli_setup_git', kind: 'write', required: [], optional: ['set_identity'], returns: ['exitCode', 'credentialHelper', 'gitUserName', 'gitUserEmail'] },
   { name: 'gh_cli_logout', kind: 'write', required: [], optional: ['hostname', 'confirm', 'revoke', 'purge_git', 'reset_state', 'uninstall_gh', 'remove_gh_cache', 'remove_gh_config', 'dry_run'], returns: ['ok', 'dryRun', 'hostname', 'tokenMasked', 'steps', 'verify', 'leftover'] },
@@ -1431,7 +1431,7 @@ export function apply(ctx) {
    * 全插件唯一的 gh 入口。system = 宿主已装（有就用），plugin-cache = 自带，
    * 两者都没有且 install !== false 时自动落地一份。
    */
-  async function resolveGh({ install = true, force = false } = {}) {
+  async function resolveGh({ install = true, force = false, prefer = 'auto' } = {}) {
     // install:false 是"读路径"（面板 buildSnapshot / gh_cli_status / 版本探测），它不落地，
     // 但系统层结论必须能过期重探：否则 L1 出现之前留下的 plugin-cache 会一直在，同一个插件里
     // gh_cli_resolve（install:true）报 system、gh_cli_status 报 plugin-cache，口径互相打架；
@@ -1461,7 +1461,7 @@ export function apply(ctx) {
     if (install === false) {
       return { ok: false, layer: 'none', path: null, version: null, note: '系统没有 gh，插件缓存也没落地（install:false）' };
     }
-    const res = await ensureGh({ force });
+    const res = await ensureGh({ force, prefer });
     ghMemo = res.ok ? { ok: true, layer: res.layer, path: res.path, version: res.version, ensure: res } : res;
     return ghMemo;
   }
@@ -1473,13 +1473,13 @@ export function apply(ctx) {
   }
 
   /** 旧的强制落地入口（gh_cli_install 用），保留完整诊断。 */
-  async function installGh() {
+  async function installGh({ prefer = 'auto' } = {}) {
     const sys = await probeGh('gh');
     if (sys.ok) {
       const abs = sys.bin === 'gh' ? ((await whichCmd('gh')) || '/usr/bin/gh') : sys.bin;
       return { installed: true, alreadyPresent: true, version: sys.version, path: abs, layer: 'system' };
     }
-    const res = await ensureGh({ force: true });
+    const res = await ensureGh({ force: true, prefer });
     return {
       installed: res.ok,
       layer: res.layer,
@@ -1824,7 +1824,11 @@ sys.stdout.flush()
     readOnly: false,
     execute: async (args) => {
       const force = args.force === true;
-      const g = await resolveGh({ force });
+      // prefer 此前**声明了却从没往下传**（handler 只读 force，ensureGh 收到的一直是默认 'auto'）——
+      // 于是 prefer:'deb' 与不传完全等价。这里如实接线：认得的两个值才生效，其余按 auto
+      //（判据与 ensureGh 内部一致：`prefer === 'deb' ? ['deb','tarball'] : ['tarball','deb']`）。
+      const prefer = args.prefer === 'deb' ? 'deb' : args.prefer === 'tarball' ? 'tarball' : 'auto';
+      const g = await resolveGh({ force, prefer });
       let res;
       if (g.ok && g.layer === 'system' && !force) {
         return { installed: true, alreadyPresent: true, layer: 'system', path: g.path, version: g.version };
@@ -1833,7 +1837,7 @@ sys.stdout.flush()
       } else if (g.ok) {
         return { installed: true, alreadyPresent: true, layer: g.layer, path: g.path, version: g.version };
       } else {
-        res = await installGh();
+        res = await installGh({ prefer });
       }
       const ghBin = res.path || g.path || 'gh';
       const auth = await run(ghBin, ['auth', 'status', '--hostname', 'github.com']);
@@ -1868,7 +1872,10 @@ sys.stdout.flush()
     toolName: 'gh_cli_auth_web',
     description: 'Start the GitHub CLI web (device-code) sign-in for github.com, pull the one-time code out of the CLI output, and open the verification page in the phone browser or the system default browser. Returns the one-time code and the verification URL; the user finishes authorisation in the browser, then gh_cli_status confirms it.',
     parameters: {
-      setup_git: { type: 'boolean', description: 'Run gh auth setup-git afterwards so git uses gh as its credential helper. Defaults to true.' },
+      // 这里原来还有一个 `setup_git`（描述写着「Run gh auth setup-git afterwards … Defaults to true」），
+      // 但 handler 从没读过它 —— 那句承诺一次都没兑现。要配 git 凭据助手请用独立工具 gh_cli_setup_git
+      //（它真的执行 gh auth setup-git）。删掉而不是补实现：设备码流程只负责「拿到码 + 开页面」，
+      // 此刻用户还没完成授权，顺手去改 git 全局配置属于另一个动作，让它保持显式更诚实。
       open_browser: { type: 'boolean', description: 'Try to open the verification page automatically. Defaults to true.' },
     },
     readOnly: false,

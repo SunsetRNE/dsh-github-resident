@@ -1,3 +1,42 @@
+## 2026-10-13 · 合并包 1.8.1：清洗（两个死参数、一处会崩的选择器、化石文件与文档数字）
+
+- **这是什么**：P0→P1→P2 分别修了行为、协议、门禁；本版做清洗 —— 把「声明了却不生效」「引用了却不存在」
+  「写着却不真实」的那一批逐个对齐。不引入新功能。
+- **改了什么**：
+  - **`gh_cli_install.prefer` 从此真的生效**：工具 schema 声明了 `prefer`（auto / tarball / deb），
+    而 `ensureGh` 内部一直支持它（用它决定落地顺序），但 handler 只读 `force`、`resolveGh` 的签名也不收它
+    —— 于是 `prefer:'deb'` 与不传**完全等价**。现在接线到底：handler → `resolveGh` → `installGh` → `ensureGh`。
+  - **`gh_cli_auth_web.setup_git` 删除**：它声明着「Run gh auth setup-git afterwards … Defaults to true」，
+    而 handler 从没读过它 —— 那句承诺一次都没兑现。**删掉而不是补实现**：设备码流程只负责「拿到码 + 开页面」，
+    此刻用户还没完成授权，顺手去改 git 全局配置属于另一个动作；要配 helper 用独立工具 `gh_cli_setup_git`
+    （它真的执行 `gh auth setup-git`）。TOOL_PROTOCOL 的 optional 同步收窄、`returns` 补全成真实形状。
+  - **`pickerShell.js` 不再「加载即崩」**（真 bug）：文件头两行静态 `import 'electron'`（同一行还写了两遍），
+    而 electron 不在本包依赖里 —— 静态 import 一个不存在的模块会在**模块加载时**抛 ERR_MODULE_NOT_FOUND。
+    本文件是懒加载的（`host/index.js` 的 `_picker()` 在用到选择器时才 import），所以后果不是它承诺的
+    「没有原生对话框就回落成手输提示」，而是「Web/Android 宿主里点一下『浏览…』就崩」（本机实测：
+    `import('./pickerShell.js')` → `ERR_MODULE_NOT_FOUND: Cannot find package 'electron'`）。改成按需动态
+    导入 + 如实回落，实测现在回 `{ok:false, errorKind:'no-picker'}`。同处那条 ESM 里恒假的判据
+    （`typeof require === 'function'` 永远取 null —— 也就是说 Electron 那条路从来没生效过）随之一并去掉。
+  - **删掉 `SHA256SUMS`**：它记的是 **1.6.4** 的两个产物、此后再没更新过（全仓只被提交过一次）；两个通道
+    脚本只**计算**哈希写进 `index.json` 与站点 `integrity`，从没人读它、写它或上传它，`release.yml` 也从不
+    生成它。一份指向两个不存在产物的哈希清单会让「发布核对」彻底失效 —— 比没有更危险，故删
+    （README 与其它文档都没引用它；`docs/merge-*` 里的历史记录保留原样，那是当时的事实）。
+  - **文档里的失效引用与写死的数字**：README 曾写「量尺是 `node tools/copy-count.mjs client.js`」——
+    那个脚本**在仓库里并不存在**，而真正的量尺就是门禁本身；同句的「≤ 400（当前 332）」也早被合并期调整到
+    480，一并改成不写死（门禁自己会报）。`LESSONS.md` 的条数在三处互相矛盾（README 说 27、README.en 说 23、
+    实际 **29**）—— 改成不带数字的措辞：**数字没有真源就会过期**，与 1.7.9 清理「七个」同一逻辑。
+  - **`files` 再收窄**：移除 `"deck/scripts/"`。那是 deck 的**维护者脚本**（42 个，含 `*.ps1` 发布向导、
+    Playwright `headless:false` 的 UI 驱动、夹具生成器），与本包运行期无关（`deck/src/**` 对它的引用全在
+    注释里，已逐项核过），此前整目录随包发给了用户。
+- **版本号**：合并包 `1.8.0 → 1.8.1`；deck 包 `1.8.0-rc.11 → 1.8.0-rc.12`。
+- **验证**：`tests/merge/run.mjs` **19/19**（含 1.7.9 新增的契约测试 22 项，它同时钉住了两个死参数的对齐）；
+  `--check` 全绿；`npm run build` 退出码 0；pickerShell 可加载并如实回落（实测输出见上）。
+- **设备侧残留（不在仓库里，本次未动，供参考）**：`~/.dsh/plugin-install-operations/completed/**/delete-source/`
+  还留着旧 Deck 卸载时的整套技能副本（119 个 `SKILL.md`）；`~/.dsh/profiles/web/node_modules/@local/` 是空目录
+  （1.6.x 时期工作区软链的残留）。两者都不影响运行，删除属于设备清理，需要时另行确认再做。
+
+---
+
 ## 2026-10-13 · 合并包 1.8.0：门禁可信（CI 接认证链 + 清假绿灯）+ 两处一直红着的存量问题
 
 - **这是什么**：1.7.8 修行为、1.7.9 修协议同源，本版修**门禁本身**。此前「发布」与「认证」是两条
