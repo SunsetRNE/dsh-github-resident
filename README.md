@@ -32,3 +32,18 @@
 更新检查会直接跳过（不联网）；要让它真的查，装法得从 `link:` 切到 pack 形态（profile 依赖写版本区间、副本是真目录）。
 
 参考请求形状（本机假源实测）：`GET /%40sunsetrne%2Fdsh-github-resident-v2/latest` → 200。
+5. **`dist.tarball` 的 pathname 必须从「源 origin 的根」算起** —— 校验式是
+   `pathname === '/<包名>/-/<包名>-<版本>.tgz'`，与 `registryUrl` 的**路径前缀无关**。
+   实测后果：项目站 `https://sunsetrne.github.io/dsh-github-resident/` 上的 tarball 路径是
+   `/dsh-github-resident/@sunsetrne/…/-/…tgz` → 判 `invalid-release`。
+   要满足它，只能让**源 origin 的根**归我们：自定义域名指到 Pages（站落在域名根）／用用户站
+   `SunsetRNE.github.io` 的根／或走一个小中转服务；否则得改成自实现检查（不依赖这条路径规则）。
+
+### 探针实测（2026-10-13）
+
+| 路径写法 | 结果 |
+| --- | --- |
+| `/%40sunsetrne%2Fdsh-github-resident-v2/latest`（编码） | **200**（Pages 直接服务这种路径） |
+| `/@sunsetrne/dsh-github-resident-v2/latest`（解码字面） | **200** |
+| `--path-as-is` 再试编码路径 | **200** |
+| 同一元数据喂 `fetchNpmRelease` | **`invalid-release`** —— 卡在第 5 条（origin 根路径规则），不是托管问题 |
