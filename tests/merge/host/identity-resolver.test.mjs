@@ -21,54 +21,33 @@
  * 用法：node tests/merge/host/identity-resolver.test.mjs
  */
 import { createHash } from 'node:crypto'
-import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync, rmSync } from 'node:fs'
-import os from 'node:os'
+import { mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { check, note, section, summary, readText, tmpDir, REPO_ROOT } from './_check.mjs'
+// 合成环境：全仓唯一夹具（票「合成环境矩阵门禁」）—— 本文件原来自己写了一份 fakeHome/loadPlugin，
+// 那份已删除，判据一条不减地改用它。为什么非要用夹具：门禁必须证明「换环境也如实」，
+// 而不是「在跑门禁这台机器上恰好绿」。
+import { makeHome, importPluginAt } from './_env-harness.mjs'
 
 const PLUGIN_URL = pathToFileURL(join(REPO_ROOT, 'plugin.js')).href
 const sha = (p) => createHash('sha256').update(readFileSync(p)).digest('hex')
 
-/** 造一个假 HOME。`files` 是「相对 HOME 的路径 → 内容」。 */
-function fakeHome(tag, files = {}) {
-  const home = tmpDir('idres-' + tag)
-  for (const [rel, body] of Object.entries(files)) {
-    const abs = join(home, rel)
-    mkdirSync(join(abs, '..'), { recursive: true })
-    writeFileSync(abs, body, { mode: 0o600 })
-  }
-  return home
-}
-
 /**
- * 用指定假 HOME 重新求值一份 plugin.js（模块顶部的 HOME 是**加载期**求值的，
- * 所以每个 HOME 必须拿到自己的模块实例；查询串只是用来换一个模块 URL）。
- *
- * 为什么既改 `os.homedir` 又改 `process.env.HOME`（2026-10-14 实测）：plugin.js 用的是
- * `import * as os from 'node:os'`，而 Node 内置模块的**命名空间绑定不跟随属性改写** ——
- * 在 default 导出上写 `os.homedir = fn` 对命名空间里那个 `homedir` 无效；真正生效的是
- * `os.homedir()` 内部实时读的 `process.env.HOME`。两个都设，才不会出现「以为在用假 HOME、
- * 实际读的是真 HOME」这种静默假绿（本用例第一版就踩了这个坑，门禁自己把自己抓出来了）。
+ * 顺序脚本式取实例：路径常量在 import 期定型，之后环境不再影响它（本文件直接驱导出接缝）。
+ * 恢复函数统一在结尾执行（见文件末尾的 restores）。
  */
-async function loadPlugin(home, tag) {
-  const realHomedir = os.homedir
-  const realEnvHome = process.env.HOME
-  os.homedir = () => home
-  process.env.HOME = home
-  try {
-    return await import(PLUGIN_URL + '?home=' + encodeURIComponent(tag))
-  } finally {
-    os.homedir = realHomedir
-    if (realEnvHome === undefined) delete process.env.HOME
-    else process.env.HOME = realEnvHome
-  }
-}
-
-/** 清掉环境里的两种 env 令牌，保证用例之间互不污染。 */
+/** 合成环境里也要显式清掉真环境可能串进来的 token（夹具会清，这里给「用例中途切换」用）。 */
 function clearEnvToken() {
   delete process.env.GH_TOKEN
   delete process.env.GITHUB_TOKEN
+}
+
+const restores = []
+async function loadPlugin(h, tag) {
+  const o = await importPluginAt(h.home, tag)
+  restores.push(o.restore)
+  return o.mod
 }
 
 const GITHUB_TOKEN_FAKE = 'gho_HOSTS_GITHUB_abcdefghijklmnop'
@@ -98,20 +77,20 @@ const STATE_JSON = JSON.stringify({ token: STATE_TOKEN_FAKE, login: 'state-user'
 section('① 三个后端各自能单独命中')
 clearEnvToken()
 
-const homeHosts = fakeHome('hosts', { '.config/gh/hosts.yml': HOSTS_REALISTIC })
+const homeHosts = makeHome('hosts', { files: { '.config/gh/hosts.yml': HOSTS_REALISTIC } })
 const pHosts = await loadPlugin(homeHosts, 'hosts')
 const rHosts = await pHosts.resolveIdentity()
 check(rHosts.source === 'gh-cli:~/.config/gh/hosts.yml', 'hosts.yml 后端：source 如实（实得 ' + rHosts.source + '）')
 check(rHosts.token === GITHUB_TOKEN_FAKE, 'hosts.yml 后端：取到的是 github.com 的令牌')
 check(rHosts.login === 'SunsetRNE', 'hosts.yml 后端：登录名从 user: 读到（实得 ' + String(rHosts.login) + '）')
 
-const homeState = fakeHome('state', { '.dsh/github-resident.json': STATE_JSON })
+const homeState = makeHome('state', { files: { '.dsh/github-resident.json': STATE_JSON } })
 const pState = await loadPlugin(homeState, 'state')
 const rState = await pState.resolveIdentity()
 check(rState.source === 'state:~/.dsh/github-resident.json', 'state 后端：source 如实（实得 ' + rState.source + '）')
 check(rState.token === STATE_TOKEN_FAKE && rState.login === 'state-user', 'state 后端：token 与 login 都对')
 
-const homeNone = fakeHome('none', {})
+const homeNone = makeHome('none', {})
 const pNone = await loadPlugin(homeNone, 'none')
 process.env.GH_TOKEN = ENV_TOKEN_FAKE
 const rEnv = await pNone.resolveIdentity()
@@ -128,16 +107,16 @@ check(rEmpty.ok === false && rEmpty.source === '(none)' && rEmpty.token === '', 
 
 // ---------------------------------------------------------------- ② 优先级
 section('② 优先级：env → state → hosts.yml')
-const homeAll = fakeHome('all', {
+const homeAll = makeHome('all', { files: {
   '.dsh/github-resident.json': STATE_JSON,
   '.config/gh/hosts.yml': HOSTS_REALISTIC,
-})
+} })
 const pAll = await loadPlugin(homeAll, 'all')
 process.env.GH_TOKEN = ENV_TOKEN_FAKE
 check((await pAll.resolveIdentity()).source === 'env:GH_TOKEN', '三者同时在 → env 赢')
 delete process.env.GH_TOKEN
 check((await pAll.resolveIdentity()).source === 'state:~/.dsh/github-resident.json', '去掉 env → state 赢')
-writeFileSync(join(homeAll, '.dsh/github-resident.json'), '{}\n', { mode: 0o600 })
+writeFileSync(join(homeAll.home, '.dsh/github-resident.json'), '{}\n', { mode: 0o600 })
 check((await pAll.resolveIdentity()).source === 'gh-cli:~/.config/gh/hosts.yml', '去掉 state → hosts.yml 赢')
 clearEnvToken()
 
@@ -163,23 +142,23 @@ check(JSON.stringify(pNone.maskIdentity(rEmpty)).indexOf('"(none)"') > 0, '无�
 
 // ---------------------------------------------------------------- ⑤ 只读
 section('⑤ hosts.yml 与 state 都是只读（跑一圈后逐字节不变、不多出文件）')
-const hostsFile = join(homeHosts, '.config', 'gh', 'hosts.yml')
-const before = { sha: sha(hostsFile), listing: readdirSync(join(homeHosts, '.config', 'gh')).join(','), mtime: statSync(hostsFile).mtimeMs }
+const hostsFile = join(homeHosts.home, '.config', 'gh', 'hosts.yml')
+const before = { sha: sha(hostsFile), listing: readdirSync(join(homeHosts.home, '.config', 'gh')).join(','), mtime: statSync(hostsFile).mtimeMs }
 await pHosts.resolveIdentity()
 await pHosts.readHostsEntry('github.com')
 await pHosts.readHostsEntry('gitlab.com')
-const after = { sha: sha(hostsFile), listing: readdirSync(join(homeHosts, '.config', 'gh')).join(','), mtime: statSync(hostsFile).mtimeMs }
+const after = { sha: sha(hostsFile), listing: readdirSync(join(homeHosts.home, '.config', 'gh')).join(','), mtime: statSync(hostsFile).mtimeMs }
 check(before.sha === after.sha, 'hosts.yml 内容逐字节未变')
 check(before.listing === after.listing, 'hosts.yml 所在目录没有多出文件（没写临时文件）')
 check(before.mtime === after.mtime, 'hosts.yml mtime 未变（没有被当成写目标）')
-const stateFile = join(homeState, '.dsh/github-resident.json')
+const stateFile = join(homeState.home, '.dsh/github-resident.json')
 const stateBefore = sha(stateFile)
 await pState.resolveIdentity()
 check(sha(stateFile) === stateBefore, 'state 文件在只读解析后逐字节未变')
 
 // ---------------------------------------------------------------- ⑥ 畸形输入
 section('⑥ 畸形输入不抛，解析不出来就如实回 (none)')
-const homeBad = fakeHome('bad', { '.config/gh/hosts.yml': 'not: [valid\n  yaml:: ::\n' })
+const homeBad = makeHome('bad', { files: { '.config/gh/hosts.yml': 'not: [valid\n  yaml:: ::\n' } })
 const pBad = await loadPlugin(homeBad, 'bad')
 let threw = null
 let rBad = null
@@ -187,21 +166,21 @@ try { rBad = await pBad.resolveIdentity() } catch (e) { threw = e }
 check(!threw, '垃圾 hosts.yml 不抛（实得 ' + (threw ? String(threw).slice(0, 60) : 'ok') + '）')
 check(rBad && rBad.source === '(none)', '垃圾 hosts.yml 如实回 (none)，不假装有身份')
 
-const homeQuoted = fakeHome('quoted', {
+const homeQuoted = makeHome('quoted', { files: {
   '.config/gh/hosts.yml': 'github.com:\r\n    user: "quoted-user"\r\n    oauth_token: "' + QUOTED_TOKEN_FAKE + '"\r\n',
-})
+} })
 const pQuoted = await loadPlugin(homeQuoted, 'quoted')
 const rQuoted = await pQuoted.resolveIdentity()
 check(rQuoted.token === QUOTED_TOKEN_FAKE, '带引号的值能解出来（引号被剥掉）')
 check(rQuoted.login === 'quoted-user', '带引号的登录名同样解出来')
 check(rQuoted.source === 'gh-cli:~/.config/gh/hosts.yml', 'CRLF 行尾不影响识别')
 
-const homeEmptyHosts = fakeHome('emptyhosts', { '.config/gh/hosts.yml': 'github.com:\n    git_protocol: https\n' })
+const homeEmptyHosts = makeHome('emptyhosts', { files: { '.config/gh/hosts.yml': 'github.com:\n    git_protocol: https\n' } })
 const pEmptyHosts = await loadPlugin(homeEmptyHosts, 'emptyhosts')
 check((await pEmptyHosts.resolveIdentity()).source === '(none)', 'host 块在但没有 oauth_token → 如实回 (none)')
 
-const homeDirAsFile = fakeHome('isdir', {})
-mkdirSync(join(homeDirAsFile, '.config/gh/hosts.yml'), { recursive: true })
+const homeDirAsFile = makeHome('isdir', {})
+mkdirSync(join(homeDirAsFile.home, '.config/gh/hosts.yml'), { recursive: true })
 const pDir = await loadPlugin(homeDirAsFile, 'isdir')
 let threw2 = null
 try { await pDir.resolveIdentity() } catch (e) { threw2 = e }
@@ -227,5 +206,8 @@ note('导出的三支（readHostsEntry / resolveIdentity / maskIdentity）是身
 for (const d of [homeHosts, homeState, homeNone, homeAll, homeBad, homeQuoted, homeEmptyHosts, homeDirAsFile]) {
   try { rmSync(d, { recursive: true, force: true }) } catch { /* tmpDir 已在退出时兜底 */ }
 }
+
+for (const r of restores) r()
+for (const h of [homeHosts, homeState, homeNone, homeAll]) { if (h && h.cleanup) h.cleanup() }
 
 summary()

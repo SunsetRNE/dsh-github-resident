@@ -15,119 +15,36 @@
  * 隔离：自造假 HOME / 假 PATH / 假数据目录 / 本地 stub（200、抖动、只认 curl、302）与挂死服务器；不起真实外网请求。
  * 用法：node tests/merge/host/env-probe.test.mjs
  */
-import http from 'node:http'
-import { mkdirSync, readdirSync, statSync, writeFileSync, chmodSync, rmSync } from 'node:fs'
+import { mkdirSync, writeFileSync, chmodSync } from 'node:fs'
 import { join } from 'node:path'
-import { pathToFileURL } from 'node:url'
-import { check, note, section, summary, readText, tmpDir, REPO_ROOT } from './_check.mjs'
-
-const PLUGIN_URL = pathToFileURL(join(REPO_ROOT, 'plugin.js')).href
+import { check, note, section, skip, summary, readText, tmpDir } from './_check.mjs'
+// 合成环境：全仓唯一夹具（票「合成环境矩阵门禁」）。本文件原来的 fakeHome / withScenario / 四个 stub
+// 都是自己写的，那份已删除并改用它 —— 判据一条不减；顺带把 PATH 收成夹具的 bin，门禁不再看这台机器有什么。
+import { makeHome, withPlugin, startStub, startBlackhole, urlOf, closeAll, listingOf, isRoot } from './_env-harness.mjs'
 const STATES = ['ok', 'degraded', 'missing']
 const PROXY_FIXTURE = 'http://user:SUPERSECRET_PROXY_PW@127.0.0.1:9'
 
-const listen = (server) => new Promise((r) => server.listen(0, '127.0.0.1', r))
-const urlOf = (server, path = '/') => 'http://127.0.0.1:' + server.address().port + path
-
-/** 正常 stub：任何请求回 200。 */
-async function startOk() {
-  const server = http.createServer((_req, res) => { res.writeHead(200, { 'content-type': 'text/plain' }); res.end('ok') })
-  await listen(server)
-  return server
-}
-
-/** 抖动 stub：前 N 条连接直接掐断，之后正常（模拟「偶发卡顿 / 链路随机」）。 */
-async function startFlaky({ failFirst = 2 } = {}) {
-  let conns = 0
-  const server = http.createServer((_req, res) => { res.writeHead(200, { 'content-type': 'text/plain' }); res.end('ok') })
-  server.on('connection', (sock) => { conns += 1; if (conns <= failFirst) sock.destroy() })
-  await listen(server)
-  return server
-}
-
-/** 只认 curl 的 stub：Node fetch（UA = `node`）的连接一律掐断，curl（UA = `curl/x.y`）正常。
- *  判别依据是实测出来的：Node 24 的 fetch 发 `user-agent: node`，**不发** `undici`（第一版按 undici 判，
- *  结果 fetch 一路 200 通过、curl 通道根本没跑，D 场景自己把自己抓出来了）。 */
-async function startCurlOnly() {
-  const server = http.createServer((req, res) => {
-    if (/^node\b/.test(String(req.headers['user-agent'] || ''))) { req.socket.destroy(); return }
-    res.writeHead(200, { 'content-type': 'text/plain' }); res.end('ok')
-  })
-  await listen(server)
-  return server
-}
-
-/** 302 stub：跳到给定目标（验「跟随重定向 + 报最终落点」）。 */
-async function startRedirect(to) {
-  const server = http.createServer((_req, res) => { res.writeHead(302, { location: to }); res.end() })
-  await listen(server)
-  return server
-}
-
-/** 挂死服务：接受连接但**永不回包**（证「上界」真的生效）。 */
-async function startBlackhole() {
-  const socks = []
-  const server = http.createServer(() => { /* 故意不回 */ })
-  server.on('connection', (s) => { socks.push(s); s.on('error', () => {}) })
-  await listen(server)
-  return { server, socks }
-}
-
-function fakeHome(tag, { withGh, ghExits = 0 } = {}) {
-  const home = tmpDir('envprobe-' + tag)
-  if (withGh) {
-    const bin = join(home, '.fakebin')
-    mkdirSync(bin, { recursive: true })
-    const stub = join(bin, 'gh')
-    writeFileSync(stub, ghExits === 0 ? '#!/bin/sh\necho "gh version 9.9.9 (PROBE-STUB)"\n' : '#!/bin/sh\nexit 1\n', { mode: 0o755 })
-    chmodSync(stub, 0o755)
-  }
-  return home
-}
-
-/** 在指定环境里**执行**一次探针（环境必须在执行期生效，不只是 import 期）。 */
-async function withScenario(home, opts, fn) {
-  const saved = {
-    home: process.env.HOME, path: process.env.PATH, data: process.env.DSH_GH_DATA_DIR,
-    proxy: process.env.HTTP_PROXY, proxy2: process.env.HTTPS_PROXY,
-  }
-  process.env.HOME = home
-  if (opts.path !== undefined) process.env.PATH = opts.path
-  if (opts.dataDir !== undefined) process.env.DSH_GH_DATA_DIR = opts.dataDir
-  else delete process.env.DSH_GH_DATA_DIR
-  delete process.env.HTTP_PROXY
-  delete process.env.HTTPS_PROXY
-  for (const [k, v] of Object.entries(opts.env || {})) process.env[k] = v
-  try {
-    const mod = await import(PLUGIN_URL + '?envprobe=' + encodeURIComponent(home + '|' + (opts.tag || '')))
-    const tools = new Map()
-    mod.apply({ tools: { register: (t) => tools.set(t.name, t) }, provide: () => {}, effect: () => {} })
-    return await fn(tools.get('gh_env_probe'))
-  } finally {
-    if (saved.home === undefined) delete process.env.HOME; else process.env.HOME = saved.home
-    if (saved.path === undefined) delete process.env.PATH; else process.env.PATH = saved.path
-    if (saved.data === undefined) delete process.env.DSH_GH_DATA_DIR; else process.env.DSH_GH_DATA_DIR = saved.data
-    if (saved.proxy === undefined) delete process.env.HTTP_PROXY; else process.env.HTTP_PROXY = saved.proxy
-    if (saved.proxy2 === undefined) delete process.env.HTTPS_PROXY; else process.env.HTTPS_PROXY = saved.proxy2
-  }
-}
-
+/** 夹具薄封装：保持本文件原有的调用形状（`withScenario(home, opts, (tool) => …)`）。 */
+const fakeHome = (tag, opts = {}) => makeHome(tag, { withGh: Boolean(opts.withGh), ghExits: opts.ghExits || 0, withCurl: opts.withCurl !== false, files: opts.files || {} })
+const withScenario = (h, opts, fn) => withPlugin(typeof h === 'string' ? h : h.home, opts, ({ tool }) => fn(tool('gh_env_probe')))
 const itemOf = (r, name) => (r.capabilities || []).find((c) => c.name === name)
 const targetsOf = (server, names) => names.map((n) => ({ name: n, url: urlOf(server, '/' + n) }))
 
 // ================================================================ 环境 A：健康
 section('环境 A：gh 能跑 + curl 在 + HOME/数据目录都在 + 三路都通')
-const okSrv = await startOk()
-const homeA = fakeHome('a', { withGh: true })
+const okSrv = await startStub('ok')
+const hA = fakeHome('a', { withGh: true })
+const homeA = hA.home
 const dataA = join(homeA, '.dsh', 'gh-cli')
 mkdirSync(dataA, { recursive: true })
 const rA = await withScenario(homeA, {
-  path: join(homeA, '.fakebin') + ':' + process.env.PATH,
+  path: hA.path,
   dataDir: dataA,
   env: { HTTP_PROXY: PROXY_FIXTURE },
 }, (tool) => tool.execute({ network_targets: targetsOf(okSrv, ['one', 'two', 'three']) }, {}))
 
 check(itemOf(rA, 'gh').state === 'ok', 'A gh = ok（假 gh 真跑得起来）')
-check((itemOf(rA, 'gh').detail.version || '').indexOf('PROBE-STUB') > 0, 'A gh 如实报版本')
+check(/gh version/.test(String(itemOf(rA, 'gh').detail.version)) && itemOf(rA, 'gh').detail.runnable === true, 'A gh 如实报「能跑」与版本（实得 ' + itemOf(rA, 'gh').detail.version + '）')
 check(itemOf(rA, 'curl').state === 'ok', 'A curl = ok')
 check(itemOf(rA, 'node').state === 'ok' && (itemOf(rA, 'node').detail.version || '').indexOf('v') === 0, 'A node = ok 且带版本')
 check(itemOf(rA, 'arch').state === 'ok' && typeof itemOf(rA, 'arch').detail.arch === 'string', 'A arch = ok 且带 arch/platform')
@@ -143,12 +60,13 @@ check(rA.bounds.attempts === 3 && rA.bounds.networkMs === 4000 && rA.bounds.netw
 
 // ================================================================ 环境 B：降级
 section('环境 B：gh 跑不起来 + HOME 与数据目录不存在 + 三路都不通')
-const homeB = fakeHome('b', { withGh: true, ghExits: 1 })
+const hB = fakeHome('b', { withGh: true, ghExits: 1 })
+const homeB = hB.home
 const goneB = join(tmpDir('envprobe-b-gone'), 'never-created')
 const deadTargets = ['one', 'two', 'three'].map((n) => ({ name: 'dead-' + n, url: 'http://127.0.0.1:1/' + n }))
 const t0B = Date.now()
 const rB = await withScenario(goneB, {
-  path: join(homeB, '.fakebin') + ':' + process.env.PATH,
+  path: hB.path,
   dataDir: goneB,
   tag: 'b',
 }, (tool) => tool.execute({ network_targets: deadTargets, timeout_ms: 800 }, {}))
@@ -168,9 +86,9 @@ check(elapsedB < 20000, 'B 整体有界（实测 ' + elapsedB + 'ms）')
 
 // ================================================================ 环境 C：抖动
 section('环境 C：目标前两条连接被掐断 —— 必须报「时通时不通」，不能二元判死')
-const flakySrv = await startFlaky({ failFirst: 2 })
+const flakySrv = await startStub('flaky', { failFirst: 2 })
 const rC = await withScenario(homeA, {
-  path: join(homeA, '.fakebin') + ':' + process.env.PATH,
+  path: hA.path,
   dataDir: dataA,
   tag: 'c',
 }, (tool) => tool.execute({ network_targets: [{ name: 'flaky', url: urlOf(flakySrv, '/flaky') }], attempts: 3, timeout_ms: 1500 }, {}))
@@ -183,9 +101,9 @@ check(/HTTPS_PROXY/.test(cItem.next), 'C 建议里点名 HTTPS_PROXY（VPN/代�
 
 // ================================================================ 环境 D：fetch 被挡、curl 通
 section('环境 D：UA=node 的 fetch 连接被掐断（fetch 通道不通）—— curl 通时必须 degraded 而不是 missing')
-const curlOnlySrv = await startCurlOnly()
+const curlOnlySrv = await startStub('curlOnly')
 const rD = await withScenario(homeA, {
-  path: join(homeA, '.fakebin') + ':' + process.env.PATH,
+  path: hA.path,
   dataDir: dataA,
   tag: 'd',
 }, (tool) => tool.execute({ network_targets: [{ name: 'curl-only', url: urlOf(curlOnlySrv, '/co') }], attempts: 2, timeout_ms: 1500 }, {}))
@@ -198,9 +116,9 @@ check(/HTTPS_PROXY/.test(dItem.next) && /curl/.test(dItem.next), 'D 下一步说
 
 // ================================================================ 环境 E：302
 section('环境 E：目标回 302 —— 跟随重定向（真链路会 302 到 CDN），并报出最终落点')
-const redirSrv = await startRedirect(urlOf(okSrv, '/landed'))
+const redirSrv = await startStub('redirect', { to: urlOf(okSrv, '/landed') })
 const rE = await withScenario(homeA, {
-  path: join(homeA, '.fakebin') + ':' + process.env.PATH,
+  path: hA.path,
   dataDir: dataA,
   tag: 'e',
 }, (tool) => tool.execute({ network_targets: [{ name: 'redirecting', url: urlOf(redirSrv, '/r') }], attempts: 1, timeout_ms: 3000 }, {}))
@@ -213,7 +131,7 @@ section('环境 F：目标接受连接但永不回包 —— 必须按单次上�
 const hole = await startBlackhole()
 const t0F = Date.now()
 const rF = await withScenario(homeA, {
-  path: join(homeA, '.fakebin') + ':' + process.env.PATH,
+  path: hA.path,
   dataDir: dataA,
   tag: 'f',
 }, (tool) => tool.execute({ network_targets: [{ name: 'blackhole', url: urlOf(hole.server, '/') }], attempts: 1, timeout_ms: 600 }, {}))
@@ -233,7 +151,7 @@ for (const s of hole.socks) { try { s.destroy() } catch { /* 收尾 */ } }
 section('环境 G：三个都挂死 —— 网络总预算封顶，最坏情况也能返回')
 const t0G = Date.now()
 const rG = await withScenario(homeA, {
-  path: join(homeA, '.fakebin') + ':' + process.env.PATH,
+  path: hA.path,
   dataDir: dataA,
   tag: 'g',
 }, (tool) => tool.execute({ network_targets: ['a', 'b', 'c'].map((n) => ({ name: 'hole-' + n, url: urlOf(hole.server, '/' + n) })), attempts: 3, timeout_ms: 3000 }, {}))
@@ -242,6 +160,56 @@ check(rG.network.every((n) => n.state === 'missing'), 'G 三个都如实报 miss
 check(rG.network.some((n) => /budget-exhausted/.test(String(n.detail.error || (n.detail.curl && n.detail.curl.error)))), 'G 预算用完后如实标 budget-exhausted（不假装试过）')
 check(elapsedG < 20000, 'G 整体被总预算封顶（实测 ' + elapsedG + 'ms < 20000ms）')
 check(rG.bounds.networkTotalMs === 15000, 'G 回执写明网络总预算 = 15000ms')
+
+// ================================================================ 环境 H：HOME 只读 / 不存在
+section('环境 H：HOME 不可写 —— 如实报 degraded 并给下一步（root 下无法真实模拟时如实标注）')
+const hH = fakeHome('h', { withGh: true })
+chmodSync(hH.home, 0o500)
+const rH = await withScenario(hH, { path: hH.path, dataDir: join(hH.home, '.dsh', 'gh-cli'), tag: 'h' },
+  (tool) => tool.execute({ network_targets: targetsOf(okSrv, ['one']) }, {}))
+if (isRoot()) {
+  skip('以 root 跑：chmod 500 拦不住写权限 —— 「只读 HOME」这条只能验「判定如实、不谎报」这一半')
+  check(itemOf(rH, 'home-writable').state === 'ok' && itemOf(rH, 'home-writable').detail.writable === true,
+    'H root 下如实报「可写」（不为迎合变体而谎报不可写）')
+} else {
+  check(itemOf(rH, 'home-writable').state === 'degraded' && itemOf(rH, 'home-writable').detail.writable === false,
+    'H 只读 HOME = degraded（实得 ' + itemOf(rH, 'home-writable').state + '）')
+  check(!!itemOf(rH, 'home-writable').next, 'H 只读 → 给下一步')
+}
+// 两种跑法都能验的等价物：HOME 指向不存在的路径
+const goneH = join(tmpDir('envprobe-h-gone'), 'never-created')     // 真不存在的 HOME
+const rH2 = await withScenario(goneH, { path: join(goneH, '.bin'), dataDir: join(goneH, '.dsh'), tag: 'h2' },
+  (tool) => tool.execute({ network_targets: targetsOf(okSrv, ['one']) }, {}))
+check(itemOf(rH2, 'home-writable').state === 'degraded' && itemOf(rH2, 'home-writable').detail.writable === false,
+  'H 等价物（HOME 不存在）= degraded，root 与非 root 都验得到')
+check(/不可写|不存在/.test(String(itemOf(rH2, 'home-writable').next)), 'H 等价物的下一步说清「不可写/不存在」')
+
+// ================================================================ 环境 I：无 curl
+section('环境 I：机器上没有 curl —— 必须如实报 missing 并给下一步（不许假装能跑）')
+const hI = fakeHome('i', { withGh: true, withCurl: false })
+const rI = await withScenario(hI, { path: hI.path, dataDir: join(hI.home, '.dsh', 'gh-cli'), tag: 'i' },
+  (tool) => tool.execute({ network_targets: targetsOf(okSrv, ['one']) }, {}))
+check(itemOf(rI, 'curl').state === 'missing', 'I 无 curl = missing（实得 ' + itemOf(rI, 'curl').state + '）')
+check(itemOf(rI, 'curl').detail.path === null, 'I path 如实为 null（不编造一个路径）')
+check(/装 curl|fetch 兜底/.test(String(itemOf(rI, 'curl').next)), 'I 下一步说清「装 curl」或「走 fetch 兜底」')
+check(rI.summary.missing >= 1, 'I missing 计入 summary（不是只在明细里提一嘴）')
+
+// ================================================================ 环境 J：坏代理
+section('环境 J：代理变量指向死端口 —— 两条通道都必须如实失败（不许因为「配了代理」就假装通）')
+const hJ = fakeHome('j', { withGh: true, withCurl: true })
+// 目标必须**不可绕过代理**：实测 curl 对 loopback 目标会绕过 HTTP_PROXY（本机 127.0.0.1 照通），
+// 所以这里用 RFC 2606 保证解析不到的 `.invalid` 主机名 —— 有代理时走代理，没代理时解析失败，两边都断。
+const PROXY_ONLY_TARGET = 'http://proxy-required.invalid/'
+const rJ = await withScenario(hJ, {
+  path: hJ.path, dataDir: join(hJ.home, '.dsh', 'gh-cli'), tag: 'j',
+  env: { HTTPS_PROXY: 'http://127.0.0.1:1', HTTP_PROXY: 'http://127.0.0.1:1' },
+}, (tool) => tool.execute({ network_targets: [{ name: 'proxy-required', url: PROXY_ONLY_TARGET }], attempts: 2, timeout_ms: 1200 }, {}))
+const jItem = rJ.network[0]
+check(jItem.state === 'missing', 'J 坏代理 = missing（实得 ' + jItem.state + '）')
+check(jItem.detail.via === null && jItem.detail.okCount === 0, 'J 如实报「两条通道都没成」')
+check(jItem.detail.curl && jItem.detail.curl.ok === false, 'J curl 通道如实报失败（没被「配了代理」糊弄过去）')
+check(jItem.detail.curl.viaProxyEnv === true, 'J 如实记下「这次确实有代理环境变量」')
+check(!!jItem.next && /不通|代理/.test(jItem.next), 'J 下一步提到「不通 / 代理」')
 
 // ================================================================ 不泄漏 + 只读
 section('不泄漏与只读（环境 A 的夹具，代理变量带凭据）')
@@ -252,10 +220,10 @@ check(rA.proxy.HTTP_PROXY === true, '代理变量只报「有」')
 check(rA.proxy.HTTPS_PROXY === false, '没设的代理变量报 false（不编造）')
 check(!!rD.network[0].detail.curl && rD.network[0].detail.curl.viaProxyEnv === false, 'curl 通道如实报「这次没有代理环境变量」（缺字段也算失败，不让用例崩）')
 
-const before = { listing: readdirSync(homeA).sort().join(','), mtimes: readdirSync(homeA).map((f) => f + ':' + statSync(join(homeA, f)).mtimeMs).join(',') }
-await withScenario(homeA, { path: join(homeA, '.fakebin') + ':' + process.env.PATH, dataDir: dataA, tag: 'ro' }, (tool) => tool.execute({ network_targets: targetsOf(okSrv, ['one']) }, {}))
-const after = { listing: readdirSync(homeA).sort().join(','), mtimes: readdirSync(homeA).map((f) => f + ':' + statSync(join(homeA, f)).mtimeMs).join(',') }
-check(before.listing === after.listing, '跑一圈后 HOME 里不多出文件（不落探针文件）')
+const before = listingOf(homeA)
+await withScenario(homeA, { path: hA.path, dataDir: dataA, tag: 'ro' }, (tool) => tool.execute({ network_targets: targetsOf(okSrv, ['one']) }, {}))
+const after = listingOf(homeA)
+check(before.names === after.names, '跑一圈后 HOME 里不多出文件（不落探针文件）')
 check(before.mtimes === after.mtimes, '跑一圈后 HOME 内容未变（mtime 逐项一致）')
 
 // ================================================================ 形状 / 摘要 / 分工
@@ -309,8 +277,8 @@ note('探针用本地 stub（200 / 抖动 / 只认 curl / 302）与挂死服务�
 note('「HOME 不可写」用**不存在**的路径表示：以 root 跑门禁时 chmod 拦不住写权限，用存在性才判得准。')
 note('C/D 两个场景对应维护者给的前提：国内 / VPN 下可达性随机、「fetch 不读代理而 curl 读」—— 这两种状态必须能与「真不通」区分开。')
 
-for (const s of [okSrv, flakySrv, curlOnlySrv, redirSrv]) await new Promise((r) => s.close(r))
-await new Promise((r) => hole.server.close(r))
-for (const d of [homeA, homeB]) { try { rmSync(d, { recursive: true, force: true }) } catch { /* tmpDir 兜底 */ } }
+await closeAll([okSrv, flakySrv, curlOnlySrv, redirSrv, hole])
+if (hole.cleanup) hole.cleanup()
+for (const h of [hA, hB, hH, hI, hJ]) h.cleanup()
 
 summary()

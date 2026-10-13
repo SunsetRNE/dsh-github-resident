@@ -25,9 +25,10 @@ import { createHash } from 'node:crypto'
 import { mkdirSync, readFileSync, readdirSync, writeFileSync, rmSync, chmodSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { check, note, section, summary, readText, tmpDir, REPO_ROOT } from './_check.mjs'
-
-const PLUGIN_URL = pathToFileURL(join(REPO_ROOT, 'plugin.js')).href
+import { check, note, section, summary, readText } from './_check.mjs'
+// 合成环境：全仓唯一夹具（票「合成环境矩阵门禁」）。本文件原来自己写了一份 fakeHome + withScenario，
+// 已删除并改用它 —— 判据一条不减。顺带把 PATH 收成夹具自己的 bin：**门禁不再看这台机器有什么**。
+import { makeHome, withPlugin, isRoot } from './_env-harness.mjs'
 const sha = (p) => createHash('sha256').update(readFileSync(p)).digest('hex')
 const STATES = ['pass', 'drift', 'missing']
 
@@ -43,71 +44,28 @@ const HOSTS_FIXTURE = [
   '',
 ].join('\n')
 
-/** 造一个假 HOME，返回 { home, bin }：bin 里放一个「能跑」的 gh 占位（打印版本）。 */
-function fakeHome(tag, { withGhStub = false, files = {} } = {}) {
-  const home = tmpDir('idaudit-' + tag)
-  for (const [rel, body] of Object.entries(files)) {
-    const abs = join(home, rel)
-    mkdirSync(join(abs, '..'), { recursive: true })
-    writeFileSync(abs, body, { mode: 0o600 })
-  }
-  if (withGhStub) {
-    const bin = join(home, '.fakebin')
-    mkdirSync(bin, { recursive: true })
-    const stub = join(bin, 'gh')
-    writeFileSync(stub, '#!/bin/sh\necho "gh version 9.9.9 (AUDIT-STUB)"\n', { mode: 0o755 })
-    chmodSync(stub, 0o755)
-  }
-  return home
-}
-
-/**
- * 在指定环境下**跑一次**体检：环境（HOME / PATH / GIT_CONFIG_GLOBAL / GH_TOKEN）在执行期生效。
- *
- * 为什么要这样（2026-10-14 本用例第一版踩的坑）：只在 `import` 之前设、`finally` 里就恢复，
- * 会让工具执行时读回真环境 —— 那时体检报的是「真全局配置 + 真 gh」，夹具形同虚设，
- * 于是 B/C 两个场景静默失真（被本用例自己抓出来）。
- */
-async function withScenario(home, opts, fn) {
-  const saved = { home: process.env.HOME, path: process.env.PATH, gc: process.env.GIT_CONFIG_GLOBAL, gh: process.env.GH_TOKEN, gt: process.env.GITHUB_TOKEN }
-  process.env.HOME = home
-  if (opts.path !== undefined) process.env.PATH = opts.path
-  if (opts.gitConfig !== undefined) process.env.GIT_CONFIG_GLOBAL = opts.gitConfig
-  else delete process.env.GIT_CONFIG_GLOBAL
-  delete process.env.GH_TOKEN
-  delete process.env.GITHUB_TOKEN
-  for (const [k, v] of Object.entries(opts.env || {})) process.env[k] = v
-  try {
-    const mod = await import(PLUGIN_URL + '?audit=' + encodeURIComponent(home))
-    const tools = new Map()
-    mod.apply({ tools: { register: (t) => tools.set(t.name, t) }, provide: () => {}, effect: () => {} })
-    return await fn(tools.get('gh_identity'))
-  } finally {
-    if (saved.home === undefined) delete process.env.HOME; else process.env.HOME = saved.home
-    if (saved.path === undefined) delete process.env.PATH; else process.env.PATH = saved.path
-    if (saved.gc === undefined) delete process.env.GIT_CONFIG_GLOBAL; else process.env.GIT_CONFIG_GLOBAL = saved.gc
-    if (saved.gh === undefined) delete process.env.GH_TOKEN; else process.env.GH_TOKEN = saved.gh
-    if (saved.gt === undefined) delete process.env.GITHUB_TOKEN; else process.env.GITHUB_TOKEN = saved.gt
-  }
-}
+/** 夹具薄封装：保持本文件原有的调用形状（`withScenario(home, opts, (tool) => …)`）。 */
+const fakeHome = (tag, { withGhStub = false, files = {} } = {}) => makeHome(tag, { withGh: withGhStub, withCurl: true, files })
+const withScenario = (h, opts, fn) => withPlugin(typeof h === 'string' ? h : h.home, opts, ({ tool }) => fn(tool('gh_identity')))
 
 const pointOf = (r, name) => (r.points || []).find((p) => p.point === name)
 const checkOf = (p, name) => (p && p.checks || []).find((c) => c.name === name)
 
 // ================================================================ 环境 A：gh CLI 有身份，其余没接
 section('环境 A：gh CLI 有身份；全局 git 身份空、无 helper、无 env、reposRoot 指向不存在目录')
-const homeA = fakeHome('a', { withGhStub: true, files: { '.config/gh/hosts.yml': HOSTS_FIXTURE } })
+const hA = fakeHome('a', { withGhStub: true, files: { '.config/gh/hosts.yml': HOSTS_FIXTURE } })
+const homeA = hA.home
 const gitCfgA = join(homeA, 'gitconfig-a')
 // 环境 A 刻意复刻真机的形状：**只有 host 作用域**那条凭据助手（gh 的 setup-git 就写这里）、
 // 全局 credential.helper 为空、全局 git 身份没设。
 writeFileSync(gitCfgA, [
   '[credential "https://github.com"]',
-  '\thelper = !' + join(homeA, '.fakebin', 'gh') + ' auth git-credential',
+  '\thelper = !' + join(hA.bin, 'gh') + ' auth git-credential',
   '',
 ].join('\n'), { mode: 0o600 })
-const optsA = { path: join(homeA, '.fakebin') + ':' + process.env.PATH, gitConfig: gitCfgA }
-const rA = await withScenario(homeA, optsA, (tool) => tool.execute({}, {}))
-const auditA = { execute: () => withScenario(homeA, optsA, (tool) => tool.execute({}, {})) }
+const optsA = { path: hA.path, gitConfig: gitCfgA }
+const rA = await withScenario(hA, optsA, (tool) => tool.execute({}, {}))
+const auditA = { execute: () => withScenario(hA, optsA, (tool) => tool.execute({}, {})) }
 
 check(rA.identity.source === 'gh-cli:~/.config/gh/hosts.yml', 'A 身份来源 = gh-cli（实得 ' + rA.identity.source + '）')
 check(rA.identity.login === 'SunsetRNE' && rA.identity.present === true, 'A 身份带 login 与 present')
@@ -126,7 +84,8 @@ check(pointOf(rA, 'path').state === 'pass', 'A PATH 落点 = pass（假 gh 能�
 
 // ================================================================ 环境 B：全部接好
 section('环境 B：四个消费点全接好')
-const homeB = fakeHome('b', { withGhStub: true, files: { '.config/gh/hosts.yml': HOSTS_FIXTURE } })
+const hB = fakeHome('b', { withGhStub: true, files: { '.config/gh/hosts.yml': HOSTS_FIXTURE } })
+const homeB = hB.home
 mkdirSync(join(homeB, 'GitHub'), { recursive: true })   // 默认 reposRoot 也要存在，才是真的「全绿」
 const gitCfgB = join(homeB, 'gitconfig-b')
 writeFileSync(gitCfgB, [
@@ -134,11 +93,11 @@ writeFileSync(gitCfgB, [
   '\tname = Fixture User',
   '\temail = fixture@example.invalid',
   '[credential "https://github.com"]',
-  '\thelper = !' + join(homeB, '.fakebin', 'gh') + ' auth git-credential',
+  '\thelper = !' + join(hB.bin, 'gh') + ' auth git-credential',
   '',
 ].join('\n'), { mode: 0o600 })
-const rB = await withScenario(homeB, {
-  path: join(homeB, '.fakebin') + ':' + process.env.PATH,
+const rB = await withScenario(hB, {
+  path: hB.path,
   gitConfig: gitCfgB,
   env: { GH_TOKEN: 'gho_ENV_OVERRIDE_0123456789abcdef' },
 }, (tool) => tool.execute({}, {}))
@@ -150,8 +109,9 @@ check(rB.summary.fixes.length === 0, 'B 全 pass 时不给任何补救命令（�
 
 // ================================================================ 环境 C：什么都没有
 section('环境 C：什么都没有（无 gh、无 hosts、无 state、无 env、无 PATH）')
-const homeC = fakeHome('c', {})
-const rC = await withScenario(homeC, { path: join(homeC, '.emptypath'), gitConfig: join(homeC, 'gitconfig-c') }, (tool) => tool.execute({}, {}))
+const hC = fakeHome('c', {})
+const homeC = hC.home
+const rC = await withScenario(hC, { path: join(homeC, '.emptypath'), gitConfig: join(homeC, 'gitconfig-c') }, (tool) => tool.execute({}, {}))
 check(rC.identity.source === '(none)', 'C 身份来源 = (none)（不编造）')
 check(pointOf(rC, 'git').state === 'missing', 'C git 消费点 = missing')
 check(pointOf(rC, 'gh-cli').state === 'missing', 'C gh CLI 消费点 = missing')
@@ -177,6 +137,19 @@ for (const [label, r] of [['A', rA], ['B', rB], ['C', rC]]) {
   check(typeof r.config.reposRoot.exists === 'boolean' && r.config.stateFile.path && r.config.hostsFile.path, label + ' 配置面三段都在')
   check(r.config.reposRoot.exists ? r.config.reposRoot.fix === null : typeof r.config.reposRoot.fix === 'string', label + ' reposRoot 不存在时必须给补救说明')
 }
+
+// 注：「HOME 只读」那条属于**机器能力**（`home-writable` 在 gh_env_probe 里），因此它落在
+// 《新工具 gh_env_probe（环境能力矩阵）》的门禁里，不在这里重复 —— 同一事实只验一处。
+
+// ================================================================ 环境 E：有 gh 但没登录
+section('环境 E：gh 装好了但没登录 —— 「装上了」不等于「身份可用」')
+const hE = makeHome('e', { withGh: true })      // gh 桩在、**没有** hosts.yml
+const rE = await withScenario(hE, { path: hE.path, gitConfig: join(hE.home, 'gitconfig-e') }, (tool) => tool.execute({}, {}))
+check(rE.identity.source === '(none)' && rE.identity.present === false, 'E 身份来源如实回 (none)（不因为 gh 在就假装有身份）')
+check(pointOf(rE, 'path').state === 'pass', 'E PATH 落点 = pass（gh 真跑得起来 —— 这正是「有 gh」那半）')
+check(pointOf(rE, 'gh-cli').state === 'missing', 'E gh CLI 消费点 = missing（没登录）')
+check(/gh auth login|gh_cli_auth_web/.test(String(pointOf(rE, 'gh-cli').checks[0].fix)), 'E 给的是「去登录」这一步，而不是「去装」')
+check(pointOf(rE, 'git').state === 'missing', 'E git 消费点 = missing（没助手、也没全局身份）')
 
 // ================================================================ 不泄漏 + 只读
 section('不泄漏与只读（用环境 A 的夹具，含真 token 的 hosts.yml）')
@@ -214,8 +187,6 @@ check(protoLine.indexOf("kind: 'read'") > 0 && protoLine.indexOf('required: []')
 note('夹具用 GIT_CONFIG_GLOBAL 指向临时 gitconfig：git config --global 的读写都落在临时文件，绝不碰真全局配置。')
 note('本用例覆盖的形状（identity/points/config/summary）按票面约定同时服务《启动自述》与协议 identity 段，改字段属接口变更。')
 
-for (const d of [homeA, homeB, homeC]) {
-  try { rmSync(d, { recursive: true, force: true }) } catch { /* tmpDir 退出时兜底 */ }
-}
+for (const h of [hA, hB, hC, hE]) h.cleanup()
 
 summary()
