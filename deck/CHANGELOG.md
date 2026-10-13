@@ -1,3 +1,46 @@
+## 2026-10-13 · 合并包 1.7.9：工具面与协议**同源**（一条断言收口多份手写副本）
+
+- **这是什么**：1.7.8 修的是行为，本版修的是**缝合面**。「本包有哪些工具、各带什么参数、协议怎么写」
+  这件事此前散在**多份手写副本**里，副本之间没有任何机器判据 —— 于是静默漂移了一批（下面每条都是实测）。
+- **修掉的漂移（协议 vs 真实实现）**：
+  - `TOOL_PROTOCOL` 里 `gh_protocol.returns` 列了**不存在的 `host` 键**（真键是 `service`），
+    且漏报 spec / envelope / registry / guarantees —— 现在声明覆盖真实返回的每个键。
+  - `gh_cli_logout.optional` 漏了 `remove_gh_cache`（工具 schema 与实现里都有）。
+  - `service.methods[status].returns` 写的是**工具** gh_resident_status 的形状（token/identity/…），
+    而服务方法 status() 走 `statePayload`（面板读的那份快照）—— 照协议调会一个字段都拿不到。
+  - `serviceApi` 里 `version` 键写了**两次**（`:2073` 字符串 + `:2101` 方法）：对象字面量后写者胜，
+    于是协议号那行被静默丢掉，从来没能从服务上取到。改名 `protocolVersion` 保留信息、消除重复键。
+  - `http.base` 写死 `31790`，而真实端口读 `DSH_GH_API_PORT` —— 改端口协议就在说谎。现在 `base`
+    由 `API_PORT` 派生（定义前移到协议之前）。
+  - 第二个服务 `ghResolver`（Resident 半边借给 Deck 半边、已被实际消费）从没登记 —— 现在进
+    `service.alsoProvided`，`service.key` + `alsoProvided` 的集合与 `ctx.provide` 的真实集合由门禁逐项核对。
+  - `consume` 示例写死 `/root/GitHub`（那只是默认值）→ 改成显式传参的样子。
+  - 错误码表：9 条里 **7 条从未出现**，而真实出现的 3 条（`E_ORIGIN` / `E_REGISTRY_ORIGIN` /
+    `E_REGISTRY_CONSENT_ORIGIN`）**没登记** → 补齐到 12 条，并在表头写明语义（这是「回执文案里会出现的码」，
+    不等于「所有码都由代码 throw」）。
+- **新增门禁 `tests/merge/host/tool-surface-contract.test.mjs`（22 项，随 tests/merge/run.mjs 自动收编）**：
+  把副本钉到真源上 —— gh 侧真源是 `plugin.js` 跑 `apply` 后的**实际注册**（不看源码文本），
+  deck 侧真源是各工具的 `definition`。它核对：名字集合、每个工具的 required/optional、
+  `gh_protocol` 自述 returns、`service.methods` ≡ 服务可调键、`ctx.provide` 真实集合 ≡ 协议声明、
+  `http.base` 不是写死的、源码里出现的错误码都在表里、`DECK_TOOL_FILES` ≡ 行模块注册名 ≡
+  行模块 import 数 ≡ zero-dep 门禁里那份手写清单。
+  **这条断言当场抓到过一次真实漂移**（改名 `SEVEN_NAMES` 时测试里的正则失配，`0 vs 9`），
+  所以判据已改成不依赖变量名 —— 绑变量名的正则会在改名时静默失配、把空集合当成「一致」。
+- **命名与注释**：四个副本里的 `SEVEN` / `SEVEN_NAMES`（**名字说「七」、实际装九个**）统一改为
+  `DECK_TOOL_DEFS` / `DECK_TOOL_NAMES`（`deckToolsRow.js`、`verify-deck-tools-row-zero-dep.js`、
+  `verify-deck-tools-agent-register.js`、`verify-deck-exec-phone.js`、`verify-deck-tools-host-wiring.js`）；
+  约 28 处「七个（工具/文件/工厂）」注释改成不带数字的措辞 —— **数字没有真源就会过期**，
+  这批注释从七个工具的时代活到了九个。非 deck 工具的「七个」（版本控制叶子、locale 键、call-scope 的操作数）**未动**。
+- **版本号**：合并包 `1.7.8 → 1.7.9`；deck 包 `1.8.0-rc.9 → 1.8.0-rc.10`（有 deck 侧源码改动）。
+- **验证**：`tests/merge/run.mjs` **19/19 全绿**（含新门禁 22 项）；`--check` 全绿；
+  `verify-deck-tools-row-zero-dep.js` 的发包镜像比对转绿（改 src 后需重建，已重建）；
+  `verify-deck-exec-phone.js` 56 项、`verify-deck-tools-host-wiring.js` 21 项全过。
+- **遗留**：`verify-deck-tools-agent-register.js` 仍红在「找不到 `deck/node_modules/@deepseek-ai/dsh-tools`」
+  （deck 子树没有自己的 node_modules），**与本次改动无关**（改名前就在），另单跟进；
+  deck 侧其余存量红同 1.7.8 的记载。
+
+---
+
 ## 2026-10-13 · 合并包 1.7.8：探活档不再把「网络慢」报成「环境没过」+ 本机构建与门禁可跑
 
 - **这是什么**：合并包的补丁版，修一个**分类错误**（不是新功能）。上一版（1.7.7）的遗留项写着

@@ -2,7 +2,7 @@
 
 **中文** ｜ [English](README.en.md)
 
-> **1.7.8 合并测试包**：保留本包名 `@sunsetrne/dsh-github-resident-v2`，内置 Skills Deck 的 10 个 `deck_*` 工具、27 个技能、输入框功能栏与右侧面板，加上原有 17 个 `gh_*` 工具。Deck 来源为 1.8.0-rc.9 源码快照，当前设备原独立安装版为 1.7.51，存在上游版本差异。
+> **1.7.9 合并测试包**：保留本包名 `@sunsetrne/dsh-github-resident-v2`，内置 Skills Deck 的 10 个 `deck_*` 工具、27 个技能、输入框功能栏与右侧面板，加上原有 17 个 `gh_*` 工具。Deck 来源为 1.8.0-rc.10 源码快照，当前设备原独立安装版为 1.7.51，存在上游版本差异。
 >
 > 安装顺序：先在插件管理器中停用独立的 `dsh-mattpocock-skills-deck`（含其 tools 组件），再导入本合并包升级 Resident，重启 DSH。确认工具、技能和面板可用后，再通过插件管理器卸载已经停用的旧 Deck。不要先删旧插件目录：现有安装可能通过 `link:` 引用它。合并包继续使用原数据位置，卸载旧包时不要选择清除数据。
 >
@@ -169,7 +169,7 @@ HTTP（只监听 `127.0.0.1`）：`GET /state`、`GET /state?cached=1`、`GET /s
 ### 方式 A：装成包（推荐）
 
 ```bash
-VER=1.7.8   # 换成要装的版本
+VER=1.7.9   # 换成要装的版本
 dsh plugin --profile web add \
   "https://github.com/SunsetRNE/dsh-github-resident/releases/download/v$VER/sunsetrne-dsh-github-resident-v2-$VER.tgz"
 
@@ -185,14 +185,14 @@ node --input-type=module -e "import('$P/dist/host.js').then(m=>console.log('LOAD
 
 面板用的是更新包 `dsh-plugin-update`，它判「可更新」要两条同时成立（源码 `dist/reader.js`，本机实测过）：
 
-1. profile 清单里该包的 spec 是**注册表型** —— 版本号 / 范围 / dist-tag（`^1.7.8`、`latest` …）；`registrySpec()` **不认 URL 与 `link:`**；
+1. profile 清单里该包的 spec 是**注册表型** —— 版本号 / 范围 / dist-tag（`^1.7.9`、`latest` …）；`registrySpec()` **不认 URL 与 `link:`**；
 2. 已安装目录在 `<profile>/node_modules/` 之内。
 
 任一条不成立就判 `source-install`（面板文案「源码安装实例，不支持版本更新」），而且**不给手工命令**。三种装法的差别：
 
 | 装法 | spec 形态 | 面板能更新 | 升级怎么做 |
 |---|---|---|---|
-| 从注册表装（npm / 私有 registry） | `^1.7.8` | ✅ | 面板「安装更新」 |
+| 从注册表装（npm / 私有 registry） | `^1.7.9` | ✅ | 面板「安装更新」 |
 | 从 Release tgz 装（方式 A） | `https://…tgz` | ❌ | 重跑上面的 `dsh plugin … add <新版本 tgz>` |
 | 从源码目录装（方式 B） | `link:/…` | ❌ | 同上；或改装成包 |
 

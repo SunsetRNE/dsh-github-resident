@@ -29,7 +29,7 @@ async function waitFor(cond, what, rounds) {
   throw new Error('等不到：' + what)
 }
 
-const SEVEN_NAMES = [
+const DECK_TOOL_NAMES = [
   'deck_context',
   'deck_issue_get',
   'deck_map_snapshot',
@@ -151,7 +151,7 @@ async function main() {
   ]
   const seven = []
   for (const f of toolFiles) seven.push((await imp(f)).definition)
-  check(seven.map((d) => d.name).join(',') === SEVEN_NAMES.join(','), '九个真定义名字齐且顺序与装配口一致')
+  check(seven.map((d) => d.name).join(',') === DECK_TOOL_NAMES.join(','), '九个真定义名字齐且顺序与装配口一致')
   // 真实现直引（仓库开发依赖，与线上同版本）：官方编译与原生判定都不拿桩冒充。
   const realTools = await imp('node_modules/@deepseek-ai/dsh-tools/lib/index.js')
   const realDefineTool = realTools.defineTool
@@ -185,7 +185,7 @@ async function main() {
   const svc = stubToolsSvc()
   const table = stubTable(seven, null)
   const res = await agent.registerDeckAgentTools(svc, table, realDefineTool)
-  check(res && res.registered && res.registered.join(',') === SEVEN_NAMES.join(','), '一次注册九个，一个不少')
+  check(res && res.registered && res.registered.join(',') === DECK_TOOL_NAMES.join(','), '一次注册九个，一个不少')
   check(!res.missing || res.missing.length === 0, '缺件清单为空')
   const one = svc.registered.filter((t) => t.name === 'deck_issue_create')[0]
   const out = await one.execute({ title: '演示票' }, { agent: { session: { cwd: '/ws', id: 's1' } } })
@@ -222,7 +222,7 @@ async function main() {
   // 退路（工具包没装好、defineTool 传不进来）：直接按注册表形状交，八个照样出去。
   const rawSvc = stubToolsSvc()
   const raw = await agent.registerDeckAgentTools(rawSvc, table, null)
-  check(raw && raw.registered.join(',') === SEVEN_NAMES.join(',') && (!raw.missing || raw.missing.length === 0),
+  check(raw && raw.registered.join(',') === DECK_TOOL_NAMES.join(',') && (!raw.missing || raw.missing.length === 0),
     '没 defineTool 走退路，九个照样注册')
   const rawOne = rawSvc.registered.filter((t) => t.name === 'deck_issue_get')[0]
   const rawDef = seven.filter((d) => d.name === 'deck_issue_get')[0]
@@ -321,7 +321,7 @@ async function main() {
   try { row.apply({ tools: rowSvc, connection: {} }) } catch (e) { rowCrashed = e }
   check(!rowCrashed, '行模块应用不抛（服务在就交）')
   const rowNames = rowSvc.registered.map((t) => t.name)
-  check(SEVEN_NAMES.every((n) => rowNames.indexOf(n) >= 0), '行模块交出九个 deck 工具')
+  check(DECK_TOOL_NAMES.every((n) => rowNames.indexOf(n) >= 0), '行模块交出九个 deck 工具')
   check(rowNames.indexOf('deck_probe') >= 0, '行模块交出探针')
   const probe = rowSvc.registered.filter((t) => t.name === 'deck_probe')[0]
   const inventory = JSON.parse(await probe.execute({}, { tools: { a: 1 }, connection: {}, agent: { session: { cwd: '/ws' } } }))

@@ -2,10 +2,10 @@
 //
 // 这一行跑在 agent 层（官方教程的正规路：名字、注入工具服务、应用函数），
 // 与宿主插件那一行互不干扰。宿主插件里的兼容钩子留着（别的产品可能是同一容器）。
-// 住在平台区的原因与装配点一样：行模块要读七个工具文件里的定义，
+// 住在平台区的原因与装配点一样：行模块要读这批工具文件里的定义，
 // 宿主层的文件之间不许互相引用，平台区是被排除的位置。
 //
-// 七个工具的执行在代执行通道接通前用诚实占位（只回“还没接好”并指去面板），
+// 这批工具的执行在代执行通道接通前用诚实占位（只回“还没接好”并指去面板），
 // 另加一个探针工具回服务清单——通道设计就靠这份清单定，两个都是通道接通即退役。
 //
 // 为什么这里不引用工具包（零框架引用）：
@@ -35,7 +35,7 @@ import { awaitDeckTable, peekDeckTable, readDeckGate, noteDeckPath, readDeckPath
 export const name = '@sunsetrne/dsh-github-resident-v2/tools'
 export const inject = ['tools']
 
-const SEVEN = [deckContextDef, deckIssueGetDef, deckMapSnapshotDef, deckIssueListDef, deckIssueCreateDef, deckMapPlanCreateDef, deckMapLinkDef, deckIssuePatchDef, deckIssueReportDef]
+const DECK_TOOL_DEFS = [deckContextDef, deckIssueGetDef, deckMapSnapshotDef, deckIssueListDef, deckIssueCreateDef, deckMapPlanCreateDef, deckMapLinkDef, deckIssuePatchDef, deckIssueReportDef]
 
 function isRecord(v) { return v !== null && typeof v === 'object' && !Array.isArray(v) }
 
@@ -324,7 +324,7 @@ export function apply(ctx) {
   if (!ctx || !ctx.tools || typeof ctx.tools.register !== 'function') {
     throw new Error('[deckToolsRow] 工具服务不在，行起不来（注入声明了 tools，框架本应保证就绪）。')
   }
-  for (const d of SEVEN) {
+  for (const d of DECK_TOOL_DEFS) {
     const raw = toRawRegistration(d, ctx)
     if (!raw) continue
     try {

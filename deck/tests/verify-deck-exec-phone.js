@@ -16,12 +16,12 @@ const check = (ok, msg) => { total += 1; console.log((ok ? '  PASS ' : '  FAIL '
 const imp = (rel) => import(pathToFileURL(path.join(ROOT, rel)).href)
 const readText = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8')
 
-const SEVEN = ['deck_context', 'deck_issue_get', 'deck_map_snapshot', 'deck_issue_list', 'deck_issue_create', 'deck_map_plan_create', 'deck_map_link', 'deck_issue_patch', 'deck_issue_report']
+const DECK_TOOL_NAMES = ['deck_context', 'deck_issue_get', 'deck_map_snapshot', 'deck_issue_list', 'deck_issue_create', 'deck_map_plan_create', 'deck_map_link', 'deck_issue_patch', 'deck_issue_report']
 
 function stubTable(runFn) {
   const tools = {}
-  for (const n of SEVEN) tools[n] = { run: runFn }
-  return { tools: tools, names: SEVEN.slice(), definitions: SEVEN.map((n) => ({ name: n })) }
+  for (const n of DECK_TOOL_NAMES) tools[n] = { run: runFn }
+  return { tools: tools, names: DECK_TOOL_NAMES.slice(), definitions: DECK_TOOL_NAMES.map((n) => ({ name: n })) }
 }
 
 async function main() {

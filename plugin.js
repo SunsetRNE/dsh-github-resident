@@ -833,13 +833,19 @@ const TOOL_PROTOCOL = [
   { name: 'gh_cli_auth_web', kind: 'write', required: [], optional: ['setup_git', 'open_browser'], returns: ['ok', 'user_code', 'verification_uri', 'opened'] },
   { name: 'gh_cli_status', kind: 'read', required: [], optional: [], returns: ['version', 'authenticated', 'activeAccount', 'gitCredentialHelper', 'hosts'] },
   { name: 'gh_cli_setup_git', kind: 'write', required: [], optional: ['set_identity'], returns: ['exitCode', 'credentialHelper', 'gitUserName', 'gitUserEmail'] },
-  { name: 'gh_cli_logout', kind: 'write', required: [], optional: ['hostname', 'confirm', 'revoke', 'purge_git', 'reset_state', 'uninstall_gh', 'remove_gh_config', 'dry_run'], returns: ['ok', 'dryRun', 'hostname', 'tokenMasked', 'steps', 'verify', 'leftover'] },
+  { name: 'gh_cli_logout', kind: 'write', required: [], optional: ['hostname', 'confirm', 'revoke', 'purge_git', 'reset_state', 'uninstall_gh', 'remove_gh_cache', 'remove_gh_config', 'dry_run'], returns: ['ok', 'dryRun', 'hostname', 'tokenMasked', 'steps', 'verify', 'leftover'] },
   { name: 'gh_cli_resolve', kind: 'read', required: [], optional: [], returns: ['resolved', 'system', 'pluginCache', 'dataDir', 'arch', 'autoLandOnNextUse', 'lastInstall'] },
   { name: 'gh_cli_version', kind: 'write', required: [], optional: ['update', 'force'], returns: ['current', 'latest', 'layer', 'updateAvailable', 'checkedAt', 'updated', 'reason', 'lastUpdate'] },
   { name: 'gh_cache_gc', kind: 'write', required: [], optional: ['dry_run', 'keep_versions'], returns: ['dir', 'removed', 'removedCount', 'freedBytes', 'kept', 'keptVersions'] },
-  { name: 'gh_protocol', kind: 'read', required: [], optional: [], returns: ['id', 'version', 'tools', 'host', 'http', 'errors'] },
+  { name: 'gh_protocol', kind: 'read', required: [], optional: [], returns: ['id', 'version', 'spec', 'service', 'http', 'envelope', 'tools', 'errors', 'registry', 'guarantees'] },
 ];
 
+/**
+ * 错误码表。语义说清楚（2026-10-13 对齐）：这里是**本插件会出现在回执文案里的码**，
+ * 不等于「所有码都由代码 throw」—— 多数工具失败时回的是裸中文串 + `ok:false`（那时没有码前缀），
+ * 只有回环路由与少数工具路径会带码。所以判据是「真实出现过的码都要在表里」，
+ * 而不是「表里的码都要被抛」。来源闸门族那三条此前真实出现却没登记，协议因此与代码对不上。
+ */
 const ERROR_CODES = {
   E_NO_GH: '宿主里没有可用的 gh（先跑 gh_cli_install）',
   E_NO_TOKEN: '尚未保存 token（先 gh_resident_login 或 gh_cli_auth_web）',
@@ -850,6 +856,10 @@ const ERROR_CODES = {
   E_REGISTRY_CONSENT: '登记文件库尚未获得授权：先按回执里的 ask 问用户，同意后带 consent:true 重调',
   E_REGISTRY_LIB: '登记文件库不存在：先 gh_repo_registry {action:"build", consent:true} 建库',
   E_INTERFACE_DOWN: '插件回环接口不可达（插件未启用或未刷新页面）',
+  // —— 来源闸门族：这三条真实出现在回环路由的拒绝文案里（此前没登记）——
+  E_ORIGIN: '这条路由只接受带本机页面来源头（Origin/Referer）的请求',
+  E_REGISTRY_ORIGIN: '写登记库的路由只接受来自设置页的请求（缺 Origin/Referer）',
+  E_REGISTRY_CONSENT_ORIGIN: 'consent=1 只接受来自设置页的请求（缺 Origin/Referer）；机器调用请走 gh_repo_registry 工具，它会先回 ask',
 };
 
 /** 注册表就绪的工具定义；execute 的返回值统一套上协议信封。 */
@@ -1958,6 +1968,10 @@ sys.stdout.flush()
   }));
 
   // ---------- 插件协议：Host Service + 自描述文档 ----------
+  // 端口定义提到协议之前：协议里的 http.base 必须报**真实端口**（见下面 base 那行 —— 它此前写死
+  // 31790，一旦用 DSH_GH_API_PORT 改端口，协议就在说谎）。接口本身的说明留在下面起服务那一段。
+  const API_PORT = Number(process.env.DSH_GH_API_PORT) || 31790;
+  const API_ORIGIN = 'http://127.0.0.1:' + API_PORT;
   const PROTOCOL = {
     id: PROTOCOL_ID,
     version: PROTOCOL_VERSION,
@@ -1966,7 +1980,9 @@ sys.stdout.flush()
       key: SERVICE_KEY,
       methods: [
         { name: 'protocol', args: [], returns: '本协议文档' },
-        { name: 'status', args: [], returns: '{ token, identity, gitGlobal, gitCredentials, repoCount, dirtyRepos, repos }' },
+        // 这一条曾经写的是**工具** gh_resident_status 的形状（token/identity/…），而服务方法
+        // status() 走的是 statePayload（面板读的那份快照），两者字段完全不同 —— 消费方照协议调会拿不到东西。
+        { name: 'status', args: '{ cached?: boolean, refresh?: boolean }', returns: '{ gh: { installed, version, layer, path, willAutoLand }, authenticated, account, hostsPath, stateFile, credHelper, reposRoot, lastFlow, updates, cached, snapshotAt, snapshotAgeMs, probe?, serverError?, apiPort? }' },
         { name: 'repos', args: '{ root?: string, depth?: number }', returns: '{ root, count, repos }' },
         { name: 'registry', args: '{ action?, root?, depth?, consent?, confirm?, prune?, path?, slug?, note?, tags? }', returns: '{ ok, action, consentRequired?, ask?, dir, registered|count, remoteBound, withoutRemote, drift? }' },
         { name: 'registryList', args: '{ root?, prefix?, onlyMissingRemote?, hasRemote?, host?, tag? }', returns: '{ libraryExists, dir, count, libraryCount, remoteBound, withoutRemote, byHost, entries, malformed }' },
@@ -1976,10 +1992,25 @@ sys.stdout.flush()
         { name: 'version', args: '{ update?, force? }', returns: '{ current, latest, layer, updateAvailable, updated, reason }' },
         { name: 'gc', args: '{ dry_run?, keep_versions? }', returns: '{ dir, removed, freedBytes, kept }' },
       ],
-      consume: "const git = ctx.get('githubResident'); const r = await git.repos({ root: '/root/GitHub' })",
+      // 同一个 ctx 上还挂了第二个服务（Resident 半边借给合并进来的 Deck 半边）。它不叫 githubResident，
+      // 所以不在上面的 methods 里 —— 但它是**对外契约的一部分**（Deck 晚绑定取用它），必须登记：
+      // 否则「本插件对外提供哪些服务」这个问题的答案永远少一条。
+      alsoProvided: [
+        {
+          key: 'ghResolver',
+          providedWhen: '同一 ctx 具备 provide 能力时（服务位被占则缺席，Deck 侧如实回落自己的 PATH 解析，不静默换口径）',
+          methods: [
+            { name: 'resolve', args: [], returns: 'string|null —— gh 可执行文件的绝对路径（系统层 gh 优先，其次插件自带缓存 ~/.dsh/gh-cli/bin/gh；install:false，不落地、不回抛，找不到就回 null）' },
+          ],
+          why: '合并宿主先跑 Deck 后跑 Resident，所以 Deck 必须晚绑定；这条服务的存在就是为了「同一个插件只有一个 gh 在哪的答案」',
+        },
+      ],
+      // consume 的示例根目录曾经写死 /root/GitHub —— 那只是默认值，不是事实。改成显式传参的样子，
+      // 免得别的插件照抄一个在多数机器上都不存在的路径。
+      consume: "const git = ctx.get('githubResident'); const r = await git.repos({ root: '/path/to/your/repos' })  // root 省略时用配置的 reposRoot，再退回 ~/GitHub",
     },
     http: {
-      base: 'http://127.0.0.1:31790',
+      base: API_ORIGIN,
       loopbackOnly: true,
       endpoints: [
         { method: 'GET', path: '/state', returns: '账号快照 / gh 版本 / 更新意图 / 最近一次 GC（默认走快照，?refresh=1 同步重建）' },
@@ -2070,7 +2101,9 @@ sys.stdout.flush()
 
   const serviceApi = {
     id: PROTOCOL_ID,
-    version: PROTOCOL_VERSION,
+    // 这一行原来也叫 `version`，与下面那个同名方法撞键：对象字面量后写者胜，于是它被**静默丢掉**
+    //（协议号从来没能从服务上取到，取到的是版本体检方法）。改名保留信息，同时消掉重复键。
+    protocolVersion: PROTOCOL_VERSION,
     protocol: () => PROTOCOL,
     status: (opts = {}) => statePayload(opts),
     repos: async (opts = {}) => {
@@ -2138,9 +2171,7 @@ sys.stdout.flush()
   // 设置页（浏览器）与插件（node）是两个进程，没有现成的数据通道；
   // 这里在 127.0.0.1 上开一个小接口，浏览器直连取状态与一次性码。
   // 只监听回环、只回状态与一次性码，任何 token 都不出现在响应里。
-
-  const API_PORT = Number(process.env.DSH_GH_API_PORT) || 31790;
-  const API_ORIGIN = 'http://127.0.0.1:' + API_PORT;
+  // （API_PORT / API_ORIGIN 两行已提到上面协议定义之前 —— 协议里的 http.base 要报真实端口。）
   let lastFlow = null;
   let lastServerError = null;
 

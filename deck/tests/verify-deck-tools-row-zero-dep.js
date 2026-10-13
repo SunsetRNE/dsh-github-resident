@@ -20,7 +20,7 @@ const check = (ok, msg) => { total += 1; console.log((ok ? '  PASS ' : '  FAIL '
 const readText = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8')
 const imp = (rel) => import(pathToFileURL(path.join(ROOT, rel)).href)
 
-const SEVEN_NAMES = [
+const DECK_TOOL_NAMES = [
   'deck_context',
   'deck_issue_get',
   'deck_map_snapshot',
@@ -65,7 +65,7 @@ async function main() {
   try { row.apply({ tools: svc }) } catch (e) { crashed = e }
   check(!crashed, '行模块应用不抛')
   const names = registered.map((t) => t.name)
-  check(SEVEN_NAMES.every((n) => names.indexOf(n) >= 0), '行模块交出九个 deck 工具')
+  check(DECK_TOOL_NAMES.every((n) => names.indexOf(n) >= 0), '行模块交出九个 deck 工具')
   check(names.indexOf('deck_probe') >= 0, '行模块交出探针')
 
   // 形状：参数与输出都过仓库开发依赖里的真原生判定（与线上同版本）。
@@ -77,7 +77,7 @@ async function main() {
   check(typeof realAssert === 'function', '真原生判定可加载（开发依赖与线上同版本）')
   if (typeof realAssert === 'function') {
     for (const t of registered) {
-      if (SEVEN_NAMES.indexOf(t.name) < 0) continue
+      if (DECK_TOOL_NAMES.indexOf(t.name) < 0) continue
       try { realAssert(t.parameters); realAssert(t.output.schema) } catch (e) {
         check(false, t.name + ' 形状过真原生判定（' + String((e && e.message) || e).split(';')[0].slice(0, 120) + '）')
         continue

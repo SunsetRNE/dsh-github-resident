@@ -32,7 +32,7 @@ const imp = (rel) => import(pathToFileURL(path.join(ROOT, rel)).href)
 const readText = (rel) => fs.readFileSync(path.join(ROOT, rel), 'utf8')
 
 const ASSEMBLY = 'src/host/platform/deckToolsAssembly.js'
-const SEVEN = [
+const DECK_TOOL_NAMES = [
   'src/host/tools/deckContext.js',
   'src/host/tools/deckIssueGet.js',
   'src/host/tools/deckMapSnapshot.js',
@@ -92,7 +92,7 @@ async function main() {
   // ── ① 装配只有一处，而且走装配口 ──
   const wiringSrc = readText('src/host/refresh/wiring.js')
   const assemblySrc = readText(ASSEMBLY)
-  const importedSeven = SEVEN.filter((f) => assemblySrc.indexOf(f.slice(f.lastIndexOf('/') + 1)) >= 0)
+  const importedSeven = DECK_TOOL_NAMES.filter((f) => assemblySrc.indexOf(f.slice(f.lastIndexOf('/') + 1)) >= 0)
   check(importedSeven.length === 9, '装配点把八个工具文件都读进来了（' + importedSeven.length + ' / 9，装配点：' + ASSEMBLY + '）')
   check(/createDeckTools\s*\(/.test(assemblySrc), '装配点走的是共享层装配口 createDeckTools（不是手拼一张表）')
 
@@ -105,7 +105,7 @@ async function main() {
       const rel = path.relative(ROOT, full).split(path.sep).join('/')
       if (layerOf(rel) !== 'host') continue
       const text = readText(rel).replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/.*$/gm, '')
-      for (const tool of SEVEN) {
+      for (const tool of DECK_TOOL_NAMES) {
         const base = tool.slice(tool.lastIndexOf('/') + 1)
         if (new RegExp('[\'"](\\.\\.?/)+' + base.replace(/\./g, '\\.') + '[\'"]').test(text)) hostLayerHits.push(rel + ' -> ' + base)
       }
