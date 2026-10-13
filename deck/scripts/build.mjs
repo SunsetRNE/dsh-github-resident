@@ -974,7 +974,19 @@ function checkPixelTs() {
   try { tscBin = resolve(dirname(require.resolve('typescript/package.json')), 'bin/tsc') }
   catch (e) { throw new Error('[pixel-ts] 没装 typescript（先跑 pnpm install 再构建）：' + ((e && e.message) || e)) }
   const r = spawnSync(process.execPath, [tscBin, '-p', resolve(ROOT, 'tsconfig.client.json')], { encoding: 'utf8' })
-  if (r.status !== 0) throw new Error('[pixel-ts] tsc --noEmit 未通过：\n' + (r.stdout || '') + (r.stderr || ''))
+  if (r.status !== 0) {
+    const out = (r.stdout || '') + (r.stderr || '')
+    // 与四个 core 的 runTypeCheck 同一档（判据与理由见 label-color-core/build.mjs 的长注释）：
+    // 检查器**自己跑不起来**不是类型错误 —— typescript 7 的 native 核（tsgo）在异架构容器里会 panic
+    // （实测 arm64/Android：「bundled: /.l2s/lib.d.ts does not exist; this executable may be misplaced」）。
+    // 转译走 esbuild（buildPixelTs 已在上一步做完，与 tsc 能否启动无关）；
+    // 有真类型诊断时照旧抛错，不放宽。
+    if (/panic:|this executable may be misplaced/i.test(out)) {
+      console.log('[pixel-ts] 类型检查器本身跑不起来，本次跳过类型检查（不是类型错误）：' + out.split('\n')[0].slice(0, 200))
+      return
+    }
+    throw new Error('[pixel-ts] tsc --noEmit 未通过：\n' + out)
+  }
   console.log('[pixel-ts] tsc --noEmit 通过')
 }
 

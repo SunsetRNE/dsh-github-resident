@@ -1,3 +1,57 @@
+## 2026-10-13 · 合并包 1.8.0：门禁可信（CI 接认证链 + 清假绿灯）+ 两处一直红着的存量问题
+
+- **这是什么**：1.7.8 修行为、1.7.9 修协议同源，本版修**门禁本身**。此前「发布」与「认证」是两条
+  互不相交的路：`release.yml` 只跑 `check:entries` 与 `tests/merge`，而 `package.json` 里
+  `verify:resident` 串的那 8 个根 verify 件**全都不在发布路径上** —— 也就是说，发布一个版本可以完全
+  绕开本仓自称的「认证」。同批清掉几处「永远不会失败」的假绿灯，以及两处一直红着的存量问题。
+- **改了什么**：
+  - **CI 接认证**（`.github/workflows/release.yml`）：门禁步骤从 `check:entries && tests/merge` 扩成
+    四段 —— 追加 `npm run verify:resident`（8 件）。本机实测全绿：`verify-bundle.sh` pass=8 fail=0、
+    其余 6 件 failed=0。`verify:deck`（deck 半边 310 道）**暂不接**，CI 注释里写明了原因：它有一批
+    环境相关的存量红（例如 `verify-deck-tools-agent-register` 要 `deck/node_modules/@deepseek-ai/dsh-tools`，
+    而 deck 子树没有自己的 node_modules；`verify-414-single-card` 的四条 a11y 断言也是红的），
+    接上会让发布直接红。
+  - **清假绿灯（4 处恒真 + 1 处无条件 PASS）**：
+    - `verify-logout.mjs`：「真 HOME 未新写 .git-credentials」原写 `realCred === false || realCred === true`
+      （布尔恒真）→ 改成与**改动环境之前的快照**比较（真 HOME 本来可能就有这个文件，不能断言「不存在」）。
+    - `verify-registry.mjs`：同一条判据的右支 `DSH_GH_REGISTRY_DIR.startsWith(HOME)` 恒真（夹具必然把
+      数据目录放在伪 HOME 下）→ 同样改成快照比较。
+    - `verify-update-gc.mjs`：`'updates' in second || true` 恒真，而且查的是**还没有快照**的那一次读
+      （那时本就没有 updates 字段）→ 判据移到有快照之后并去掉 `|| true`；`check(forcedMs >= 0)`
+      （耗时永远非负）→ 改成如实记账（NOTE）。
+    - `verify-bundle.sh`：`ok "宿主半边唯一…"` 打在 `if` **外面**，根目录没有 `index.js` 时也照样打印
+      PASS → 两条路径各有各的真判据。
+  - **`verify-real-artifact.mjs` 默认严格**：原来要显式 `DSH_GH_STRICT=1` 才严格，而它被挂在
+    `verify:resident` 尾部、从来没人设过 —— 于是「断网 → SKIP → exit 0」被当成了通过，这条本该打公网
+    验证真包的门禁可以天长日久一次都没真跑过。现在默认严格，要放宽必须显式写 `0`。
+  - **修一处存量真红（文案）**：登记库页那句 90 字符的长句既超 `verify-ui` 的单句预算（≤60 字），
+    内容也**不实** —— 它写「本包自 v1.7.1 起是可发布的 npm 包」，读起来像已发布，而 npm 上实际是 404
+    （README「更新」一节自己写着尚未发布）。拆成三句短句，并如实区分「可发布形态」与「已发布」；
+    `verify-ui.mjs` 从 41 条 1 红转为 **41/41 全绿**（文案预算 441/480）。
+  - **`prepack` 门**：`npm pack` / `npm publish` 前自动构建。此前 `dist/` 被 gitignore 且没有任何构建钩子，
+    干净检出上直接 `npm publish` 会发出一个 `main` 指向不存在文件的包。CI 本来就是显式 build 后再 pack，
+    这一条是给本地手动发布兜底。
+  - **`files` 白名单删掉有名无实的 `deck/package/lib/`**：它被 `deck/.gitignore` 的嵌套规则剔出 tarball
+    （实测 0 条），而 `pack-contract` 门禁自己也断言「`deck/package/lib` 会被嵌套 .gitignore 剔出 tarball」
+    —— 声明与实物不符，删掉声明（运行期无引用，已逐项核过：`deck/src` 里提到它的地方全是注释）。
+  - **第五处 tsgo 适配 + 恢复 pixel-ts 转译**：`deck/scripts/build.mjs` 的 `checkPixelTs` 与四个 core 的
+    `runTypeCheck` 属同一档（typescript 7 的 native 核在异架构容器里 panic）。此前它因为
+    `pixelTsTruthFiles()` 也踩了 f2fs 的 `d_type` 陷阱（`ent.isFile()` 对镜像层旧文件返回 false，
+    于是看不到那 34 个 `.ts` 真源）而**恰好被跳过**；这次能看到真源了，tsc 一跑就 panic、把整条构建挡死。
+    现在如实报「检查器本身跑不起来」并继续（转译走 esbuild），**34 个 TS 真源恢复正常转译**
+    （`dist/client.js` 因此 +201 字节）。
+  - 同步 `tests/merge/build/merged-render.test.mjs` 的两条文案断言（改文案就该改判据：从「验旧措辞」
+    改成「验意图」）。
+- **版本号**：合并包 `1.7.9 → 1.8.0`；deck 包 `1.8.0-rc.10 → 1.8.0-rc.11`。
+- **验证**：`tests/merge/run.mjs` **19/19 全绿**（含 pack 契约经 `prepack` 触发的真实构建）；
+  `npm run verify:resident` **退出码 0**（bundle pass=8 fail=0，其余 6 件 failed=0）；`verify-ui.mjs` **41/41**；
+  `--check` 全绿；`npm run build` 退出码 0。
+- **遗留**：`verify:deck` 的存量红（环境缺件 + 四条 a11y 断言）未清，清完再单独接一行 CI；
+  `deck/scripts/verify-chain.js` 遇第一个失败即停（看不到全貌），仓里有不早停的 `verify-all.mjs` 但无引用
+  —— 诊断体验另单跟进。
+
+---
+
 ## 2026-10-13 · 合并包 1.7.9：工具面与协议**同源**（一条断言收口多份手写副本）
 
 - **这是什么**：1.7.8 修的是行为，本版修的是**缝合面**。「本包有哪些工具、各带什么参数、协议怎么写」

@@ -141,12 +141,17 @@ fi
 echo
 
 echo "== 6. 宿主半边唯一 + locale 口径 =="
+# 判据要真的能失败：原来 ok 打在 if **外面**，根目录没有 index.js 时也照样打印「唯一」——
+# 这一条从未失败过。现在两条路径各有各的真判据。
 if [ -f "$BUNDLE_DIR/index.js" ]; then
   if cmp -s "$BUNDLE_DIR/index.js" "$BUNDLE_DIR/plugin.js"; then
     bad "存在逐字节重复的 index.js（R1：两份副本会漂移）" "rm '$BUNDLE_DIR/index.js'；只保留 exports 指向的 dist/host.js 与它引用的 plugin.js"
+  else
+    ok "宿主半边唯一（index.js 在，但与 plugin.js 不同字节）"
   fi
+else
+  ok "宿主半边唯一（没有重复的 index.js 副本；实现只有 plugin.js + deck/src/host/index.js）"
 fi
-ok "宿主半边唯一（实现只有 plugin.js + deck/src/host/index.js 各一份）"
 node - "$BUNDLE_DIR/locale/en.json" <<'NODE'
 const fs = require('fs');
 const j = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));

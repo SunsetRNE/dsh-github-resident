@@ -2,7 +2,7 @@
 
 [中文](README.md) ｜ **English**
 
-> **1.7.9 merged test package:** keeps `@sunsetrne/dsh-github-resident-v2` and includes 17 `gh_*` tools, 10 `deck_*` tools, 27 bundled skills, the composer toolbar and the right sidebar. The imported Deck snapshot is 1.8.0-rc.10, newer than the device's standalone 1.7.51 installation.
+> **1.8.0 merged test package:** keeps `@sunsetrne/dsh-github-resident-v2` and includes 17 `gh_*` tools, 10 `deck_*` tools, 27 bundled skills, the composer toolbar and the right sidebar. The imported Deck snapshot is 1.8.0-rc.11, newer than the device's standalone 1.7.51 installation.
 >
 > Disable the standalone `dsh-mattpocock-skills-deck` bundle (including its tools component) before importing this package to upgrade Resident, then restart DSH. Verify tools, skills and panels before removing the disabled standalone Deck through Plugin Manager. Do not delete a linked plugin directory first or clear shared data. This is a local package, not an npm release; the installer resolves `yaml` and `dsh-plugin-update`. Offline installation and live-device visual acceptance are not claimed.
 
@@ -82,7 +82,7 @@ HTTP (loopback only, `127.0.0.1`): `GET /state`, `GET /state?cached=1`, `GET /st
 ### Option A: install as a package (recommended)
 
 ```bash
-VER=1.7.9   # the version you want
+VER=1.8.0   # the version you want
 dsh plugin --profile web add \
   "https://github.com/SunsetRNE/dsh-github-resident/releases/download/v$VER/sunsetrne-dsh-github-resident-v2-$VER.tgz"
 
@@ -98,14 +98,14 @@ Restart the host afterwards — plugins are loaded at boot. The release `*.tgz` 
 
 The panel is built on `dsh-plugin-update`. An install is updatable only when both hold (verified against `dist/reader.js` on a live machine):
 
-1. the profile dependency spec is **registry-typed** — a version / range / dist-tag (`^1.7.9`, `latest`, …); `registrySpec()` accepts neither URLs nor `link:`;
+1. the profile dependency spec is **registry-typed** — a version / range / dist-tag (`^1.8.0`, `latest`, …); `registrySpec()` accepts neither URLs nor `link:`;
 2. the installed directory sits under `<profile>/node_modules/`.
 
 Fail either one and the engine reports `source-install` (panel text: "源码安装实例，不支持版本更新") and offers no manual command. The three install forms:
 
 | Install form | spec | Panel can update | How to upgrade |
 |---|---|---|---|
-| From a registry (npm / private) | `^1.7.9` | ✅ | the panel's install-update |
+| From a registry (npm / private) | `^1.8.0` | ✅ | the panel's install-update |
 | From the release tarball (Option A) | `https://…tgz` | ❌ | re-run `dsh plugin … add <new tarball>` |
 | From a source checkout (Option B) | `link:/…` | ❌ | same; or convert to a package install |
 

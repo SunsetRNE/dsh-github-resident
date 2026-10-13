@@ -12,6 +12,10 @@ import { promises as fs } from 'node:fs';
 import { execFile } from 'node:child_process';
 
 const REAL_HOME = os.homedir();
+// 真 HOME「未被触碰」的判据要在**改动任何环境之前**取快照：真 HOME 本来可能就有
+// .git-credentials（用户环境就是这样），所以不能断言「不存在」，只能断言「与开始时一致」。
+// （原来那行写的是 `realCred === false || realCred === true` —— 布尔恒真，等于从来没检查过。）
+const REAL_CRED_BEFORE = await fs.access(path.join(REAL_HOME, '.git-credentials')).then(() => true, () => false);
 const HOME = await fs.mkdtemp(path.join(os.tmpdir(), 'ghres-home-'));
 os.homedir = () => HOME; // 必须在 import 插件之前
 process.env.HOME = HOME; // 子进程 git 也要落在伪 HOME 上
@@ -97,7 +101,7 @@ check('协议版本 >= 2', proto.version >= 2, proto.version);
 const realHosts = await fs.readFile(path.join(REAL_HOME, '.config', 'gh', 'hosts.yml'), 'utf8').catch(() => '');
 check('真 HOME hosts.yml 未被触碰', realHosts.includes('oauth_token'), realHosts ? 'real hosts.yml 仍在' : 'READ FAILED');
 const realCred = await exists(path.join(REAL_HOME, '.git-credentials'));
-check('真 HOME 未新写 .git-credentials', realCred === false || realCred === true, String(realCred));
+check('真 HOME 未新写 .git-credentials', realCred === REAL_CRED_BEFORE, '前=' + REAL_CRED_BEFORE + ' 后=' + realCred);
 
 await fs.rm(HOME, { recursive: true, force: true });
 await fs.rm(FAKE_PATH, { recursive: true, force: true });

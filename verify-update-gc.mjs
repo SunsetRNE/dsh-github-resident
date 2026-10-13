@@ -282,7 +282,9 @@ if (portLine) {
   check('3 无快照时如实回未检查', first.cached === false && first.authenticated === null,
     { cached: first.cached, authed: first.authenticated, probing: first.probing, layer: first.gh && first.gh.layer, keys: Object.keys(first).join(',') });
   check('3 连读 5 次都不调 gh（零检查）', afterPeek === before, { before, after: afterPeek, calls: (await calls()).slice(0, 4) });
-  check('3 cached 读仍带更新意图字段位', 'updates' in second || true, Object.keys(second).slice(0, 8));
+  // 「cached 读带更新意图字段位」这条原来写的是 `'updates' in second || true`（恒真），而且查的是
+  // **还没有快照**的那一次读 —— 那时本就没有 updates 字段。判据已移到下面有快照之后（见 cachedAfter），
+  // 不再用 `|| true` 掩盖。
 
   const t1 = Date.now();
   const forced = await fetch(`http://127.0.0.1:${P2}/state?refresh=1`).then((r) => r.json());
@@ -298,6 +300,8 @@ if (portLine) {
   check('3 refresh 之后 cached 读回到零检查', nowCalls.length === tAfter, { before: tAfter, after: nowCalls.length });
   const cachedAfter = await fetch(`http://127.0.0.1:${P2}/state?cached=1`).then((r) => r.json());
   check('3 cached 读能读到刚建立的快照', cachedAfter.cached === true && cachedAfter.authenticated === false, { cached: cachedAfter.cached, authed: cachedAfter.authenticated });
+  // 真判据：有快照的 cached 读必须带更新意图字段位（面板靠它显示当前/最新版本）
+  check('3 有快照的 cached 读带更新意图字段位', 'updates' in cachedAfter, Object.keys(cachedAfter).slice(0, 8));
 
   // 3b) 快照过期：cached 读**不阻塞**，但必须在后台补一次（N2：原来 TTL 形同虚设）
   check('3b 回执带检查阶段 probe.state', ['ready', 'running', 'idle', 'failed', 'disabled'].includes((cachedAfter.probe || {}).state), cachedAfter.probe);
@@ -313,7 +317,9 @@ if (portLine) {
   const refreshed = await fetch(`http://127.0.0.1:${P2}/state?cached=1`).then((r) => r.json());
   check('3b 过期后触发后台补查（gh 调用数增加）', afterStaleCalls > staleCalls, { before: staleCalls, after: afterStaleCalls });
   check('3b 补查后快照时间戳前移', Boolean(refreshed.snapshotAt) && refreshed.snapshotAt > staleAt, { before: staleAt, after: refreshed.snapshotAt });
-  check('3 refresh 耗时记账（供排查）', forcedMs >= 0, forcedMs);
+  // 这一条原文案自称「供排查」，写法却是 check(forcedMs >= 0) —— 耗时永远 >= 0，恒真。
+  // 改成如实记账，不再假装它是一条断言。
+  console.log('  NOTE 3 refresh 耗时（供排查）: ' + forcedMs + 'ms');
 
   try { if (serve.pid) process.kill(serve.pid); } catch { /* 自行退出 */ }
 }

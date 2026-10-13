@@ -240,8 +240,12 @@ window.__ModuleLoader__.load({
               deckVersion,
               DeckUpdate ? h(DeckUpdate, null) : null)),
           h('p', { className: 'ghreg-answer' },
-            '更新：检查更新走宿主 dsh-plugin-update 的入口件（就是上面那颗按钮）。'
-            + '本包自 v1.7.1 起是可发布的 npm 包（@sunsetrne/dsh-github-resident-v2）：走 npm 更新或源码重装都行，都不会装回旧的 Deck 包。'),
+            // 这一格原来是一句 90 字符的长句，而且**内容不实**：它写「本包自 v1.7.1 起是可发布的
+            // npm 包」，读起来像已发布，而 npm 上实际是 404（README「更新」一节自己就写着尚未发布）。
+            // 拆成三句短句（每句 ≤ 60，过 verify-ui 的单句预算），并把「可发布」与「已发布」分开说清。
+            '更新：走宿主 dsh-plugin-update 的入口件（就是上面那颗按钮）。'
+            + '本包是 npm 包形态；当前尚未发布到 npm，面板更新要等发布后才生效。'
+            + '在那之前升级走 Release 的 tgz 重装，不会装回旧的 Deck 包。'),
           reg.phase === 'unsupported'
             ? h('p', { className: 'ghreg-answer' }, '宿主未重启：/registry 返回 404，重启后刷新本页。')
             : null,

@@ -5,9 +5,9 @@
  * 下载本架构资产，按主件同构的口径只抽 bin/gh 到临时目录，跑 --version，再删掉。
  * 不写进 ~/.dsh、不动 /usr/bin/gh。
  *
- * 用法: node verify-real-artifact.mjs            # 断网时 SKIP 并以 0 退出
+ * 用法: node verify-real-artifact.mjs            # 默认严格：拿不到真包即失败（「没验」不许报成「通过」）
  *       DSH_GH_TAG=v2.102.0 node verify-real-artifact.mjs
- *       DSH_GH_STRICT=1 node verify-real-artifact.mjs   # 断网即失败
+ *       DSH_GH_STRICT=0 node verify-real-artifact.mjs   # 显式放宽：断网时 SKIP 并以 0 退出（本机开发用）
  */
 import os from 'node:os';
 import path from 'node:path';
@@ -15,7 +15,10 @@ import zlib from 'node:zlib';
 import { promises as fs } from 'node:fs';
 import { execFile } from 'node:child_process';
 
-const STRICT = process.env.DSH_GH_STRICT === '1';
+// 默认严格。原来默认宽松（`=== '1'` 才算严格），而它被挂在 verify:resident 尾部、
+// 又从来没人设过 DSH_GH_STRICT —— 于是「断网 → SKIP → exit 0」被当成了通过，
+// 这条本该打公网验证真包的门禁可以天长日久一次都没真跑过。要放宽必须显式写 0。
+const STRICT = process.env.DSH_GH_STRICT !== '0';
 const ARCH = ({ x64: 'amd64', arm64: 'arm64', arm: 'armv6', ia32: '386' })[process.arch] || process.arch;
 const UA = { 'user-agent': 'dsh-github-resident-verify', accept: 'application/vnd.github+json' };
 const skip = (why) => { console.log(JSON.stringify({ skipped: true, why })); process.exit(STRICT ? 1 : 0); };

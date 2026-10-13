@@ -47,8 +47,20 @@ jobs:
       - name: 构建
         run: npm run build
 
-      - name: 门禁
-        run: npm run check:entries && node tests/merge/run.mjs
+      - name: 门禁（合并期契约 + resident 半边 verify 链）
+        # 为什么加这一段：此前发布路径只跑 check:entries 与 tests/merge，而 package.json 里
+        # verify:resident 串的那 8 个根 verify 件**全都不在发布路径上** —— 也就是说，发布一个版本
+        # 可以完全绕开本仓自称的「认证」。这里把它接上。
+        # 本机已实测全绿（2026-10-13，合并包 1.7.9）：bundle pass=8 fail=0，其余 6 件 failed=0；
+        # verify-real-artifact 现在**默认严格**（打公网拿官方 gh 真包），断网即红，不静默跳过 ——
+        # 要放宽必须显式设 DSH_GH_STRICT=0，CI 里不设。
+        # 注：verify:deck（deck 半边 310 道）**暂不接** —— 它有一批环境相关的存量红
+        # （例如 verify-deck-tools-agent-register 要 deck/node_modules/@deepseek-ai/dsh-tools，
+        # 而 deck 子树没有自己的 node_modules），接上会让发布直接红。清完存量红再单独接一行。
+        run: |
+          npm run check:entries
+          node tests/merge/run.mjs
+          npm run verify:resident
 
       - name: 装载自检（不通过不许打包）
         run: node --input-type=module -e "import('./dist/host.js').then(()=>console.log('LOADED-OK'))"

@@ -22,6 +22,10 @@ import { promises as fs } from 'node:fs';
 import { execFile } from 'node:child_process';
 
 const REAL_HOME = os.homedir();
+// 同 verify-logout：真 HOME 的判据取「改动环境之前的快照」，不能断言「不存在」（用户环境本来可能就有库）。
+// 原来那行右支 `DSH_GH_REGISTRY_DIR.startsWith(HOME)` 恒真 —— 夹具必然把数据目录放在伪 HOME 下，
+// 于是这条断言从来没生效过。
+const REAL_REPOS_BEFORE = await fs.access(path.join(REAL_HOME, '.dsh', 'github-resident', 'registry', 'repos')).then(() => true, () => false);
 const HOME = await fs.mkdtemp(path.join(os.tmpdir(), 'ghreg-home-'));
 os.homedir = () => HOME; // 必须在 import 插件之前
 process.env.HOME = HOME;
@@ -221,7 +225,7 @@ const viaService = await services.get('githubResident').registry({ action: 'stat
 check('Host Service 与工具走同一条实现', viaService.action === 'status' && typeof viaService.libraryExists === 'boolean', viaService.action);
 
 // 11) 真 HOME 与真仓库没被碰
-check('真 HOME 下没有新建登记目录', (await exists(path.join(REAL_HOME, '.dsh', 'github-resident', 'registry', 'repos'))) === false || process.env.DSH_GH_REGISTRY_DIR.startsWith(HOME), path.join(REAL_HOME, '.dsh'));
+check('真 HOME 下没有新建登记目录', (await fs.access(path.join(REAL_HOME, '.dsh', 'github-resident', 'registry', 'repos')).then(() => true, () => false)) === REAL_REPOS_BEFORE, '前=' + REAL_REPOS_BEFORE + ' 后=' + (await fs.access(path.join(REAL_HOME, '.dsh', 'github-resident', 'registry', 'repos')).then(() => true, () => false)));
 
 await fs.rm(HOME, { recursive: true, force: true });
 await fs.rm(ROOT, { recursive: true, force: true });
