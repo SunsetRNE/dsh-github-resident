@@ -62,10 +62,21 @@ function git(repo, args) {
  * 注意**不要**拿它去改登录流程的判断分支（gh_resident_login 里"已有非 store helper 就不覆盖"
  * 看的是全局 helper 本身：那里要判断的是"要不要回退写 store"，换成 host 作用域会把决策反过来）。
  */
+/**
+ * credential helper 的两个作用域**分开**读（ADR 0001 要的是事实，不是结论）：
+ * gh 的 `auth setup-git` 写的是 host 作用域（`credential.https://github.com.helper`），
+ * 它优先于全局 `credential.helper`。两个都报，谁在生效一眼可见 —— 原来只报「生效的那个」，
+ * 于是「全局是空、是不是没接好」这种问题没人答得出来。
+ * 全插件只有这一处读 helper 作用域：`readCredHelper` 与身份体检共用它。
+ */
+async function readCredHelpers() {
+  const hostScope = (await git(process.cwd(), ['config', '--global', '--get-all', 'credential.https://github.com.helper'])).stdout.trim();
+  const globalScope = (await git(process.cwd(), ['config', '--global', '--get-all', 'credential.helper'])).stdout.trim();
+  return { hostScope, global: globalScope, effective: hostScope || globalScope };
+}
+
 async function readCredHelper() {
-  const hostScoped = (await git(process.cwd(), ['config', '--global', '--get-all', 'credential.https://github.com.helper'])).stdout.trim();
-  if (hostScoped) return hostScoped;
-  return (await git(process.cwd(), ['config', '--global', 'credential.helper'])).stdout.trim();
+  return (await readCredHelpers()).effective;
 }
 
 async function readState() {
@@ -916,6 +927,7 @@ const TOOL_PROTOCOL = [
   { name: 'gh_cli_setup_git', kind: 'write', required: [], optional: ['set_identity'], returns: ['exitCode', 'credentialHelper', 'gitUserName', 'gitUserEmail'] },
   { name: 'gh_cli_logout', kind: 'write', required: [], optional: ['hostname', 'confirm', 'revoke', 'purge_git', 'reset_state', 'uninstall_gh', 'remove_gh_cache', 'remove_gh_config', 'dry_run'], returns: ['ok', 'dryRun', 'hostname', 'tokenMasked', 'steps', 'verify', 'leftover'] },
   { name: 'gh_cli_resolve', kind: 'read', required: [], optional: [], returns: ['resolved', 'system', 'pluginCache', 'dataDir', 'arch', 'autoLandOnNextUse', 'lastInstall'] },
+  { name: 'gh_identity', kind: 'read', required: [], optional: [], returns: ['identity', 'points', 'config', 'summary'] },
   { name: 'gh_cli_version', kind: 'write', required: [], optional: ['update', 'force'], returns: ['current', 'latest', 'layer', 'updateAvailable', 'checkedAt', 'updated', 'reason', 'lastUpdate'] },
   { name: 'gh_cache_gc', kind: 'write', required: [], optional: ['dry_run', 'keep_versions'], returns: ['dir', 'removed', 'removedCount', 'freedBytes', 'kept', 'keptVersions'] },
   { name: 'gh_protocol', kind: 'read', required: [], optional: [], returns: ['id', 'version', 'spec', 'service', 'http', 'envelope', 'tools', 'errors', 'registry', 'guarantees'] },
@@ -2243,6 +2255,114 @@ sys.stdout.flush()
       });
     } catch (eProvide) { /* 服务位被占：Deck 侧会如实回落 PATH（不静默换口径） */ }
   }
+
+  // ---------- 身份体检（只读；票「新工具 gh_identity（只读体检 + 准确补救命令）」） ----------
+  // 一次答完「我的身份是谁、四个消费点各接好没、缺什么、补的准确命令」。
+  // 返回形状同时是《启动自述》与协议 identity 段的字段来源（一处定义、三处消费）—— 改字段属**接口变更**。
+  // 只读且不联网：本地 git config 读取 + gh --version 探测；**不调 `gh auth status`**（那次会打网）。
+  // 写动作（接线 / 撤销）不在这里，归「gh_identity {wire|verify|unwire}」那张票。
+  ctx.tools.register(textTool({
+    toolName: 'gh_identity',
+    description: 'Read-only identity audit: in one call it answers who the identity is, whether each of the four consumption points is wired, what is missing, and the exact command that fixes it. Points: git (credential-helper in BOTH scopes + global git identity) / gh CLI credentials / subprocess environment / PATH landing. Read-only: writes nothing, changes no git config, makes no network calls.',
+    parameters: {},
+    readOnly: true,
+    execute: async () => {
+      const state = await readState();
+      const identity = maskIdentity(await resolveIdentity(state));
+      const rollup = (states) => states.every((s) => s === 'pass') ? 'pass'
+        : states.every((s) => s === 'missing') ? 'missing' : 'drift';
+
+      // ---- 消费点 1：git（凭据助手两个作用域 + 全局身份）----
+      const helpers = await readCredHelpers();
+      const credFileExists = await pathExists(CRED_FILE);
+      const ghPathFromHelper = (String(helpers.hostScope || '').match(/^!\s*(\S+)\s+auth\s+git-credential/) || [])[1] || null;
+      const hostHelperRunnable = ghPathFromHelper ? (await probeGh(ghPathFromHelper)).ok : false;
+      const globalIsStore = /(^|\s)store(\s|$)/.test(helpers.global || '');
+      const helperState = helpers.hostScope
+        ? (hostHelperRunnable ? 'pass' : 'drift')
+        : helpers.global
+          ? (globalIsStore && !credFileExists ? 'drift' : 'pass')
+          : 'missing';
+      const helperFix = helperState === 'pass' ? null
+        : helperState === 'drift'
+          ? 'gh auth setup-git   # 现在这条接线不可用（' + (ghPathFromHelper && !hostHelperRunnable ? 'host 作用域的助手指向的 gh 跑不起来：' + ghPathFromHelper : '全局是 store 但 ~/.git-credentials 不存在') + '）'
+          : 'gh auth setup-git   # 让 git 用 gh 的凭据（它写的是 host 作用域，全局为空是正常的）';
+      const gitName = (await git(process.cwd(), ['config', '--global', 'user.name'])).stdout.trim();
+      const gitEmail = (await git(process.cwd(), ['config', '--global', 'user.email'])).stdout.trim();
+      const identityState = (gitName && gitEmail) ? 'pass' : (gitName || gitEmail) ? 'drift' : 'missing';
+      const gitCheck = {
+        name: 'credential-helper', state: helperState,
+        detail: { global: helpers.global || null, hostScope: helpers.hostScope || null, effective: helpers.effective || null, gitCredentialsFile: credFileExists, hostHelperRunnable },
+        fix: helperFix,
+      };
+      const identityCheck = {
+        name: 'identity', state: identityState,
+        detail: { user_name: gitName || null, user_email: gitEmail || null },
+        fix: identityState === 'pass' ? null : 'git config --global user.name "<你的名字>" && git config --global user.email "<你的邮箱>"',
+      };
+
+      // ---- 消费点 2：gh CLI 的凭据（只读 hosts.yml；不调会打网的 gh auth status）----
+      const hostsEntry = await readHostsEntry(GH_HOST);
+      const hostsExists = await pathExists(HOSTS_FILE);
+      const ghCliState = hostsEntry.token ? 'pass' : hostsExists ? 'drift' : 'missing';
+      const ghCliCheck = {
+        name: 'credentials', state: ghCliState,
+        detail: { hostsFile: HOSTS_FILE, exists: hostsExists, login: hostsEntry.login || null, tokenMasked: mask(hostsEntry.token) },
+        fix: ghCliState === 'pass' ? null : 'gh auth login   # 或走本插件工具 gh_cli_auth_web（设备码）',
+      };
+
+      // ---- 消费点 3：子进程环境（只报有无，不报值）----
+      const envCheck = {
+        name: 'override-token', state: (process.env.GH_TOKEN || process.env.GITHUB_TOKEN) ? 'pass' : 'missing',
+        detail: { GH_TOKEN: Boolean(process.env.GH_TOKEN), GITHUB_TOKEN: Boolean(process.env.GITHUB_TOKEN) },
+        fix: (process.env.GH_TOKEN || process.env.GITHUB_TOKEN) ? null : 'export GH_TOKEN=<token>   # 可选：只有想用环境变量覆盖真源时才需要',
+      };
+
+      // ---- 消费点 4：PATH 落点（解析层级 + 能否真跑）----
+      const ghResolved = await resolveGh({ install: false });
+      const pathCheck = {
+        name: 'landing', state: ghResolved.ok ? 'pass' : 'missing',
+        detail: { resolved: ghResolved.ok ? ghResolved.layer : 'none', path: ghResolved.path || null, version: ghResolved.version || null, runnable: Boolean(ghResolved.ok) },
+        fix: ghResolved.ok ? null : 'gh_cli_install   # 本插件工具：系统没有 gh 时落地一份自带副本',
+      };
+
+      const mkPoint = (point, checks, verdict) => ({ point, state: rollup(checks.map((c) => c.state)), verdict, checks });
+      const points = [
+        mkPoint('git', [gitCheck, identityCheck],
+          (helperState === 'pass' ? '凭据助手已接线（' + (helpers.hostScope ? 'host 作用域' : '全局') + '）' : '凭据助手' + (helperState === 'drift' ? '接了但不可用' : '没有'))
+          + '；全局 git 身份' + (identityState === 'pass' ? '已设' : identityState === 'drift' ? '只设了一半' : '为空')),
+        mkPoint('gh-cli', [ghCliCheck],
+          ghCliState === 'pass' ? 'hosts.yml 有凭据（login=' + (hostsEntry.login || '未知') + '）'
+            : ghCliState === 'drift' ? 'hosts.yml 在但没有 oauth_token' : '没有 hosts.yml（gh CLI 未登录）'),
+        mkPoint('env', [envCheck],
+          envCheck.state === 'pass' ? '有环境变量覆盖' : '没有环境变量覆盖（不是必须：身份可由 state 或 gh CLI 供给）'),
+        mkPoint('path', [pathCheck],
+          ghResolved.ok ? 'gh 落在 ' + ghResolved.layer + ' 层：' + ghResolved.path : '找不到能跑的 gh'),
+      ];
+
+      // ---- 配置面：指向不存在的目录今天会静默扫 0，这里明说 ----
+      const reposRoot = (typeof state.reposRoot === 'string' && state.reposRoot) ? state.reposRoot : DEFAULT_ROOT;
+      const reposRootExists = await pathExists(reposRoot);
+      const config = {
+        reposRoot: {
+          path: reposRoot, exists: reposRootExists,
+          fix: reposRootExists ? null : '把 reposRoot 指到真实目录（或调用时显式传 root）：现在指向的目录不存在，扫描会静默返回 0 个仓库',
+        },
+        stateFile: { path: STATE_FILE, exists: await pathExists(STATE_FILE) },
+        hostsFile: { path: HOSTS_FILE, exists: hostsExists },
+      };
+
+      const allChecks = points.flatMap((p) => p.checks);
+      const fixes = [...new Set([...allChecks.map((c) => c.fix), config.reposRoot.fix].filter(Boolean))];
+      const summary = {
+        pass: points.filter((p) => p.state === 'pass').length,
+        drift: points.filter((p) => p.state === 'drift').length,
+        missing: points.filter((p) => p.state === 'missing').length,
+        fixes,
+      };
+      return { identity, points, config, summary };
+    },
+  }));
 
   ctx.tools.register(textTool({
     toolName: 'gh_protocol',

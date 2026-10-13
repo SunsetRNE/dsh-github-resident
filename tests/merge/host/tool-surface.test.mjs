@@ -1,8 +1,8 @@
 /**
- * tests/merge/host/tool-surface.test.mjs —— 27 个工具「真的注册出来、各一次、互不重名」的机器判据（任务 H · 交付物 2/4/6）。
+ * tests/merge/host/tool-surface.test.mjs —— 工具面「真的注册出来、各一次、互不重名」的机器判据（任务 H · 交付物 2/4/6）。
  *
  * 为什么需要它：合并后的工具面来自**两个不同的作用域**——
- *   - 宿主半边（`plugin.js` 的 apply）注册 17 个 `gh_*`；
+ *   - 宿主半边（`plugin.js` 的 apply）注册 `gh_*` 工具 —— **条数不写死**，以协议表为真源（见下）；
  *   - agent 层的行模块（`deck/src/host/platform/deckToolsRow.js` 的 apply）注册 9 个 `deck_*` 业务工具 + `deck_probe`。
  * 两个作用域各注册一次，谁多挂一次、谁把名字撞了，症状都只是「某个工具不见了」或「调用回错的那一份」。
  * 所以这里用 fake 服务（只记注册、不执行副作用）**真调用两个 apply**，再逐个断言名字、数量、交集与失败可见性。
@@ -42,8 +42,17 @@ const hostCtx = makeFakeCtx()
 const hostReturn = resident.apply(hostCtx.ctx)
 const ghTools = hostCtx.state.tools.filter((d) => d && typeof d.name === 'string' && d.name.startsWith('gh_'))
 const hostDeckNames = hostCtx.state.tools.filter((d) => d && typeof d.name === 'string' && d.name.startsWith('deck_'))
-check(hostCtx.state.tools.length === 17, '宿主半边注册 17 个工具（实际 ' + hostCtx.state.tools.length + '）')
-check(ghTools.length === 17, '其中 17 个以 gh_ 开头（实际 ' + ghTools.length + '）')
+// 期望条数**不写死**：协议表（gh_protocol 的 tools）就是工具目录的真源，注册面必须与它等量。
+// 为什么（2026-10-14，加第 18 个工具时本用例变红）：写死的 17 每加一个工具就要改一次，
+// 与本包 1.8.1 清洗时立的规矩一致 —— 数字没有真源就会过期。名字**集合**相等由 tool-surface-contract 单独钉住。
+const declaredNames = await (async () => {
+  const proto = hostCtx.state.tools.find((d) => d && d.name === 'gh_protocol')
+  const doc = proto ? await proto.execute({}, {}) : null
+  return Array.isArray(doc && doc.tools) ? doc.tools.map((t) => t.name) : null
+})()
+check(Array.isArray(declaredNames) && declaredNames.length > 0, '协议表拿得到（作为条数与名字的真源）')
+check(hostCtx.state.tools.length === (declaredNames || []).length, '宿主半边注册条数 == 协议表条数（自报 ' + hostCtx.state.tools.length + ' / 协议 ' + (declaredNames || []).length + '）')
+check(ghTools.length === (declaredNames || []).length, '注册的 gh_* 条数 == 协议表条数（自报 ' + ghTools.length + '）')
 check(hostDeckNames.length === 0, '宿主半边不注册任何 deck_* 工具（那是 agent 行模块的事，实际 ' + hostDeckNames.length + '）')
 check(hostCtx.state.tools.every((d) => typeof d.execute === 'function' && typeof d.description === 'string' && d.parameters), '每个注册项都有 name/description/parameters/execute 四件套')
 check(hostCtx.state.provides.some((p) => p.key === 'githubResident'), '宿主半边 provide 了 githubResident 服务（10 方法契约的载体）')
@@ -65,15 +74,15 @@ check(deckNames.includes('deck_probe'), '探针 deck_probe 在注册表里（不
 check(!deckNames.some((n) => n && n.startsWith('gh_')), '行模块不注册任何 gh_* 工具')
 check(new Set(deckNames).size === deckNames.length, '行模块内 10 个名字两两不同')
 
-section('3) 两个作用域合起来：27 个名字、交集空、各一次')
+section('3) 两个作用域合起来：名字两两不同、交集空、各一次')
 const allNames = hostCtx.state.tools.map((d) => d.name).concat(deckNames)
-check(allNames.length === 27, '两半合计 27 个注册（实际 ' + allNames.length + '）')
-check(new Set(allNames).size === 27, '27 个名字两两不同（去重后 ' + new Set(allNames).size + '）')
+// 合计条数只如实回显（不写死）：真正的不变量是「两半各注册一次、名字两两不同、交集为空」。
+check(new Set(allNames).size === allNames.length, '两半合起来名字两两不同（自报 ' + new Set(allNames).size + '/' + allNames.length + '）')
 const ghSet = new Set(hostCtx.state.tools.map((d) => d.name))
 const deckSet = new Set(deckNames)
 const inter = [...ghSet].filter((n) => deckSet.has(n))
 check(inter.length === 0, 'gh_* 与 deck_* 交集为空（实际 ' + JSON.stringify(inter) + '）')
-note('27 个工具名：' + allNames.slice().sort().join(','))
+note('两半合计 ' + allNames.length + ' 个注册（gh_* ' + hostCtx.state.tools.length + ' + deck 侧 ' + deckNames.length + '）；名字：' + allNames.slice().sort().join(','))
 
 section('4) 失败可见：服务不在就抛，不静默少注册')
 let missingToolsErr = null

@@ -158,12 +158,24 @@ function makeHostCtx({ ready }) {
   }
 }
 
+/**
+ * 期望的 `gh_*` 条数**不写死**：从协议表（gh_protocol 的 tools）读 —— 它是工具目录的真源。
+ * 写死的数字每加一个工具就要改一次（2026-10-14 加第 18 个时本文件因此变红）。
+ */
+async function declaredGhToolCount(tools) {
+  const proto = (tools || []).find((d) => d && d.name === 'gh_protocol')
+  if (!proto || typeof proto.execute !== 'function') return null
+  const doc = await proto.execute({}, {})
+  return Array.isArray(doc && doc.tools) ? doc.tools.length : null
+}
+
 // 4a) subprocess/timer 未就绪：Deck 半边挂到依赖门上（这正是它 apply 被调用的证据），Resident 半边照常注册工具
 {
   const { ctx, state } = makeHostCtx({ ready: false })
   const ret = assembly.apply(ctx)
   const gh = state.tools.filter((d) => d.name && d.name.startsWith('gh_'))
-  check(gh.length === 17, '工具就绪的那一半注册了 17 个 gh_*（实际 ' + gh.length + '）')
+  const declaredGh = await declaredGhToolCount(state.tools)
+  check(declaredGh !== null && gh.length === declaredGh, '工具就绪的那一半注册的 gh_* 与协议表等量（自报 ' + gh.length + ' / 协议 ' + declaredGh + '）')
   const deferred = state.injects.find((i) => i.keys.includes('subprocess') && i.keys.includes('timer'))
   check(!!deferred, 'Deck 半边挂到 ctx.inject([subprocess,timer]) 上（证明第二半被真正调用）')
   check(state.providers === 0, '依赖未就绪时不注册 bundled provider（不假装已就绪）')
@@ -179,7 +191,11 @@ function makeHostCtx({ ready }) {
     note('apply 抛错：' + String((e && e.message) || e))
   }
   await new Promise((r) => setTimeout(r, 1200))
-  check(state.tools.filter((d) => d.name && d.name.startsWith('gh_')).length === 17, 'Resident 半边仍然注册 17 个 gh_*')
+  {
+    const ghReady = state.tools.filter((d) => d.name && d.name.startsWith('gh_')).length
+    const declaredGhReady = await declaredGhToolCount(state.tools)
+    check(declaredGhReady !== null && ghReady === declaredGhReady, 'Resident 半边仍然注册全部 gh_*（自报 ' + ghReady + ' / 协议 ' + declaredGhReady + '）')
+  }
   check(state.providers >= 1, 'Deck 半边注册了 bundled 技能 provider（实际 ' + state.providers + '）')
   check(state.fetchRoutes.some((r) => r && r.path === '/api/dsws'), 'Deck 半边经 connection.fetch 注册了 /api/dsws 路由（实际 ' + JSON.stringify(state.fetchRoutes.map((r) => r && r.path)) + '）')
   check(state.effects.length >= 1, '至少有一条 effect 被登记（清理可托管）')
