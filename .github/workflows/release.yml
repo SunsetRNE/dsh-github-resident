@@ -56,6 +56,31 @@ jobs:
       - name: 打包
         run: npm pack
 
+      - name: 发布到 npm（配了 NPM_TOKEN 才执行）
+        # 这一步决定「面板的安装更新」对本包是否成立：更新引擎 dsh-plugin-update 只在
+        # profile 依赖 spec 是注册表型（^x.y.z / latest）时才判可更新；spec 是 URL 或 link:
+        # 会判 source-install（面板显示「源码安装实例，不支持版本更新」，且不给手工命令）。
+        # 没有 secret 时不失败、只如实说明后果 —— 不假装发布过。
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -e
+          PKG=$(node -p "require('./package.json').name")
+          VER=$(node -p "require('./package.json').version")
+          if [ -z "$NODE_AUTH_TOKEN" ]; then
+            echo "没有 NPM_TOKEN：跳过 npm 发布。"
+            echo "后果：面板的「安装更新」只认注册表型安装；未发布时用户只能用 Release tgz 重装（README「安装」一节有命令）。"
+            echo "开启方式：仓库 Settings → Secrets and variables → Actions 加 NPM_TOKEN（npm granular token，含 publish 权限）。"
+            exit 0
+          fi
+          if npm view "$PKG@$VER" version >/dev/null 2>&1; then
+            echo "npm 上已有 $PKG@$VER，跳过（幂等）"
+            exit 0
+          fi
+          printf '//registry.npmjs.org/:_authToken=%s\n' "$NODE_AUTH_TOKEN" > "$HOME/.npmrc"
+          npm publish --access public
+          echo "已发布 $PKG@$VER 到 npm"
+
       - name: 发 Release（存在则覆盖资产）
         env:
           GH_TOKEN: ${{ github.token }}

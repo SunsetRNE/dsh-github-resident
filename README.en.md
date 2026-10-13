@@ -79,26 +79,39 @@ HTTP (loopback only, `127.0.0.1`): `GET /state`, `GET /state?cached=1`, `GET /st
 
 ## Install
 
-### Option A: from the release (recommended)
+### Option A: install as a package (recommended)
 
 ```bash
-# 1) fetch the runtime package and the full source archive
-gh release download v1.4.0 --repo SunsetRNE/dsh-github-resident -D /tmp/ghr
-ls /tmp/ghr     # local-dsh-github-resident-v2-1.4.0.tgz + dsh-github-resident-1.4.0-src.tar.gz + SHA256SUMS
+VER=1.7.7   # the version you want
+dsh plugin --profile web add \
+  "https://github.com/SunsetRNE/dsh-github-resident/releases/download/v$VER/sunsetrne-dsh-github-resident-v2-$VER.tgz"
 
-# 2) verify checksums (the src line must match SHA256SUMS)
-cd /tmp/ghr && sha256sum -c SHA256SUMS
+# self-check: where it landed, which version, does it load
+P=~/.dsh/profiles/web/node_modules/@sunsetrne/dsh-github-resident-v2
+readlink -f "$P"; grep -m1 '"version"' "$P/package.json"
+node --input-type=module -e "import('$P/dist/host.js').then(m=>console.log('LOADED-OK',m.name))"
+```
 
-# 3) unpack the source archive, then install_bundle with its absolute path
-tar xzf dsh-github-resident-1.4.0-src.tar.gz
-#   → install_bundle /tmp/ghr/dsh-github-resident-1.4.0
+Restart the host afterwards — plugins are loaded at boot. The release `*.tgz` is the `npm pack` output: `dist/`, `plugin.js`, `deck/`, `bundled-skills/`, `locale/` are all inside.
 
-# 4) gate the install
-cd /tmp/ghr/dsh-github-resident-1.4.0 && npm run verify   # expect all failed=0
+### Updates: the panel only updates "registry-typed" installs
 
-What the two archives are for: `*.tgz` is the npm pack output (the 10 runtime files); `*-src.tar.gz` is the full source (5 gates + LESSONS.md included).
+The panel is built on `dsh-plugin-update`. An install is updatable only when both hold (verified against `dist/reader.js` on a live machine):
 
-### Option B: install from a source checkout
+1. the profile dependency spec is **registry-typed** — a version / range / dist-tag (`^1.7.7`, `latest`, …); `registrySpec()` accepts neither URLs nor `link:`;
+2. the installed directory sits under `<profile>/node_modules/`.
+
+Fail either one and the engine reports `source-install` (panel text: "源码安装实例，不支持版本更新") and offers no manual command. The three install forms:
+
+| Install form | spec | Panel can update | How to upgrade |
+|---|---|---|---|
+| From a registry (npm / private) | `^1.7.7` | ✅ | the panel's install-update |
+| From the release tarball (Option A) | `https://…tgz` | ❌ | re-run `dsh plugin … add <new tarball>` |
+| From a source checkout (Option B) | `link:/…` | ❌ | same; or convert to a package install |
+
+> This package is **not on npm yet** (`npm view @sunsetrne/dsh-github-resident-v2` → 404), so the panel's "reinstall by name@version" advice is not available today — reinstall from the release tarball URL instead. The release workflow ships an npm publish step (active only when the repository secret `NPM_TOKEN` exists); once configured, `dsh plugin --profile web add @sunsetrne/dsh-github-resident-v2@^x.y.z` becomes the updatable install form.
+
+### Option B: install from a source checkout (for development; not updatable from the panel)
 
 ```bash
 # 1) sanity

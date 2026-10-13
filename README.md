@@ -166,26 +166,39 @@ HTTP（只监听 `127.0.0.1`）：`GET /state`、`GET /state?cached=1`、`GET /s
 
 ## 安装
 
-### 方式 A：从 Release 拿包（推荐）
+### 方式 A：装成包（推荐）
 
 ```bash
-# 1) 取运行时包与源码包
-gh release download v1.6.4 --repo SunsetRNE/dsh-github-resident -D /tmp/ghr
-ls /tmp/ghr     # local-dsh-github-resident-v2-1.6.4.tgz + dsh-github-resident-1.6.4-src.tar.gz + SHA256SUMS
+VER=1.7.7   # 换成要装的版本
+dsh plugin --profile web add \
+  "https://github.com/SunsetRNE/dsh-github-resident/releases/download/v$VER/sunsetrne-dsh-github-resident-v2-$VER.tgz"
 
-# 2) 校验（源码包这一行必须与 SHA256SUMS 一致）
-cd /tmp/ghr && sha256sum -c SHA256SUMS
+# 自检：装到哪、什么版本、能不能装载
+P=~/.dsh/profiles/web/node_modules/@sunsetrne/dsh-github-resident-v2
+readlink -f "$P"; grep -m1 '"version"' "$P/package.json"
+node --input-type=module -e "import('$P/dist/host.js').then(m=>console.log('LOADED-OK',m.name))"
+```
 
-# 3) 解开源码包，用 plugin_manager 以解出来的目录绝对路径执行 install_bundle
-tar xzf dsh-github-resident-1.6.4-src.tar.gz
-#   → install_bundle /tmp/ghr/dsh-github-resident-1.6.4
+装完**重启宿主**才生效（插件在宿主启动时装载）。Release 上的 `*.tgz` 就是 `npm pack` 的产物：`dist/`、`plugin.js`、`deck/`、`bundled-skills/`、`locale/` 等运行时文件全在里面。
 
-# 4) 装完自检
-cd /tmp/ghr/dsh-github-resident-1.6.4 && npm run verify   # 期望全部 failed=0
+### 更新：面板的「安装更新」只认「注册表型」安装
 
-两个包的分工：`*.tgz` 是 npm 打包产物（只含运行所需的 10 个文件）；`*-src.tar.gz` 是完整源码（含 5 个门禁脚本与 LESSONS.md）。
+面板用的是更新包 `dsh-plugin-update`，它判「可更新」要两条同时成立（源码 `dist/reader.js`，本机实测过）：
 
-### 方式 B：从源码目录装
+1. profile 清单里该包的 spec 是**注册表型** —— 版本号 / 范围 / dist-tag（`^1.7.7`、`latest` …）；`registrySpec()` **不认 URL 与 `link:`**；
+2. 已安装目录在 `<profile>/node_modules/` 之内。
+
+任一条不成立就判 `source-install`（面板文案「源码安装实例，不支持版本更新」），而且**不给手工命令**。三种装法的差别：
+
+| 装法 | spec 形态 | 面板能更新 | 升级怎么做 |
+|---|---|---|---|
+| 从注册表装（npm / 私有 registry） | `^1.7.7` | ✅ | 面板「安装更新」 |
+| 从 Release tgz 装（方式 A） | `https://…tgz` | ❌ | 重跑上面的 `dsh plugin … add <新版本 tgz>` |
+| 从源码目录装（方式 B） | `link:/…` | ❌ | 同上；或改装成包 |
+
+> 本包**尚未发布到 npm**（`npm view @sunsetrne/dsh-github-resident-v2` → 404），所以面板文案里那句「请按包名@版本号重新安装」暂时只能用「按 Release tgz URL 重装」代替。发布链已带 npm 发布步骤（`.github/workflows/release.yml`，仓库 secret `NPM_TOKEN` 存在时才执行）——配好之后 `dsh plugin --profile web add @sunsetrne/dsh-github-resident-v2@^x.y.z` 就是能被面板更新的正规装法。
+
+### 方式 B：从源码目录装（改代码用；面板不认它能更新）
 
 ```bash
 # 1) 检查
