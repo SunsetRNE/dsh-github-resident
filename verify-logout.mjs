@@ -16,6 +16,11 @@ const REAL_HOME = os.homedir();
 // .git-credentials（用户环境就是这样），所以不能断言「不存在」，只能断言「与开始时一致」。
 // （原来那行写的是 `realCred === false || realCred === true` —— 布尔恒真，等于从来没检查过。）
 const REAL_CRED_BEFORE = await fs.access(path.join(REAL_HOME, '.git-credentials')).then(() => true, () => false);
+// hosts.yml 同理，而且更要紧：CI runner 的真 HOME 里**根本没有** gh 登录态（文件不存在），
+// 「起始不存在 ⇒ 结束时仍不存在」一样算没被碰过。原来那行直接读文件再断言内容含
+// oauth_token，等于要求「跑门禁的机器必须先 gh 登录过」—— 发布流水线上必红（假红灯）。
+const REAL_HOSTS_PATH = path.join(REAL_HOME, '.config', 'gh', 'hosts.yml');
+const REAL_HOSTS_BEFORE = await fs.readFile(REAL_HOSTS_PATH, 'utf8').then((s) => s, () => null);
 const HOME = await fs.mkdtemp(path.join(os.tmpdir(), 'ghres-home-'));
 os.homedir = () => HOME; // 必须在 import 插件之前
 process.env.HOME = HOME; // 子进程 git 也要落在伪 HOME 上
@@ -98,8 +103,11 @@ check('协议含 logout 服务方法', proto.service.methods.some((m) => m.name 
 check('协议版本 >= 2', proto.version >= 2, proto.version);
 
 // 4) 真 HOME 未被触碰
-const realHosts = await fs.readFile(path.join(REAL_HOME, '.config', 'gh', 'hosts.yml'), 'utf8').catch(() => '');
-check('真 HOME hosts.yml 未被触碰', realHosts.includes('oauth_token'), realHosts ? 'real hosts.yml 仍在' : 'READ FAILED');
+const realHosts = await fs.readFile(REAL_HOSTS_PATH, 'utf8').then((s) => s, () => null);
+check('真 HOME hosts.yml 未被触碰', realHosts === REAL_HOSTS_BEFORE,
+  REAL_HOSTS_BEFORE === null
+    ? '起始与结束时都不存在（无 gh 登录态的机器常态）'
+    : '与起始逐字一致（存在且有内容）');
 const realCred = await exists(path.join(REAL_HOME, '.git-credentials'));
 check('真 HOME 未新写 .git-credentials', realCred === REAL_CRED_BEFORE, '前=' + REAL_CRED_BEFORE + ' 后=' + realCred);
 
