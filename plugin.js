@@ -23,6 +23,11 @@ const STATE_DIR = path.join(HOME, '.dsh');
 const STATE_FILE = path.join(STATE_DIR, 'github-resident.json');
 const CRED_FILE = path.join(HOME, '.git-credentials');
 const DEFAULT_ROOT = path.join(HOME, 'GitHub');
+// gh CLI 自己的凭据文件（**只读**：那是 gh 的格式，替它维护迟早对不上 —— ADR 0001）。
+// 身份解析走 readHostsEntry（全插件唯一的**解析**入口）；gh_cli_status 的账号摘要另按显示需要
+// 直接读同一路径（token 一律掩码）。路径只在这里定义一次，别处不许再拼。
+const HOSTS_FILE = path.join(HOME, '.config', 'gh', 'hosts.yml');
+const GH_HOST = 'github.com';
 
 // ---------- 基础工具 ----------
 
@@ -79,8 +84,84 @@ async function writeState(patch) {
   return next;
 }
 
-function tokenOf(state) {
-  return process.env.GH_TOKEN || process.env.GITHUB_TOKEN || state.token || '';
+/**
+ * 读 gh CLI 的 hosts.yml（**只读**，绝不写回）里某个 host 的凭据。
+ * 返回 { host, login, token }：缺失的字段各自回 ''，文件不在或格式不认得一律回空，**不抛**。
+ * 兼容 gh 的实际写法：host 块以顶格 `<host>:` 起头；块内 `user:` 是登录名、`oauth_token:` 是令牌，
+ * 两者都可能在 `users:` 子表里再深一层（深一层的也算这个 host 的），值可带引号。
+ */
+export async function readHostsEntry(hostname) {
+  const empty = { host: hostname, login: '', token: '' };
+  let raw = '';
+  try { raw = await fs.readFile(HOSTS_FILE, 'utf8'); } catch { return empty; }
+  const unquote = (v) => {
+    const s = String(v == null ? '' : v).trim();
+    if (s.length >= 2 && ((s[0] === '"' && s.endsWith('"')) || (s[0] === "'" && s.endsWith("'")))) return s.slice(1, -1);
+    return s;
+  };
+  let inHost = false;
+  let login = '';
+  let token = '';
+  for (const line of raw.split(/\r?\n/)) {
+    if (/^\S/.test(line)) {                       // 顶格 = 新的 host 块
+      inHost = unquote(line.replace(/:\s*$/, '')) === hostname;
+      continue;
+    }
+    if (!inHost) continue;
+    const mT = line.match(/^\s+oauth_token:\s*(\S+)\s*$/);
+    if (mT) { token = unquote(mT[1]); continue; }
+    const mU = line.match(/^\s+user:\s*(\S+)\s*$/);
+    if (mU) { login = unquote(mU[1]); continue; }
+  }
+  return { host: hostname, login, token };
+}
+
+/**
+ * 统一身份解析器 —— ADR 0001 的真源口径：`env GH_TOKEN/GITHUB_TOKEN → 插件 state（0600） →
+ * gh CLI hosts.yml（只读）`。这是**唯一**编码优先级的地方；改顺序要走新的 ADR。
+ *
+ * 返回 `{ ok, token, login, host, source, scopes }`：
+ *   - `source` ∈ `env:GH_TOKEN` / `env:GITHUB_TOKEN` / `state:~/.dsh/github-resident.json` /
+ *     `gh-cli:~/.config/gh/hosts.yml` / `(none)` —— 回执里如实标出来源，不许含糊成「有 token」。
+ *   - `login` 只有从 state / hosts.yml 读到的才是真的；env 来源下**不猜**（回 null，让调用方自己去问）。
+ *   - token 原文只在这份返回值里流动，**任何回执/日志一律走 maskIdentity()**。
+ */
+export async function resolveIdentity(stateInput) {
+  const state = stateInput || (await readState());
+  const envToken = process.env.GH_TOKEN || process.env.GITHUB_TOKEN || '';
+  if (envToken) {
+    return {
+      ok: true, token: envToken, login: null, host: GH_HOST,
+      source: process.env.GH_TOKEN ? 'env:GH_TOKEN' : 'env:GITHUB_TOKEN', scopes: null,
+    };
+  }
+  const stateToken = typeof state.token === 'string' ? state.token : '';
+  if (stateToken) {
+    return {
+      ok: true, token: stateToken, login: state.login || state.user || null, host: GH_HOST,
+      source: 'state:~/.dsh/github-resident.json', scopes: state.scopes || null,
+    };
+  }
+  const entry = await readHostsEntry(GH_HOST);
+  if (entry.token) {
+    return {
+      ok: true, token: entry.token, login: entry.login || null, host: GH_HOST,
+      source: 'gh-cli:~/.config/gh/hosts.yml', scopes: null,
+    };
+  }
+  return { ok: false, token: '', login: null, host: GH_HOST, source: '(none)', scopes: null };
+}
+
+/** 回执/日志专用的掩码投影：只出「来源 + 登录名 + 掩码」，永不带 token 原文。 */
+export function maskIdentity(resolved) {
+  const it = resolved || {};
+  return {
+    source: it.source || '(none)',
+    login: it.login || null,
+    host: it.host || GH_HOST,
+    masked: mask(it.token),
+    present: Boolean(it.token),
+  };
 }
 
 function mask(token) {
@@ -909,12 +990,10 @@ export function apply(ctx) {
     readOnly: true,
     execute: async (args) => {
       const state = await readState();
-      const token = tokenOf(state);
+      const resolvedToken = await resolveIdentity(state);
+      const token = resolvedToken.token;
       const root = args.root || state.reposRoot || DEFAULT_ROOT;
       const depth = Number.isInteger(args.depth) ? args.depth : 3;
-      const tokenSource = process.env.GH_TOKEN ? 'env:GH_TOKEN'
-        : process.env.GITHUB_TOKEN ? 'env:GITHUB_TOKEN'
-          : state.token ? 'state:~/.dsh/github-resident.json' : '(none)';
 
       const cfgName = (await git(process.cwd(), ['config', '--global', 'user.name'])).stdout.trim();
       const cfgEmail = (await git(process.cwd(), ['config', '--global', 'user.email'])).stdout.trim();
@@ -939,7 +1018,7 @@ export function apply(ctx) {
       }
 
       return {
-        token: { source: tokenSource, masked: mask(token), present: Boolean(token) },
+        token: maskIdentity(resolvedToken),
         stateFile: { path: STATE_FILE, exists: Object.keys(state).length > 0, keys: Object.keys(state) },
         gitGlobal: { user_name: cfgName || null, user_email: cfgEmail || null, credential_helper: helper || null },
         gitCredentials: credFile,
@@ -1125,8 +1204,15 @@ export function apply(ctx) {
     readOnly: false,
     execute: async (args) => {
       const state = await readState();
-      const token = tokenOf(state);
-      if (!token) return { ok: false, error: '尚未保存 token，先调用 gh_resident_login' };
+      const resolvedToken = await resolveIdentity(state);
+      const token = resolvedToken.token;
+      if (!token) {
+        return {
+          ok: false,
+          error: '三处都没有可用身份（env GH_TOKEN/GITHUB_TOKEN、插件 state、gh CLI 的 hosts.yml）；'
+            + '可以先跑 gh_resident_login 落一份 state，或 gh auth login 让 gh CLI 自己登。',
+        };
+      }
       const repo = String(args.repo || '');
       let base = args.base;
       if (!base) {
@@ -1146,6 +1232,7 @@ export function apply(ctx) {
         base,
         number: created.json.number ?? null,
         url: created.json.html_url ?? null,
+        authSource: resolvedToken.source,   // 这次用的是哪条身份路径（回执里如实标出来）
         message: created.ok ? null : (created.json.message ?? null),
         errors: created.json.errors ?? null,
       };
@@ -1159,7 +1246,7 @@ export function apply(ctx) {
   // 全程只用 node 内建模块 + curl，不引第三方依赖。
 
   const GH_DEVICE_URL = 'https://github.com/login/device';
-  const HOSTS_FILE = path.join(HOME, '.config', 'gh', 'hosts.yml');
+  // HOSTS_FILE 已在模块顶部定义（全插件一份）；这里不再重复定义，免得两份写法各自漂移。
   const GH_DATA_DIR = process.env.DSH_GH_DATA_DIR || path.join(STATE_DIR, 'gh-cli');
   const GH_BIN = path.join(GH_DATA_DIR, 'bin', 'gh');
   const GH_STATE = path.join(GH_DATA_DIR, 'install.json');
@@ -1619,18 +1706,9 @@ sys.stdout.flush()
   }
 
   /** 取 hosts.yml 里某 host 的 oauth_token。只用于撤销与掩码；返回值不出日志。 */
+  /** hosts.yml 的读取口径上收到模块级的 readHostsEntry（全插件一份解析器）；本路径只需要 token。 */
   async function hostsToken(hostname) {
-    let raw = '';
-    try { raw = await fs.readFile(HOSTS_FILE, 'utf8'); } catch { return ''; }
-    let inHost = false;
-    let token = '';
-    for (const line of raw.split('\n')) {
-      if (/^\S/.test(line)) { inHost = line.trim() === hostname + ':'; continue; }
-      if (!inHost) continue;
-      const m = line.match(/^\s+oauth_token:\s*(\S+)\s*$/);
-      if (m) token = m[1];
-    }
-    return token;
+    return (await readHostsEntry(hostname)).token;
   }
 
   /** 撤 token 先认来源：gho_/ghu_ 可撤销；ghp_/github_pat_ 只能由用户在网页手删。 */
@@ -1912,7 +1990,7 @@ sys.stdout.flush()
       const version = g.version;
       const status = await run(g.path, ['auth', 'status', '--hostname', 'github.com']);
       const helper = await readCredHelper();
-      const hostsPath = path.join(HOME, '.config', 'gh', 'hosts.yml');
+      const hostsPath = HOSTS_FILE;   // 路径只有模块顶部一处定义（原来这里又拼了一份）
       let hosts = null;
       try {
         const raw = await fs.readFile(hostsPath, 'utf8');
