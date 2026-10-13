@@ -18,10 +18,16 @@
  *   deck 侧 = `deck/src/host/tools/*.js` 各自的 `definition`（跑行模块 apply 抓）。
  * 副本：`TOOL_PROTOCOL`、`PROTOCOL.service`、`ERROR_CODES`、`DECK_TOOL_FILES`、行模块的名字清单。
  *
- * 隔离：只读本仓文件，不起真进程、不连网、不读真实 HOME（`run.mjs` 另外还给了临时 HOME）。
+ * 2026-10-14 追加（协议 `identity` / `environment` 两段）：两段的字段清单**从 `TOOL_PROTOCOL` 派生**，
+ * 第四段再把这条链钉死 —— `段.fields == 表行.returns == 工具真实回执键`（最后一环在合成环境里**离线跑工具**取到），
+ * 并且判据自带两个方向的合成样本（协议多写 / 工具多回），证明它抓得住漂移。
+ *
+ * 隔离：一~三段只读本仓文件、不起真进程；第四段在 `_env-harness` 的**合成环境**里跑三个只读工具
+ * （假 HOME、夹具 bin、探针目标列表清空），全程**不起真实外网请求、不读真实 HOME**。
  * 用法：node tests/merge/host/tool-surface-contract.test.mjs
  */
 import { check, note, section, summary, importRel, readText } from './_check.mjs'
+import { makeHome, withPlugin } from './_env-harness.mjs'
 
 const MERGED_PACKAGE_NAME = '@sunsetrne/dsh-github-resident-v2'
 
@@ -182,5 +188,97 @@ const rowSrc = readText('deck/src/host/platform/deckToolsRow.js')
 const rowImports = [...rowSrc.matchAll(/import \{ definition as \w+ \} from '\.\.\/tools\/(\w+)\.js'/g)].map((m) => m[1])
 check(rowImports.length === files.length,
   '行模块 import 的工具文件数 == DECK_TOOL_FILES 条数（' + rowImports.length + ' vs ' + files.length + '）')
+
+// ---------------------------------------------------------------------------
+// 四、协议 identity / environment 两段 ↔ 工具真返回（合成环境里离线跑，双向可抓）
+// ---------------------------------------------------------------------------
+section('四、identity / environment 两段 ↔ 工具真返回（合成环境里离线跑）')
+
+const EXPECT_SPEC = 'dsh-github-resident/7'
+
+/** 双向漂移：declaredOnly = 协议写了但工具没有；actualOnly = 工具有了协议没写。 */
+const drift = (declared, actual) => ({
+  declaredOnly: declared.filter((k) => !actual.includes(k)),
+  actualOnly: actual.filter((k) => !declared.includes(k)),
+})
+
+// 信封（ok / protocol）不算业务字段：比的是「工具自己那几段」。
+const ENVELOPE_KEYS = ['ok', 'protocol']
+const businessKeys = (receipt) => Object.keys(receipt || {}).filter((k) => !ENVELOPE_KEYS.includes(k))
+
+// 两段只允许**描述性**键：谁要是把 login / masked / token 这类**取值**键塞进协议，这条会挡住 ——
+// 协议是描述，不是「跑这份协议这台机器」的快照。
+const DESCRIPTIVE_KEYS = ['what', 'sourceOfTruth', 'priority', 'points', 'pointsNote', 'fieldsFrom', 'fields', 'readers', 'tool', 'boundsNote', 'boundary']
+
+const surfaceHome = makeHome('surface', { withGh: true })
+let surface = null
+try {
+  surface = await withPlugin(surfaceHome.home, { path: surfaceHome.path, dataDir: surfaceHome.home + '/.dsh/gh-cli' }, async ({ tool }) => {
+    const protocol = await tool('gh_protocol').execute({}, {})
+    const identity = await tool('gh_identity').execute({}, {})
+    // 探针：**目标列表清空 + 小上界** —— 这条判据只取形状、不取结论，所以不起任何真实外网请求。
+    const environment = await tool('gh_env_probe').execute({ network_targets: [], attempts: 1, timeout_ms: 500 }, {})
+    return { protocol, identity, environment }
+  })
+} catch (e) {
+  check(false, '合成环境里跑三个只读工具（' + String((e && e.message) || e).slice(0, 160) + '）')
+} finally {
+  surfaceHome.cleanup()
+}
+
+if (surface) {
+  const { protocol: p, identity, environment } = surface
+  const rowOf = (name) => ((p.tools || []).find((t) => t.name === name) || {}).returns || []
+  const sorted = (a) => a.slice().sort()
+
+  check(p.spec === EXPECT_SPEC, '协议 spec 是本次增量后的字面量（期望 ' + EXPECT_SPEC + '，实得 ' + p.spec + '）')
+  check(!!p.identity && !!p.environment, '协议里有 identity / environment 两段')
+  check(rowOf('gh_protocol').includes('identity') && rowOf('gh_protocol').includes('environment'),
+    '协议表里 gh_protocol 那行声明了这两段（否则「声明的 returns 覆盖真实返回键」那条会红）')
+
+  for (const { seg, tool, receipt } of [
+    { seg: 'identity', tool: 'gh_identity', receipt: identity },
+    { seg: 'environment', tool: 'gh_env_probe', receipt: environment },
+  ]) {
+    const segment = p[seg] || {}
+    const fields = Array.isArray(segment.fields) ? segment.fields : []
+    const declared = rowOf(tool)
+    const actual = businessKeys(receipt)
+
+    check(fields.length > 0, seg + ' 段带字段清单（形状 A：列顶层段名，不递归到子字段）')
+    check(JSON.stringify(sorted(fields)) === JSON.stringify(sorted(declared)),
+      seg + ' 段的字段清单 == 协议表里 ' + tool + ' 那行（同一真源派生，不是手抄的第二份）')
+    const d = drift(fields, actual)
+    check(d.declaredOnly.length === 0 && d.actualOnly.length === 0,
+      seg + ' 段 ↔ ' + tool + ' 真返回：两个方向都无漂移'
+      + (d.declaredOnly.length || d.actualOnly.length
+        ? '（协议独有 ' + JSON.stringify(d.declaredOnly) + '，工具独有 ' + JSON.stringify(d.actualOnly) + '）'
+        : ''))
+    // 判据自证：同一支 drift 对**纯合成样本**也必须在两个方向各自报红。
+    // 样本刻意不带真数据 —— 真数据漂了的时候，这两条不该跟着红（那会淹掉真正的信号）。
+    const SAMPLE_A = ['A_FIELD', 'B_FIELD']
+    const SAMPLE_B = ['A_FIELD', 'C_FIELD']
+    check(drift(SAMPLE_A, SAMPLE_B).declaredOnly.join() === 'B_FIELD',
+      seg + '：判据能抓到「协议写了但工具没有」')
+    check(drift(SAMPLE_A, SAMPLE_B).actualOnly.join() === 'C_FIELD',
+      seg + '：判据能抓到「工具有了协议没写」')
+
+    const stray = Object.keys(segment).filter((k) => !DESCRIPTIVE_KEYS.includes(k))
+    check(stray.length === 0, seg + ' 段的键都是描述性的（越界键 ' + JSON.stringify(stray) + '）')
+    const readers = segment.readers || {}
+    const readerNames = Object.keys(readers)
+    check(readerNames.length >= 4 && readerNames.every((k) => typeof readers[k] === 'string' && readers[k].length >= 8),
+      seg + ' 段写清了谁该读、读了干什么（' + readerNames.length + ' 类读者）')
+  }
+
+  // identity 段列的四个消费点 == gh_identity 真回执里的 point 名（同一事实，两处说法要对得上）
+  const segPoints = (p.identity && p.identity.points) || []
+  const realPoints = (identity.points || []).map((x) => x.point)
+  check(JSON.stringify(sorted(segPoints)) === JSON.stringify(sorted(realPoints)),
+    'identity 段的 points == gh_identity 真返回的 points[].point（' + JSON.stringify(segPoints) + '）')
+
+  note('本段只覆盖**能在合成环境里离线跑**的工具（gh_protocol / gh_identity / gh_env_probe）：')
+  note('写工具与需要出网的工具跑不了离线，这条判据不覆盖它们 —— 不假装覆盖。')
+}
 
 summary()

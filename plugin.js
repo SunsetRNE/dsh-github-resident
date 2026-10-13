@@ -916,7 +916,10 @@ async function syncRepos({ root, depth, message, push, dryRun } = {}) {
 // 任何消费方（其它插件、页面、外部脚本）都应该能只读这一处就知道：
 // 调用什么、传什么、拿到什么、错在哪。
 const PROTOCOL_ID = 'dsh-github-resident';
-const PROTOCOL_VERSION = 6;
+// 6 → 7（2026-10-14，票「协议新增 identity / environment 两段 + 收口断言」）：新增 `identity` / `environment` 两段。
+// 增量规矩：**给已有段加字段算兼容（不动 version），新增段才 bump version** —— 消费方可以只按 `spec`
+// 判断「这份协议里有没有这两段」，不必先探测一遍（老版本按 `/6` 判断的代码不会被静默改写语义）。
+const PROTOCOL_VERSION = 7;
 const PROTOCOL_SPEC = PROTOCOL_ID + '/' + PROTOCOL_VERSION;
 const SERVICE_KEY = 'githubResident';
 
@@ -928,7 +931,9 @@ const TOOL_PROTOCOL = [
   { name: 'gh_repo_registry_list', kind: 'read', required: [], optional: ['root', 'prefix', 'only_missing_remote', 'has_remote', 'host', 'tag'], returns: ['libraryExists', 'dir', 'count', 'libraryCount', 'remoteBound', 'withoutRemote', 'byHost', 'entries', 'malformed'] },
   { name: 'gh_commit', kind: 'write', required: ['repo', 'message'], optional: ['push'], returns: ['ok', 'sha', 'files', 'push'] },
   { name: 'gh_sync', kind: 'write', required: [], optional: ['root', 'depth', 'message', 'push', 'dry_run'], returns: ['root', 'scanned', 'committed', 'failed', 'results'] },
-  { name: 'gh_pr', kind: 'write', required: ['repo', 'title'], optional: ['head', 'base', 'body', 'draft'], returns: ['ok', 'number', 'url', 'base', 'status'] },
+  // 2026-10-14：成功分支实际还回 authSource / message / errors（源码里确有），表里一直漏着 —— 顺手改真。
+  // 同一类漂移（表说少了）以前没人管：门禁只钉 gh_protocol 自己的 returns，不钉每工具那行。
+  { name: 'gh_pr', kind: 'write', required: ['repo', 'title'], optional: ['head', 'base', 'body', 'draft'], returns: ['ok', 'number', 'url', 'base', 'status', 'authSource', 'message', 'errors'] },
   { name: 'gh_cli_install', kind: 'write', required: [], optional: ['force', 'prefer'], returns: ['installed', 'layer', 'path', 'version', 'attempts'] },
   { name: 'gh_cli_auth_web', kind: 'write', required: [], optional: ['open_browser'], returns: ['ok', 'version', 'ghLayer', 'ghPath', 'user_code', 'verification_uri', 'opened', 'note', 'logTail'] },
   { name: 'gh_cli_status', kind: 'read', required: [], optional: [], returns: ['version', 'authenticated', 'activeAccount', 'gitCredentialHelper', 'hosts'] },
@@ -939,8 +944,18 @@ const TOOL_PROTOCOL = [
   { name: 'gh_env_probe', kind: 'read', required: [], optional: ['network_targets', 'attempts', 'timeout_ms'], returns: ['capabilities', 'network', 'proxy', 'dirs', 'summary', 'bounds', 'notes'] },
   { name: 'gh_cli_version', kind: 'write', required: [], optional: ['update', 'force'], returns: ['current', 'latest', 'layer', 'updateAvailable', 'checkedAt', 'updated', 'reason', 'lastUpdate'] },
   { name: 'gh_cache_gc', kind: 'write', required: [], optional: ['dry_run', 'keep_versions'], returns: ['dir', 'removed', 'removedCount', 'freedBytes', 'kept', 'keptVersions'] },
-  { name: 'gh_protocol', kind: 'read', required: [], optional: [], returns: ['id', 'version', 'spec', 'service', 'http', 'envelope', 'tools', 'errors', 'registry', 'guarantees'] },
+  { name: 'gh_protocol', kind: 'read', required: [], optional: [], returns: ['id', 'version', 'spec', 'service', 'http', 'envelope', 'tools', 'errors', 'registry', 'identity', 'environment', 'guarantees'] },
 ];
+
+/**
+ * 协议里 `identity` / `environment` 两段的**字段清单不手抄**：从上面那张表的对应行**派生**（同一处声明）。
+ * 这条链路由门禁钉死：`段.fields == 表行.returns == 该工具的真实回执键`，最后那一环是在合成环境里
+ * **离线跑工具**取到的 —— 真源是行为，不是文本。子字段（尤其探针的条件键）不进协议，由工具回执自己回答。
+ */
+const declaredReturns = (toolName) => {
+  const row = TOOL_PROTOCOL.find((t) => t.name === toolName);
+  return row ? row.returns.slice() : [];
+};
 
 /**
  * 错误码表。语义说清楚（2026-10-13 对齐）：这里是**本插件会出现在回执文案里的码**，
@@ -2196,10 +2211,42 @@ sys.stdout.flush()
         'index.json 是派生视图：可由 repos/*.json 重建，不作为事实来源',
       ],
     },
+    // 下面两段是**描述**，不是快照：它们说清「这类事实由谁负责、字段有哪些、谁该读、读了干什么」；
+    // 当前值一律由对应工具的**回执**回答 —— 协议不该变成「跑这份协议这台机器」的快照。
+    identity: {
+      what: '身份：真源是谁、按什么顺序找它、找完之后谁在用它 —— 不跑任何工具就能读到。',
+      sourceOfTruth: '插件自有 state（~/.dsh/github-resident.json，0600）是真源；gh CLI 的 hosts.yml 只作**只读**后端（ADR 0001）',
+      priority: ['env:GH_TOKEN', 'env:GITHUB_TOKEN', 'state:~/.dsh/github-resident.json', 'gh-cli:~/.config/gh/hosts.yml'],
+      points: ['git', 'gh-cli', 'env', 'path'],
+      pointsNote: '四个消费点：git（凭据助手两个作用域 + 全局身份）/ gh CLI 凭据 / 子进程环境 / PATH 落点；每个点的当前状态与补救命令在 gh_identity 的回执里',
+      fieldsFrom: 'gh_identity',
+      fields: declaredReturns('gh_identity'),
+      readers: {
+        'Deck 半边 / 未来的插件': '身份只走这一个消费面（服务位，或本段 points/fieldsFrom 指向的工具）；不要自己去读 hosts.yml，也不要另存一份 token',
+        '面板 / 设置页': '按 points 的四项渲染「接了没接」，按 gh_identity 回执里的 summary.fixes 渲染补救命令',
+        '诊断 agent': '先读本段分清「缺什么该问谁」：身份类缺口问 gh_identity，机器能力类缺口问 gh_env_probe',
+        '本包维护者': '改字段属**接口变更**：先改 TOOL_PROTOCOL 里 gh_identity 那行（本段 fields 自动跟着变），门禁再把那行钉到工具真返回上',
+      },
+    },
+    environment: {
+      what: '环境：这台机器能不能干活、缺什么、为什么缺 —— 由 gh_env_probe 回答；本段说明它报什么、边界在哪。',
+      tool: 'gh_env_probe',
+      boundsNote: '探针自带**上界**：每条路多次尝试、总预算封顶、子进程逐项限时，所以它一定返回（不会出现「不退出、不报错、不结束」的第三态）',
+      boundary: '能力与配置分家：这台机器**有什么**（gh / curl / node / 架构 / HOME 可写）在 environment；配置类路径（reposRoot / stateFile / hostsFile）的**存在性**在 gh_identity 的 config —— 同一事实只报一处',
+      fieldsFrom: 'gh_env_probe',
+      fields: declaredReturns('gh_env_probe'),
+      readers: {
+        'Deck 半边 / 未来的插件': '「执行环境能不能用」交给这个消费面判断，别自己 fork 一遍 gh/curl 去猜',
+        '面板 / 设置页': '按 capabilities 逐项渲染缺什么，按每一项的 next 渲染补救动作',
+        '诊断 agent': '先读本段再跑探针：网络**时通时不通**要按 degraded 读，不要读成 missing',
+        '本包维护者': '新增能力项＝加字段（兼容，不动 version）；新增一段才 bump version',
+      },
+    },
     guarantees: {
       masking: '任何输出都不含 token 原文，只出现掩码',
       loopbackOnly: 'HTTP 只监听 127.0.0.1',
       readOnlyTools: TOOL_PROTOCOL.filter((t) => t.kind === 'read').map((t) => t.name),
+      protocolIncrements: '协议增量规矩：给已有段**加字段**算向后兼容（不动 version）；**新增段**必须 bump version —— 消费方只按 spec 就能判断某段在不在',
       idempotent: '只读工具可重复调用；gh_sync 支持 dry_run 预演；registry build/rescan 幂等（同路径同 slug）',
       registryConsent: '登记库的建立与刷新必须先拿到用户同意：工具只回 ask 载荷，由模型转述给用户',
       registryWritesOnlyItsOwnDir: '登记过程不在任何仓库里写文件',
