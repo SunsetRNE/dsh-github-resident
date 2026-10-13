@@ -40,9 +40,9 @@ jobs:
       - name: 安装依赖（只装依赖，构建一律显式跑）
         run: pnpm install --frozen-lockfile || pnpm install --no-frozen-lockfile
 
-      - name: 版本闸门（tag 与 package.json 必须一致）
+      - name: 版本闸门（tag 与 package.json 必须一致；手动 dispatch 用输入值）
         run: |
-          node -e "const v=require('./package.json').version;const t=(process.env.GITHUB_REF_NAME||'').replace(/^v/,'')||'${{ inputs.version }}';if(t&&v!==t){console.error('tag='+t+' package.json='+v);process.exit(1)}console.log('版本一致：'+v)"
+          node -e "const v=require('./package.json').version;const isTag=process.env.GITHUB_REF_TYPE==='tag';const t=isTag?(process.env.GITHUB_REF_NAME||'').replace(/^v/,''):'${{ inputs.version }}';if(t&&v!==t){console.error('期望='+t+' package.json='+v);process.exit(1)}console.log('版本一致：'+v)"
 
       - name: 构建
         run: npm run build
@@ -62,7 +62,7 @@ jobs:
         run: |
           set -e
           TGZ=$(ls *.tgz | head -1)
-          TAG="${GITHUB_REF_NAME:-v${{ inputs.version }}}"
+          TAG=$([ "$GITHUB_REF_TYPE" = tag ] && echo "$GITHUB_REF_NAME" || echo "v${{ inputs.version }}")
           if gh release view "$TAG" >/dev/null 2>&1; then
             gh release upload "$TAG" "$TGZ" --clobber
           else
