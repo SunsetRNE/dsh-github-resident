@@ -158,7 +158,8 @@ section('4c) 不注入使用范围目录时，不再退化成 unknown-profile（
   const ws = tmpDir('ws-noprof')
   await writeFile(join(ws, 'package.json'), JSON.stringify({ name: MERGED, version: '1.7.0' }, null, 2) + '\n', 'utf8')
   const prof = join(home, '.dsh', 'profiles', 'web')
-  await mkdir(join(prof, 'node_modules', '@local'), { recursive: true })
+  // 同 4b：scope 目录从 MERGED 现算，别写死旧的 @local
+  await mkdir(join(prof, 'node_modules', MERGED.split('/')[0]), { recursive: true })
   await symlink(ws, join(prof, 'node_modules', MERGED), 'dir')
 
   // 这一段是本次修复的**原始现象**回归：宿主在生产形状（只给 DSH_PROFILE_DIR、不注入 profileDir）下
