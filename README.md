@@ -162,6 +162,8 @@ bash tools/account-ui-check.sh
 | `gh_cli_status` | gh 版本 / 已认证账号 / 凭据助手 / `hosts.yml` 掩码 | 是 |
 | `gh_cli_setup_git` | `gh auth setup-git`，可选写 git 身份 | 否 |
 | `gh_cli_logout` | 凭据销毁（撤销 + 清副本 + 可选卸 gh） | 否 |
+| `gh_identity` | 身份体检（默认只读）：四个消费点接了没 + 缺什么补什么；`action:"wire"` 接线（指向插件**自有**的 git 凭据助手、写全局 git 身份、PATH 上没有能跑的 gh 时才落自带那份）、`"verify"` 按台账对账、`"unwire"` 逐项还原 | 默认是（`wire` / `unwire` 需用户同意） |
+| `gh_env_probe` | 环境能力矩阵：gh / curl / node / 架构 / HOME 可写 + 三路网络可达性（fetch/curl 双通道、报成功率与落点） | 是 |
 | `gh_protocol` | 机器可读的协议文档 | 是 |
 
 HTTP（只监听 `127.0.0.1`）：`GET /state`、`GET /state?cached=1`、`GET /state?refresh=1`、`GET /gh/version`、`POST /gh/update`、`GET /protocol`、`GET /registry`、`GET /registry/list`、`POST /registry/plan`、`POST /registry/verify`、`POST /registry/revoke`、`POST /registry/purge?confirm=1`、`POST /registry/build?consent=1`、`POST /auth/start`、`POST /logout`。

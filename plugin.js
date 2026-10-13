@@ -286,6 +286,73 @@ const REGISTRY_CONSENT_FILE = path.join(REGISTRY_DIR, 'consent.json');
 
 const REGISTRY_ACTIONS = ['status', 'plan', 'build', 'rescan', 'verify', 'forget', 'revoke', 'purge'];
 
+// ---------- 接线（wire / verify / unwire）：投影点的落点、台账与授权 ----------
+// 「投影」= 把真源（插件 state）投射到宿主上的几个消费点。写动作归 `gh_identity`，但**与登记库不共用授权文件**：
+// 登记库那条授权说的是「哪些目录可以扫描」，这条说的是「哪些宿主配置可以改」，两件事不能互相顶用。
+// 落点跟着 **HOME** 走（默认 ~/.dsh/github-resident/wire），与登记库同父目录但**不搭它的环境变量**：
+// 登记库的 DSH_GH_REGISTRY_DIR 是给「扫描哪些仓库」用的，顺手把接线数据也搬走会让门禁的隔离互相串味（踩过一次）。
+// DSH_GH_WIRE_DIR 单独覆盖接线目录 —— 门禁要单独钉它时用得上。
+const WIRE_DIR = process.env.DSH_GH_WIRE_DIR || path.join(STATE_DIR, 'github-resident', 'wire');
+const WIRE_HELPER_FILE = path.join(WIRE_DIR, 'git-credential-helper');
+const WIRE_LEDGER_FILE = path.join(WIRE_DIR, 'ledger.json');
+const WIRE_CONSENT_FILE = path.join(WIRE_DIR, 'consent.json');
+const WIRE_LEDGER_SCHEMA = 'dsh-github-resident/wire-ledger';
+const WIRE_CONSENT_SCHEMA = 'dsh-github-resident/wire-consent';
+/** 凭据助手的落点（host 作用域）：它**优先于**全局 `credential.helper`；写全局会把所有 host 都劫走。 */
+const CRED_HOST_HELPER_KEY = 'credential.https://' + GH_HOST + '.helper';
+
+/**
+ * 插件自有的 git 凭据助手（写到 WIRE_HELPER_FILE，0755）。
+ *
+ * 只用 node 内建模块，git 调它时按 git credential 协议读 stdin、把真源身份答回去：
+ * 取值只来自**插件 state（0600）**——不读 hosts.yml、不落第二份 token、不缓存。
+ * state 缺失 / 没 token / host 不是 github.com 时**静默不答**（exit 0、无输出），
+ * 让 git 继续问下一个助手，而不是把错误甩给 git。
+ */
+const GIT_CREDENTIAL_HELPER_SRC = `#!/usr/bin/env node
+// 本插件自有：读插件 state（0600）回答 git credential 请求。由 gh_identity {action:"wire"} 落盘，勿手改。
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const op = process.argv[2] || 'get';
+if (op !== 'get') process.exit(0);            // store / erase：不落盘（真源在插件 state，不在这里）
+let raw = '';
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', (c) => { raw += c; });
+process.stdin.on('end', () => {
+  const want = {};
+  for (const line of raw.split(/\\r?\\n/)) {
+    const i = line.indexOf('=');
+    if (i > 0) want[line.slice(0, i)] = line.slice(i + 1);
+  }
+  if (want.protocol && want.protocol !== 'https') process.exit(0);
+  if (want.host && want.host !== 'github.com') process.exit(0);
+  let state = {};
+  try {
+    state = JSON.parse(fs.readFileSync(path.join(os.homedir(), '.dsh', 'github-resident.json'), 'utf8'));
+  } catch {
+    process.exit(0);
+  }
+  const token = typeof state.token === 'string' ? state.token : '';
+  if (!token) process.exit(0);
+  process.stdout.write('username=' + (state.login || 'x-access-token') + '\\n');
+  process.stdout.write('password=' + token + '\\n');
+});
+`;
+
+/**
+ * `gh_identity` 四个动作各自的回执视图 —— **一处声明**：工具目录那行、协议 identity 段、门禁都从这里派生。
+ * 信封（`ok` / `protocol`）不算业务字段，不进这张表。改字段＝接口变更，先改这里。
+ */
+const GH_IDENTITY_VIEWS = {
+  audit: ['identity', 'points', 'config', 'summary'],
+  wire: ['action', 'consentRequired', 'wrote', 'plan', 'results', 'ledger', 'consent', 'ask'],
+  verify: ['action', 'items', 'summary', 'disk', 'ledger', 'notes'],
+  unwire: ['action', 'consentRequired', 'wrote', 'results', 'ledger', 'consent', 'ask'],
+};
+const GH_IDENTITY_ACTIONS = Object.keys(GH_IDENTITY_VIEWS);
+const GH_IDENTITY_RETURNS = [...new Set(Object.values(GH_IDENTITY_VIEWS).flat())];
+
 /** 稳定 slug：路径唯一化，同时保持人类可读前缀。 */
 function registrySlug(absPath) {
   const base = (path.basename(absPath) || 'repo').replace(/[^A-Za-z0-9._-]+/g, '_').replace(/^[._]+/, '').slice(0, 40) || 'repo';
@@ -940,7 +1007,10 @@ const TOOL_PROTOCOL = [
   { name: 'gh_cli_setup_git', kind: 'write', required: [], optional: ['set_identity'], returns: ['exitCode', 'credentialHelper', 'gitUserName', 'gitUserEmail'] },
   { name: 'gh_cli_logout', kind: 'write', required: [], optional: ['hostname', 'confirm', 'revoke', 'purge_git', 'reset_state', 'uninstall_gh', 'remove_gh_cache', 'remove_gh_config', 'dry_run'], returns: ['ok', 'dryRun', 'hostname', 'tokenMasked', 'steps', 'verify', 'leftover'] },
   { name: 'gh_cli_resolve', kind: 'read', required: [], optional: [], returns: ['resolved', 'system', 'pluginCache', 'dataDir', 'arch', 'autoLandOnNextUse', 'lastInstall'] },
-  { name: 'gh_identity', kind: 'read', required: [], optional: [], returns: ['identity', 'points', 'config', 'summary'] },
+  // 2026-10-14（票「gh_identity {wire|verify|unwire}：投影接线 + 对账 + 可撤」）：它从只读工具变成
+  // 「默认只读 + 三个能写的动作」，所以 kind 从 read 变 write（并从 guarantees.readOnlyTools 里退出 —— 诚实）。
+  // 必填仍为空：不带 action 时就是体检，行为与从前逐字节一致。returns 是四个动作视图的并集（一处声明派生）。
+  { name: 'gh_identity', kind: 'write', required: [], optional: ['action', 'consent', 'targets'], returns: GH_IDENTITY_RETURNS },
   { name: 'gh_env_probe', kind: 'read', required: [], optional: ['network_targets', 'attempts', 'timeout_ms'], returns: ['capabilities', 'network', 'proxy', 'dirs', 'summary', 'bounds', 'notes'] },
   { name: 'gh_cli_version', kind: 'write', required: [], optional: ['update', 'force'], returns: ['current', 'latest', 'layer', 'updateAvailable', 'checkedAt', 'updated', 'reason', 'lastUpdate'] },
   { name: 'gh_cache_gc', kind: 'write', required: [], optional: ['dry_run', 'keep_versions'], returns: ['dir', 'removed', 'removedCount', 'freedBytes', 'kept', 'keptVersions'] },
@@ -2220,12 +2290,16 @@ sys.stdout.flush()
       points: ['git', 'gh-cli', 'env', 'path'],
       pointsNote: '四个消费点：git（凭据助手两个作用域 + 全局身份）/ gh CLI 凭据 / 子进程环境 / PATH 落点；每个点的当前状态与补救命令在 gh_identity 的回执里',
       fieldsFrom: 'gh_identity',
-      fields: declaredReturns('gh_identity'),
+      // 这一段说的字段＝**体检视图**（身份事实：谁、接了没、缺什么）；工具另外三个动作（接线 / 对账 / 撤销）
+      // 各自的字段在 `views` 里，同样是同一处声明（GH_IDENTITY_VIEWS）派生出来的。
+      fields: GH_IDENTITY_VIEWS.audit,
+      actions: GH_IDENTITY_ACTIONS,
+      views: GH_IDENTITY_VIEWS,
       readers: {
         'Deck 半边 / 未来的插件': '身份只走这一个消费面（服务位，或本段 points/fieldsFrom 指向的工具）；不要自己去读 hosts.yml，也不要另存一份 token',
         '面板 / 设置页': '按 points 的四项渲染「接了没接」，按 gh_identity 回执里的 summary.fixes 渲染补救命令',
         '诊断 agent': '先读本段分清「缺什么该问谁」：身份类缺口问 gh_identity，机器能力类缺口问 gh_env_probe',
-        '本包维护者': '改字段属**接口变更**：先改 TOOL_PROTOCOL 里 gh_identity 那行（本段 fields 自动跟着变），门禁再把那行钉到工具真返回上',
+        '本包维护者': '改字段属**接口变更**：先改 `GH_IDENTITY_VIEWS`（工具目录那行、本段 `fields` 与 `views` 都从它派生），门禁再把它们钉到工具真返回上',
       },
     },
     environment: {
@@ -2313,17 +2387,371 @@ sys.stdout.flush()
     } catch (eProvide) { /* 服务位被占：Deck 侧会如实回落 PATH（不静默换口径） */ }
   }
 
+  // ---------- 身份接线的写半边（wire / verify / unwire；票「gh_identity {wire|verify|unwire}」） ----------
+  // 真源只有一个（插件 state）。这里做的是「把它投射到宿主的几个消费点」这件**可对账、可撤**的事。
+  // 三条硬规矩：
+  //   ① 写之前先回显**具体值**并拿到同意 —— 没同意一个字节都不写（只回 ask 载荷，由模型转述给用户）；
+  //   ② 每次写都记台账（before / after / at / writer），撤的时候按它逐项还原；
+  //   ③ 撤只撤「现在仍等于我们写的值」的项 —— 被别人改过的不动，只如实报（不拿旧值去盖别人的新值）。
+
+  /** 第一个「存在且在 PATH 上、又可写」的目录（PATH 落点用）；找不到回 null，绝不硬塞。 */
+  async function firstWritablePathDir() {
+    for (const dir of String(process.env.PATH || '').split(':').filter(Boolean)) {
+      try {
+        const st = await fs.stat(dir);
+        if (st.isDirectory() && await canWriteDir(dir)) return dir;
+      } catch { /* 试下一个 */ }
+    }
+    return null;
+  }
+
+  /** 落盘自有凭据助手（0755；内容已一致就不重写，免得每次 wire 都改 mtime）。 */
+  async function ensureWireHelper() {
+    await fs.mkdir(WIRE_DIR, { recursive: true, mode: 0o700 });
+    await chmodQuiet(WIRE_DIR, 0o700);
+    const cur = await fs.readFile(WIRE_HELPER_FILE, 'utf8').catch(() => null);
+    if (cur !== GIT_CREDENTIAL_HELPER_SRC) {
+      await fs.writeFile(WIRE_HELPER_FILE, GIT_CREDENTIAL_HELPER_SRC, { mode: 0o755 });
+    }
+    await chmodQuiet(WIRE_HELPER_FILE, 0o755);
+    return WIRE_HELPER_FILE;
+  }
+
+  const gitGlobalGet = async (key) => (await git(process.cwd(), ['config', '--global', '--get', key])).stdout.trim() || null;
+  const gitGlobalSet = (key, value) => git(process.cwd(), ['config', '--global', '--replace-all', key, String(value)]);
+  const gitGlobalUnset = (key) => git(process.cwd(), ['config', '--global', '--unset-all', key]);
+
+  /**
+   * 四个投影点的接线项：每条 = 一处宿主配置的 `before → after`。
+   * 写不了的点照样出现，但标 `writable:false` + `why` —— 让回执说清「不是忘了，是写不了」。
+   */
+  async function wireItems() {
+    const state = await readState();
+    const resolved = await resolveIdentity(state);
+    const login = resolved.login || (typeof state.login === 'string' ? state.login : '') || '';
+    const items = [];
+
+    // ---- 点 1：git 凭据助手（**host 作用域**：它优先于全局；只写全局会把别的 host 的凭据也劫到本插件）----
+    items.push({
+      point: 'git-helper', key: CRED_HOST_HELPER_KEY, scope: 'git global（host 作用域）',
+      before: await gitGlobalGet(CRED_HOST_HELPER_KEY), after: '!' + WIRE_HELPER_FILE, writable: true,
+      why: '指向插件自有助手（读插件 state 作答），不再依赖 gh 的绝对路径',
+    });
+
+    // ---- 点 2：全局 git 身份（state 里没有 email → 用 GitHub 的 noreply 形式；没有 login 就写不了）----
+    const nameAfter = login || null;
+    const emailAfter = login ? login + '@users.noreply.github.com' : null;
+    items.push({
+      point: 'git-identity', key: 'user.name', scope: 'git global',
+      before: await gitGlobalGet('user.name'), after: nameAfter, writable: Boolean(nameAfter),
+      why: nameAfter ? null : '解析不到 login（env token 不带登录名）—— 先 gh_resident_login，或让 gh CLI 登录后再接线',
+    });
+    items.push({
+      point: 'git-identity', key: 'user.email', scope: 'git global',
+      before: await gitGlobalGet('user.email'), after: emailAfter, writable: Boolean(emailAfter),
+      why: emailAfter ? 'state 里没有 email，用 GitHub 的 noreply 形式 <login>@users.noreply.github.com（要真邮箱就手动改，verify 会如实报「不是本插件写的」）' : '同上：先要有 login',
+    });
+
+    // ---- 点 3：gh CLI（写不了：hosts.yml 只读不写，ADR 0001 的边界）----
+    const hostsEntry = await readHostsEntry(GH_HOST);
+    items.push({
+      point: 'gh-cli', key: HOSTS_FILE, scope: 'gh 自己的文件（只读）', before: null, after: null, writable: false,
+      why: hostsEntry.token
+        ? 'gh CLI 自己已有凭据（' + (hostsEntry.login || '登录名未知') + '）—— 本插件不写它'
+        : 'hosts.yml 只读不写（ADR 0001）：这条只能让用户自己 gh auth login，或走 gh_cli_auth_web 设备码',
+    });
+
+    // ---- 点 4：PATH 落点（**只在 PATH 上没有能跑的 gh 时**才落；解析器优先系统层，不抢系统的）----
+    const sysGh = await probeGh('gh');
+    const cachedGh = await probeGh(GH_BIN);
+    const landingDir = sysGh.ok ? null : await firstWritablePathDir();
+    const landingTarget = landingDir ? path.join(landingDir, 'gh') : null;
+    let landingBefore = null;
+    let landingWritable = false;
+    let landingWhy = null;
+    if (sysGh.ok) {
+      landingWhy = 'PATH 上已经有能跑的 gh（' + (sysGh.version || '版本未知') + '）—— 什么都不做，不抢系统的';
+    } else if (!cachedGh.ok) {
+      landingWhy = 'PATH 上没有 gh，插件自带缓存里也没有可跑的副本 —— 先跑 gh_cli_install';
+    } else if (!landingTarget) {
+      landingWhy = 'PATH 里找不到可写的目录 —— 不硬塞（要的话自己把 ' + GH_BIN + ' 软链到 PATH 上）';
+    } else {
+      const existing = await fs.lstat(landingTarget).catch(() => null);
+      if (!existing) {
+        landingWritable = true;
+      } else if (existing.isSymbolicLink()) {
+        landingBefore = await fs.readlink(landingTarget).catch(() => null);
+        landingWritable = landingBefore === GH_BIN;
+        if (!landingWritable) landingWhy = '那个位置已经有别人的软链（' + landingBefore + '）—— 不覆盖';
+      } else {
+        landingWhy = '那个位置已经有真实文件 —— 不覆盖';
+      }
+    }
+    items.push({
+      point: 'path-landing', key: landingTarget || 'gh', scope: 'PATH',
+      before: landingBefore, after: landingWritable ? GH_BIN : null, writable: landingWritable, why: landingWhy,
+    });
+
+    return items;
+  }
+
+  async function readWireLedger() {
+    try {
+      const raw = JSON.parse(await fs.readFile(WIRE_LEDGER_FILE, 'utf8'));
+      if (raw && raw.schema === WIRE_LEDGER_SCHEMA && Array.isArray(raw.items)) return raw;
+      return { schema: WIRE_LEDGER_SCHEMA, items: [], malformed: true };
+    } catch {
+      return { schema: WIRE_LEDGER_SCHEMA, items: [] };
+    }
+  }
+  const wireLedgerView = (ledger) => ({
+    file: WIRE_LEDGER_FILE,
+    entries: ledger.items.length,
+    active: ledger.items.filter((i) => !i.revokedAt && !i.abandonedAt).length,
+  });
+
+  async function readWireConsent() {
+    try {
+      const c = JSON.parse(await fs.readFile(WIRE_CONSENT_FILE, 'utf8'));
+      return c && c.schema === WIRE_CONSENT_SCHEMA ? c : { granted: false, malformed: true };
+    } catch {
+      return { granted: false };
+    }
+  }
+
+  /** 计划的指纹：只算**真要写**的项 —— 计划变了指纹就变，授权不能跟着漂。 */
+  function wirePlanFingerprint(items) {
+    const lines = items
+      .filter((i) => i.writable && i.before !== i.after)
+      .map((i) => [i.point, i.key, i.before === null ? '(unset)' : i.before, i.after === null ? '(unset)' : i.after].join(' | '))
+      .sort();
+    return createHash('sha256').update(lines.join('\n')).digest('hex').slice(0, 16);
+  }
+
+  function wireQuestion(items) {
+    const changed = items.filter((i) => i.writable && i.before !== i.after);
+    const lines = changed.map((i) => '「' + i.key + '」' + (i.before === null ? '(未设置)' : i.before) + ' → ' + i.after);
+    return {
+      question: '是否同意把身份设置写到这台机器上？共 ' + changed.length + ' 项：' + lines.join('；')
+        + '。只改 git 的全局配置（github.com 的凭据助手 + 全局 user.name / user.email）'
+        + (changed.some((i) => i.point === 'path-landing') ? '，以及把自带 gh 软链到 PATH 上' : '')
+        + '；每一项都记台账，随时可以用 unwire 撤销；不写 gh 的 hosts.yml、不落第二份 token。',
+      options: ['同意接线', '先看计划（不带 consent 再调一次 wire）', '不同意'],
+      onAgree: 'gh_identity {action:"wire", consent:true}',
+      onDecline: '一个字节都不写；只要计划没变，之后每次调用都会再问一次',
+    };
+  }
+
+  async function identityWireAction(action, args) {
+    const ledger = await readWireLedger();
+
+    // ---- verify：只读对账，不需要同意。逐项回答「现在的值 / 本插件写入的值 / 写入时间 / 是不是不是我们改的」----
+    if (action === 'verify') {
+      const items = [];
+      for (const entry of ledger.items) {
+        const current = entry.point === 'path-landing'
+          ? await fs.readlink(entry.key).catch(() => null)
+          : await gitGlobalGet(entry.key);
+        const retired = entry.revokedAt || entry.abandonedAt;
+        const ours = !retired && current === entry.after;
+        items.push({
+          point: entry.point, key: entry.key, scope: entry.scope,
+          now: current, written: entry.after, writtenAt: entry.at, writer: entry.writer,
+          state: entry.revokedAt ? 'revoked' : (entry.abandonedAt ? 'abandoned' : (ours ? 'match' : 'drift')),
+          ours,
+          note: entry.revokedAt
+            ? '已撤销（' + (entry.revokedBy || 'unwire') + ' 于 ' + entry.revokedAt + '）'
+            : entry.abandonedAt
+              ? '已放手：值被别人改过，本插件不再管它（' + entry.abandonedAt + '），也不去覆盖'
+              : ours ? null
+                : '现在的值不是本插件写的：本插件在 ' + entry.at + ' 写的是 written 那一列',
+        });
+      }
+      const helperExists = await fs.stat(WIRE_HELPER_FILE).then(() => true).catch(() => false);
+      const credFileExists = await pathExists(CRED_FILE);
+      return {
+        ok: true, action, items,
+        summary: {
+          match: items.filter((i) => i.state === 'match').length,
+          drift: items.filter((i) => i.state === 'drift').length,
+          revoked: items.filter((i) => i.state === 'revoked').length,
+          abandoned: items.filter((i) => i.state === 'abandoned').length,
+        },
+        disk: {
+          helperFile: WIRE_HELPER_FILE, helperExists,
+          ledgerFile: WIRE_LEDGER_FILE,
+          gitCredentialsFile: CRED_FILE, gitCredentialsExists: credFileExists,
+          hostsFile: HOSTS_FILE,
+        },
+        ledger: wireLedgerView(ledger),
+        notes: [
+          '本插件不注入子进程环境（那是另一张票的事：《子进程环境：插件启动的 gh / git 子进程按需带上真源 token》）。',
+          '本插件不搬迁 state：hosts.yml 有身份而 state 没有时，不改写 state（迁移包带着别人的信息等同于网络裸奔）。',
+          ...(credFileExists ? ['磁盘上还有一份明文凭据（' + CRED_FILE + '，store 那条路留下的）—— 本插件不删它；要清就跑 gh_cli_logout {purge_git:true}'] : []),
+          ...(ledger.items.length === 0 ? ['台账还是空的：还没接过线。verify 只回答「我们写过什么」；没写过就无从对账（要接线就跑 action:"wire"）'] : []),
+        ],
+      };
+    }
+
+    const plan0 = await wireItems();
+    const only = Array.isArray(args.targets) && args.targets.length ? new Set(args.targets.map(String)) : null;
+    const plan = only ? plan0.filter((i) => only.has(i.point)) : plan0;
+    const changed = plan.filter((i) => i.writable && i.before !== i.after);
+    const fingerprint = wirePlanFingerprint(plan);
+    const grant = await readWireConsent();
+    const grantedByCall = args.consent === true;
+    const grantedByRecord = grant.granted === true && grant.fingerprint === fingerprint;
+
+    if (action === 'wire') {
+      if (changed.length > 0 && !grantedByCall && !grantedByRecord) {
+        return {
+          ok: false, action, consentRequired: true, wrote: false,
+          plan: plan.map((i) => ({ ...i, changed: i.writable && i.before !== i.after })),
+          results: [], ledger: wireLedgerView(ledger),
+          consent: { required: true, grantedBy: null, fingerprint },
+          ask: wireQuestion(plan),
+        };
+      }
+      const results = [];
+      const now = new Date().toISOString();
+      if (changed.length > 0) await ensureWireHelper();
+      for (const item of changed) {
+        let ok = false;
+        let error = null;
+        try {
+          if (item.point === 'path-landing') {
+            await fs.mkdir(path.dirname(item.key), { recursive: true });
+            await fs.symlink(item.after, item.key);
+            ok = true;
+          } else if (item.after === null) {
+            const r = await gitGlobalUnset(item.key);
+            ok = r.code === 0;
+            if (!ok) error = r.stderr.trim().slice(0, 200) || ('exit ' + r.code);
+          } else {
+            const r = await gitGlobalSet(item.key, item.after);
+            ok = r.code === 0;
+            if (!ok) error = r.stderr.trim().slice(0, 200) || ('exit ' + r.code);
+          }
+        } catch (e) {
+          error = String((e && e.message) || e).slice(0, 200);
+        }
+        if (ok) {
+          ledger.items.push({
+            point: item.point, key: item.key, scope: item.scope,
+            before: item.before, after: item.after,
+            at: now, writer: 'gh_identity.wire', revokedAt: null,
+          });
+        }
+        results.push({ point: item.point, key: item.key, before: item.before, after: item.after, ok, error });
+      }
+      const wrote = results.some((r) => r.ok);
+      if (wrote) {
+        await writeJsonAtomic(WIRE_LEDGER_FILE, { schema: WIRE_LEDGER_SCHEMA, schemaVersion: 1, updatedAt: now, items: ledger.items });
+        await writeJsonAtomic(WIRE_CONSENT_FILE, {
+          schema: WIRE_CONSENT_SCHEMA, granted: true, at: now, fingerprint,
+          items: changed.map((i) => i.key), tool: 'gh_identity',
+        });
+      }
+      return {
+        ok: results.every((r) => r.ok || !changed.includes(plan.find((i) => i.key === r.key))),
+        action, consentRequired: false, wrote,
+        plan: plan.map((i) => ({ ...i, changed: i.writable && i.before !== i.after })),
+        results, ledger: wireLedgerView(ledger),
+        consent: { required: false, grantedBy: grantedByCall ? 'call' : (grantedByRecord ? 'recorded-grant' : null), fingerprint },
+        ask: null,
+      };
+    }
+
+    // ---- unwire：按台账逐项还原（只撤「现在仍等于我们写的值」的项）----
+    const active = ledger.items.filter((i) => !i.revokedAt && !i.abandonedAt);
+    if (active.length > 0 && !grantedByCall) {
+      return {
+        ok: false, action, consentRequired: true, wrote: false, results: [],
+        ledger: wireLedgerView(ledger),
+        consent: { required: true, grantedBy: null, fingerprint },
+        ask: {
+          question: '是否同意撤销身份接线、把宿主还原成接线前的样子？共 ' + active.length + ' 项：'
+            + active.map((i) => '「' + i.key + '」' + (i.after === null ? '(未设置)' : i.after) + ' → ' + (i.before === null ? '(删除该项)' : i.before)).join('；')
+            + '。只还原本插件写过的、且现在仍是我们写的值；被别人改过的不动。',
+          options: ['同意撤销', '先看台账（' + WIRE_LEDGER_FILE + '）', '不同意'],
+          onAgree: 'gh_identity {action:"unwire", consent:true}',
+          onDecline: '什么都不改；之后每次调用都会再问一次',
+        },
+      };
+    }
+    const restored = [];
+    const nowIso = new Date().toISOString();
+    for (const entry of active) {
+      const current = entry.point === 'path-landing'
+        ? await fs.readlink(entry.key).catch(() => null)
+        : await gitGlobalGet(entry.key);
+      if (current !== entry.after) {
+        // 值已经被别人改过：我们撤不回「我们的值」（它不在了），也**不该**拿接线前的旧值去盖别人的新值。
+        // 所以就地「放手」并记进台账 —— 这样它不会再被反复问起，历史也留着。
+        entry.abandonedAt = nowIso;
+        entry.abandonedBy = 'gh_identity.unwire';
+        entry.abandonedWhy = '值被别人改过，不再由本插件管理';
+        restored.push({ point: entry.point, key: entry.key, now: current, written: entry.after, ok: false, skipped: true, why: '现在的值不是本插件写的（被别人改过）—— 不动它，只记「放手」' });
+        continue;
+      }
+      let ok = false;
+      let error = null;
+      try {
+        if (entry.point === 'path-landing') {
+          await fs.rm(entry.key, { force: true });
+          ok = true;
+        } else if (entry.before === null) {
+          const r = await gitGlobalUnset(entry.key);
+          ok = r.code === 0;
+          if (!ok) error = r.stderr.trim().slice(0, 200) || ('exit ' + r.code);
+        } else {
+          const r = await gitGlobalSet(entry.key, entry.before);
+          ok = r.code === 0;
+          if (!ok) error = r.stderr.trim().slice(0, 200) || ('exit ' + r.code);
+        }
+      } catch (e) {
+        error = String((e && e.message) || e).slice(0, 200);
+      }
+      if (ok) {
+        entry.revokedAt = nowIso;
+        entry.revokedBy = 'gh_identity.unwire';
+      }
+      restored.push({ point: entry.point, key: entry.key, now: current, written: entry.after, restored: entry.before, ok, skipped: false, error });
+    }
+    const wrote = restored.some((r) => r.ok);
+    if (active.length > 0) {
+      await writeJsonAtomic(WIRE_LEDGER_FILE, { schema: WIRE_LEDGER_SCHEMA, schemaVersion: 1, updatedAt: nowIso, items: ledger.items });
+      await fs.rm(WIRE_CONSENT_FILE, { force: true });
+    }
+    return {
+      ok: restored.every((r) => r.ok || r.skipped), action, consentRequired: false, wrote,
+      results: restored, ledger: wireLedgerView(ledger),
+      consent: { required: false, grantedBy: grantedByCall ? 'call' : null, fingerprint },
+      ask: null,
+    };
+  }
+
   // ---------- 身份体检（只读；票「新工具 gh_identity（只读体检 + 准确补救命令）」） ----------
   // 一次答完「我的身份是谁、四个消费点各接好没、缺什么、补的准确命令」。
   // 返回形状同时是《启动自述》与协议 identity 段的字段来源（一处定义、三处消费）—— 改字段属**接口变更**。
   // 只读且不联网：本地 git config 读取 + gh --version 探测；**不调 `gh auth status`**（那次会打网）。
-  // 写动作（接线 / 撤销）不在这里，归「gh_identity {wire|verify|unwire}」那张票。
+  // 2026-10-14：写动作（wire / verify / unwire）落在**同一个工具**上（action 分发）—— 不带 action 时
+  // 与从前逐字节一致；三个写动作的机制见上面那一大段。
   ctx.tools.register(textTool({
     toolName: 'gh_identity',
-    description: 'Read-only identity audit: in one call it answers who the identity is, whether each of the four consumption points is wired, what is missing, and the exact command that fixes it. Points: git (credential-helper in BOTH scopes + global git identity) / gh CLI credentials / subprocess environment / PATH landing. Read-only: writes nothing, changes no git config, makes no network calls.',
-    parameters: {},
-    readOnly: true,
-    execute: async () => {
+    description: 'Identity audit and wiring in one tool. Default (no action) is a READ-ONLY audit: who the identity is, whether each of the four consumption points is wired, what is missing, and the exact command that fixes it. Points: git (credential-helper in BOTH scopes + global git identity) / gh CLI credentials / subprocess environment / PATH landing. action:"wire" projects the truth source onto the host (github.com credential helper pointing at this plugin\'s own helper, global user.name/user.email, bundled gh on PATH only when none is runnable) and writes nothing without consent:true; action:"verify" reconciles the host against the ledger (current value / what we wrote / when / whether it is not ours); action:"unwire" restores the pre-wire values item by item. It never writes gh\'s hosts.yml, never stores a second token, and makes no network calls.',
+    parameters: {
+      action: { type: 'string', enum: GH_IDENTITY_ACTIONS, description: 'audit (default, read-only) | wire (needs consent) | verify (read-only reconcile) | unwire (needs consent, restores pre-wire values).' },
+      consent: { type: 'boolean', description: 'Set true only after the user explicitly agreed to the plan returned by the previous call. Without it, wire/unwire write nothing and return {consentRequired:true, ask:{...}}.' },
+      targets: { type: 'array', items: { type: 'string' }, description: 'Optional subset of points to act on: git-helper / git-identity / gh-cli / path-landing. Defaults to all.' },
+    },
+    readOnly: false,
+    execute: async (args = {}) => {
+      const action = String(args.action || 'audit');
+      if (!GH_IDENTITY_ACTIONS.includes(action)) {
+        return { ok: false, error: 'action 只支持 ' + GH_IDENTITY_ACTIONS.join(' / ') + '（缺省＝audit）' };
+      }
+      if (action !== 'audit') return await identityWireAction(action, args);
       const state = await readState();
       const identity = maskIdentity(await resolveIdentity(state));
       const rollup = (states) => states.every((s) => s === 'pass') ? 'pass'

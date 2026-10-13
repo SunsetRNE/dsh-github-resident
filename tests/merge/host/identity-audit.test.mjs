@@ -182,7 +182,14 @@ check(block.indexOf('resolveIdentity(') > 0 && block.indexOf('maskIdentity(') > 
 const protoRow = src.indexOf("{ name: 'gh_identity'")
 check(protoRow > 0, '协议表里有 gh_identity 一行（工具面与协议同源）')
 const protoLine = src.slice(protoRow, src.indexOf('\n', protoRow))
-check(protoLine.indexOf("kind: 'read'") > 0 && protoLine.indexOf('required: []') > 0, '协议行声明为只读、无必填参数')
+// **判据变更**（2026-10-14，票「gh_identity {wire|verify|unwire}」）：它从只读工具变成「默认只读 + 三个能写的动作」，
+// 所以 kind 从 read 变 write、并从 guarantees.readOnlyTools 里退出（诚实：它确实能写了）。
+// 必填**仍为空**（不带 action 时就是这次体检）；「默认动作仍然逐字节不写」这条更强的判据，
+// 由上面那两条逐字节断言（hosts.yml / git 配置）继续守着 —— 判据只增不减，改的只是这一条的措辞。
+check(protoLine.indexOf("kind: 'write'") > 0 && protoLine.indexOf('required: []') > 0,
+  '协议行声明为「可写工具、无必填参数」（默认动作仍是只读体检）')
+check(protoLine.indexOf("'action'") > 0 && protoLine.indexOf("'consent'") > 0 && protoLine.indexOf("'targets'") > 0,
+  '协议行登记了三个可选参数（action / consent / targets）')
 
 note('夹具用 GIT_CONFIG_GLOBAL 指向临时 gitconfig：git config --global 的读写都落在临时文件，绝不碰真全局配置。')
 note('本用例覆盖的形状（identity/points/config/summary）按票面约定同时服务《启动自述》与协议 identity 段，改字段属接口变更。')

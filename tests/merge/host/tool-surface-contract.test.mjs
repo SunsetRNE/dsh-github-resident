@@ -208,7 +208,7 @@ const businessKeys = (receipt) => Object.keys(receipt || {}).filter((k) => !ENVE
 
 // 两段只允许**描述性**键：谁要是把 login / masked / token 这类**取值**键塞进协议，这条会挡住 ——
 // 协议是描述，不是「跑这份协议这台机器」的快照。
-const DESCRIPTIVE_KEYS = ['what', 'sourceOfTruth', 'priority', 'points', 'pointsNote', 'fieldsFrom', 'fields', 'readers', 'tool', 'boundsNote', 'boundary']
+const DESCRIPTIVE_KEYS = ['what', 'sourceOfTruth', 'priority', 'points', 'pointsNote', 'fieldsFrom', 'fields', 'readers', 'tool', 'boundsNote', 'boundary', 'actions', 'views']
 
 const surfaceHome = makeHome('surface', { withGh: true })
 let surface = null
@@ -218,16 +218,23 @@ try {
     const identity = await tool('gh_identity').execute({}, {})
     // 探针：**目标列表清空 + 小上界** —— 这条判据只取形状、不取结论，所以不起任何真实外网请求。
     const environment = await tool('gh_env_probe').execute({ network_targets: [], attempts: 1, timeout_ms: 500 }, {})
-    return { protocol, identity, environment }
+    // gh_identity 是动作式工具（2026-10-14 起）：三个写/读动作也各取一份真回执 —— 形状判据要覆盖它们。
+    // 动作都在**夹具的假 HOME** 里跑：wire 改的是假 gitconfig、写的是假数据目录，碰不到真宿主。
+    const actions = {
+      wire: await tool('gh_identity').execute({ action: 'wire', consent: true }, {}),
+      verify: await tool('gh_identity').execute({ action: 'verify' }, {}),
+      unwire: await tool('gh_identity').execute({ action: 'unwire', consent: true }, {}),
+    }
+    return { protocol, identity, environment, actions }
   })
 } catch (e) {
-  check(false, '合成环境里跑三个只读工具（' + String((e && e.message) || e).slice(0, 160) + '）')
+  check(false, '合成环境里跑只读工具与接线动作（' + String((e && e.message) || e).slice(0, 160) + '）')
 } finally {
   surfaceHome.cleanup()
 }
 
 if (surface) {
-  const { protocol: p, identity, environment } = surface
+  const { protocol: p, identity, environment, actions } = surface
   const rowOf = (name) => ((p.tools || []).find((t) => t.name === name) || {}).returns || []
   const sorted = (a) => a.slice().sort()
 
@@ -236,9 +243,9 @@ if (surface) {
   check(rowOf('gh_protocol').includes('identity') && rowOf('gh_protocol').includes('environment'),
     '协议表里 gh_protocol 那行声明了这两段（否则「声明的 returns 覆盖真实返回键」那条会红）')
 
-  for (const { seg, tool, receipt } of [
-    { seg: 'identity', tool: 'gh_identity', receipt: identity },
-    { seg: 'environment', tool: 'gh_env_probe', receipt: environment },
+  for (const { seg, tool, receipt, singleView } of [
+    { seg: 'identity', tool: 'gh_identity', receipt: identity, singleView: false },
+    { seg: 'environment', tool: 'gh_env_probe', receipt: environment, singleView: true },
   ]) {
     const segment = p[seg] || {}
     const fields = Array.isArray(segment.fields) ? segment.fields : []
@@ -246,8 +253,15 @@ if (surface) {
     const actual = businessKeys(receipt)
 
     check(fields.length > 0, seg + ' 段带字段清单（形状 A：列顶层段名，不递归到子字段）')
-    check(JSON.stringify(sorted(fields)) === JSON.stringify(sorted(declared)),
-      seg + ' 段的字段清单 == 协议表里 ' + tool + ' 那行（同一真源派生，不是手抄的第二份）')
+    check(JSON.stringify(sorted(fields)) === JSON.stringify(sorted(actual)),
+      seg + ' 段的字段清单 == ' + tool + ' **该动作**的真返回键（两个方向都能抓）')
+    if (singleView) {
+      check(JSON.stringify(sorted(fields)) === JSON.stringify(sorted(declared)),
+        seg + ' 段的字段清单 == 协议表里 ' + tool + ' 那行（同一真源派生，不是手抄的第二份）')
+    } else {
+      check(fields.every((k) => declared.includes(k)),
+        seg + ' 段的字段清单 ⊆ 协议表里 ' + tool + ' 那行（那行是**动作视图的并集**，见下）')
+    }
     const d = drift(fields, actual)
     check(d.declaredOnly.length === 0 && d.actualOnly.length === 0,
       seg + ' 段 ↔ ' + tool + ' 真返回：两个方向都无漂移'
@@ -277,7 +291,31 @@ if (surface) {
   check(JSON.stringify(sorted(segPoints)) === JSON.stringify(sorted(realPoints)),
     'identity 段的 points == gh_identity 真返回的 points[].point（' + JSON.stringify(segPoints) + '）')
 
-  note('本段只覆盖**能在合成环境里离线跑**的工具（gh_protocol / gh_identity / gh_env_probe）：')
+  // ---- 动作式工具的那一层：四个动作各自的字段清单，同样一处声明、同样钉到真回执上 ----
+  const views = (p.identity && p.identity.views) || {}
+  const actionNames = (p.identity && p.identity.actions) || []
+  check(JSON.stringify(sorted(actionNames)) === JSON.stringify(['audit', 'unwire', 'verify', 'wire']),
+    'identity 段列出四个动作（' + JSON.stringify(actionNames) + '）')
+  const viewUnion = [...new Set(Object.values(views).flat())]
+  check(JSON.stringify(sorted(viewUnion)) === JSON.stringify(sorted(rowOf('gh_identity'))),
+    '协议表 gh_identity 那行 == 四个动作视图的**并集**（同一处声明派生，不是手抄）')
+  check(JSON.stringify(sorted(views.audit || [])) === JSON.stringify(sorted(businessKeys(identity))),
+    'views.audit == 默认动作（体检）的真返回键')
+
+  for (const act of ['wire', 'verify', 'unwire']) {
+    const receipt = actions[act]
+    const actual = businessKeys(receipt)
+    const declared = views[act] || []
+    // `error` 是失败回执的通用键（信封级），不计入视图比对。
+    const d = drift(declared, actual.filter((k) => k !== 'error'))
+    check(declared.length > 0 && d.declaredOnly.length === 0 && d.actualOnly.length === 0,
+      'action:' + act + ' 的真返回键 == 协议里声明的视图'
+      + (d.declaredOnly.length || d.actualOnly.length
+        ? '（声明独有 ' + JSON.stringify(d.declaredOnly) + '，实际独有 ' + JSON.stringify(d.actualOnly) + '）'
+        : ''))
+  }
+
+  note('本段只覆盖**能在合成环境里离线跑**的工具与动作（gh_protocol / gh_identity 四动作 / gh_env_probe）：')
   note('写工具与需要出网的工具跑不了离线，这条判据不覆盖它们 —— 不假装覆盖。')
 }
 
