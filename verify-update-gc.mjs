@@ -132,26 +132,41 @@ async function runChild(mode, extraEnv = {}, port) {
     await fs.mkdir(path.join(d, 'versions', 'gh-9.0.2'), { recursive: true });
     await fs.writeFile(path.join(d, 'versions', 'gh-9.0.2', 'gh'), ghScript('9.0.2'), { mode: 0o755 });
   }
-  const r = await new Promise((res) => execFile(process.execPath, ['--input-type=module', '-e', CHILD], {
-    env: {
-      ...process.env,
-      CHILD_HOME: childHome, CHILD_FAKE: FAKE_PATH, CHILD_MODE: mode,
-      CHILD_PORT: String(port || ''), REAL_PATH, PLUGIN_URL,
-      DSH_GH_RELEASE_API: `http://127.0.0.1:${PORT}/repos/cli/cli/releases/latest`,
-      DSH_GH_DOWNLOAD_BASE: DL,
-      DSH_GH_NO_BOOTSTRAP: '1',
-      ...extraEnv,
-    },
-    maxBuffer: 8 * 1024 * 1024,
-    // 子进程上界：同 verify-gh-bootstrap 的理由 —— 原来没有 timeout，卡住就是无限期；
-    // 超时按失败记账（写进 err），不吞成通过。
-    timeout: 90_000,
-    killSignal: 'SIGKILL',
-  }, (e, out, err) => res({
-    code: e ? 1 : 0,
-    out: out || '',
-    err: (e && e.killed) ? ('TIMEOUT(' + (e.signal || '') + ') ' + String(err || '')) : String(err || ''),
-  })));
+  // 与 verify-gh-bootstrap 同一处缺陷、同一改法：父进程要的是子进程**打印的报告**，
+  // 不是它的退出码 —— 读到 `__CHILD__` 就结算，随即 SIGKILL，不等它自己退。
+  // CI 实测（2026-10-13 v1.8.1 发布）：本件正是死在「等子进程退出」上 —— 4 次调用
+  // × 90 秒上界 = 6 分 00 秒，与那次 6 分 03 秒的红色完全对上；本机子进程会自己退，
+  // 所以本机一路绿。90 秒 + SIGKILL 仍留作最后一道上界，超时按失败记账。
+  const r = await new Promise((res) => {
+    let settled = false;
+    let buf = '';
+    let errBuf = '';
+    const settle = (v) => { if (settled) return; settled = true; try { child.kill('SIGKILL'); } catch (eKill) {} res(v); };
+    const child = execFile(process.execPath, ['--input-type=module', '-e', CHILD], {
+      env: {
+        ...process.env,
+        CHILD_HOME: childHome, CHILD_FAKE: FAKE_PATH, CHILD_MODE: mode,
+        CHILD_PORT: String(port || ''), REAL_PATH, PLUGIN_URL,
+        DSH_GH_RELEASE_API: `http://127.0.0.1:${PORT}/repos/cli/cli/releases/latest`,
+        DSH_GH_DOWNLOAD_BASE: DL,
+        DSH_GH_NO_BOOTSTRAP: '1',
+        ...extraEnv,
+      },
+      maxBuffer: 8 * 1024 * 1024,
+      timeout: 90_000,
+      killSignal: 'SIGKILL',
+    }, (e, out, err) => settle({
+      code: e ? 1 : 0,
+      out: out || '',
+      err: (e && e.killed) ? ('TIMEOUT(' + (e.signal || '') + ') ' + String(err || '')) : String(err || ''),
+      via: (e && e.killed) ? 'timeout' : 'exit',
+    }));
+    child.stdout.on('data', (b) => {
+      buf += b.toString();
+      if (buf.split('\n').some((l) => l.startsWith('__CHILD__'))) settle({ code: 0, out: buf, err: errBuf, via: 'report' });
+    });
+    child.stderr.on('data', (b) => { errBuf += b.toString(); });
+  });
   const line = r.out.split('\n').find((l) => l.startsWith('__CHILD__')) || '';
   const parsed = line ? JSON.parse(line.slice(9)) : null;
   return { ...r, parsed, childHome };
