@@ -4,8 +4,8 @@
 
 ## 当前
 
-- **v1.7.5** · `sunsetrne-dsh-github-resident-v2-1.7.5.tgz`（2,834,107 字节 · 从 HEAD `b1a644d` 构建）
-- 装法：`npm i https://sunsetrne.github.io/dsh-github-resident/sunsetrne-dsh-github-resident-v2-1.7.5.tgz`
+- **v1.7.6** · `sunsetrne-dsh-github-resident-v2-1.7.6.tgz`（2,834,107 字节 · 从 HEAD `b1a644d` 构建）
+- 装法：`npm i https://sunsetrne.github.io/dsh-github-resident/sunsetrne-dsh-github-resident-v2-1.7.6.tgz`
 - 装前判据：解包后 `node --input-type=module -e "import('./dist/host.js').then(()=>console.log('LOADED-OK'))"` 必须打印 `LOADED-OK`
 - 这一版把 `26a009c` 的更新链路修复带进了运行副本（`__runningVersionOf`：宿主安装清单缺失时，按 `dist/client.js` 横幅如实报「这份代码自己的版本」）
 
@@ -29,7 +29,7 @@
 1. **`registryUrl` 必须以 `/` 结尾** —— 不带尾斜杠时 URL 会拼成 `…:31899%40sunsetrne…`，请求根本没发出去（`check-failed`，源收到 0 个请求）。
 2. 元数据 JSON 的 **`name` 必须等于目标包名**（`@sunsetrne/dsh-github-resident-v2`），**`version` 必须在该版本通道合法**（stable = 纯三段）。
 3. **`dist.tarball` 必须与元数据同源**、无 query/hash，且 pathname 恰为 `/<包名>/-/<包名>-<版本>.tgz` —— **文件名段带完整 scope**。
-   实测后果：盘上是**两层** `@sunsetrne/dsh-github-resident-v2/-/@sunsetrne/dsh-github-resident-v2-1.7.5.tgz`
+   实测后果：盘上是**两层** `@sunsetrne/dsh-github-resident-v2/-/@sunsetrne/dsh-github-resident-v2-1.7.6.tgz`
    （`-` 目录里还要套一个 `@sunsetrne/`）。摆成一层时**形状校验照样通过、下载才 404** —— 形状只比 URL 字符串，**不下载**。
 4. **`dist.integrity` 必须是 sha512 形式**（`^sha512-[A-Za-z0-9+/]{86}==$`）；`index.json` 现在同时给 sha256 与 sha512 两列。
 
@@ -51,7 +51,7 @@
 | `/@sunsetrne/dsh-github-resident-v2/latest`（解码字面） | **200** |
 | `--path-as-is` 再试编码路径 | **200** |
 | 同一元数据喂 `fetchNpmRelease`（项目站前缀） | **`invalid-release`** —— 卡在第 5 条（origin 根路径规则），不是托管问题 |
-| 同一元数据喂 `fetchNpmRelease`（**源根**，本地假源） | **`ok`** —— version 1.7.5、integrity 形状通过 |
+| 同一元数据喂 `fetchNpmRelease`（**源根**，本地假源） | **`ok`** —— version 1.7.6、integrity 形状通过 |
 | 源根上的包体下载回读 | 2,834,107 字节，sha256 与本地包一致 |
-| 源根 URL `npm i` | 装成 1.7.5，`LOADED-OK` |
-| 面板 check（合成 pack 形态 profile + 源根 registryUrl） | `latestVersion=1.7.5`、`canInstall=true`、`blockedReason=null` |
+| 源根 URL `npm i` | 装成 1.7.6，`LOADED-OK` |
+| 面板 check（合成 pack 形态 profile + 源根 registryUrl） | `latestVersion=1.7.6`、`canInstall=true`、`blockedReason=null` |
