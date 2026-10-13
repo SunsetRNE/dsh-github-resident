@@ -2,8 +2,9 @@
  * backends/github/client.js — gh CLI 封装（契约对齐版）。
  *
  * 定版依据：#138 §1.3 + #129 平台三底座（BackendContext.platform 已解析实例注入）。
- * - gh 可执行经 `platform.resolveExecutable('gh')`（null → env fail，不抛）
- * - 命令执行经 `ctx.exec('gh', args, {cwd, timeout, signal})`（timeout 30s，signal abort）
+ * - gh 可执行经 `platform.resolveExecutable('gh')`（null → env fail，不抛）；**执行时用的就是它解析出的那个路径**，
+ *   不是裸名 `'gh'`（#15：执行世界 PATH 里没有 gh 时裸名会 spawn ENOENT，被归一成「没拿到退出码」，deck 半边全灭）
+ * - 命令执行经 `ctx.exec(<解析出的可执行路径>, args, {cwd, timeout, signal})`（timeout 30s，signal abort）
  * - 超时/signal 与 timers 竞速由 ctx.exec 内部托管（此处只透传 opts）
  * - stdout 解析在调用方（issues/comments 等）；此处只做 exec+错误归一化，不产 parse kind（parse 由 JSON 层）
  * - 返回 OpResult，不 throw；错误经 classifyGhError 归一（env/auth/rate-limit/not-found/network）
@@ -101,9 +102,12 @@ export function ghClient(ctx) {
     }
     try {
       const p = await platform.resolveExecutable('gh')
+      // #15：这一格 `ghPath` 不是「有没有 gh」的判定牌，它就是执行点要用的那个可执行路径（回 'gh' 只出现在下面的探针分支）。
       if (p) return { ok: true, ghPath: p }
       // 回退：platform 未找到时，尝试直接通过 ctx.exec 探测 gh 是否在 PATH 可执行（Windows 上 where/直接 spawn）
       // 避免因为 subprocess.resolveExecutable 的 PATH 与 pwsh 的 PATH 不一致导致 414 这类外部建票永远拉不到
+      // #15：这一格**故意**是裸名 —— 它探的就是「这个执行世界里裸名 gh 能不能跑」。探通了才回 ghPath:'gh'，
+      //   下面的执行点照它跑（探针验什么、执行用什么，口径一致）；探不通就如实 env 失败，不猜、也不偷偷退回第二套解析。
       if (exec) {
         try {
           reportOutbound(ctx, ['--version'])
@@ -221,6 +225,19 @@ export function ghClient(ctx) {
       return { ok: false, error: Object.assign({ code: -1 }, resolved.error) }
     }
 
+    // #15：解析到哪儿，就在哪儿跑 —— 解析结果必须进 exec，不能丢。
+    //   为什么单列一格：执行世界 PATH 里没有 gh（「插件自带 gh + 系统无 gh」正是 DSHA 容器的默认形态）时，
+    //   裸名 'gh' 会在 spawn 处 ENOENT，被下面 code===-1 那条分支归一成「没拿到退出码」，
+    //   于是 deck 半边（deck_* 工具 / 面板取数 / 预检）整片失败，而 Resident 半边走绝对路径一直好好的 ——
+    //   半边活、半边死，最难查。resolveGh 回的就是可直接执行的路径（平台层已做过 lstat 校验），直接用它。
+    //   这里**不设**「缺了就退回裸名」的兜底 —— 那正是本单的复发点。resolveGh 的两条成功路径都必给 ghPath
+    //   （平台解析出的路径，或探针验过的字面 'gh'），真缺了就是编程错误：与下面的 !exec 同款，响亮 env 失败。
+    const ghExe = resolved.ghPath
+    if (!ghExe) {
+      emitGhExec('env', -1, t0, cwd)
+      return { ok: false, error: { kind: ERROR_KIND.ENV, message: 'gh not found: resolveGh 回 ok 却没给 ghPath（解析出的路径是执行点的唯一来源）', code: -1 } }
+    }
+
     if (!exec) {
       emitGhExec('env', -1, t0, cwd)
       return { ok: false, error: { kind: ERROR_KIND.ENV, message: 'ctx.exec unavailable', code: -1 } }
@@ -231,7 +248,8 @@ export function ghClient(ctx) {
       // 真要起进程了才报，取消排队的不进账，账与真实出站一一对应。
       reportOutbound(ctx, args)
       // #1007：起进程这一段同样与「到点」赛跑 —— 执行器要是不落地，房内的表到点就掀桌子。
-      const raced = await raceDeadline(exec('gh', args, { cwd, timeout, signal: laneSignal }))
+      // #15：命令名用上面解析出的 ghExe（不是裸名）—— 这一格就是「知道 gh 在哪却不去那儿跑」的修复点。
+      const raced = await raceDeadline(exec(ghExe, args, { cwd, timeout, signal: laneSignal }))
       if (raced && raced.__deadlineHit === true) return selfTimeoutOutcome()
       const result = raced
       // DSH ctx.exec 契约：{stdout, stderr, code}
