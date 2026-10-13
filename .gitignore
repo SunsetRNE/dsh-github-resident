@@ -40,3 +40,6 @@ github-resident.json
 
 # prototype 截图为中间态证据，不入库（维护者 2026-10-13 定）
 deck/research/prototype-5-narrow-scrollbar/**/*.png
+
+# 交接文档与草稿：不入库（维护者 2026-10-13 定）
+.scratch/
