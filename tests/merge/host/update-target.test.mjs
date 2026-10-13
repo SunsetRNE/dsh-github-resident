@@ -110,7 +110,8 @@ section('4b) 使用范围目录探测：链接式安装也要认得出（票 #10
   // 真安装形态：profile/node_modules/<包名> 是指向工作区的**符号链接**（本机就是这么装的）
   const mkLinkedProfile = async (home, name, ws) => {
     const prof = join(home, '.dsh', 'profiles', name)
-    await mkdir(join(prof, 'node_modules', '@local'), { recursive: true })
+    // scope 目录从 MERGED 现算：改名（@local → @sunsetrne）后写死旧 scope 会让 symlink 落进不存在的目录（ENOENT）
+    await mkdir(join(prof, 'node_modules', MERGED.split('/')[0]), { recursive: true })
     await symlink(ws, join(prof, 'node_modules', MERGED), 'dir')
     return prof
   }
