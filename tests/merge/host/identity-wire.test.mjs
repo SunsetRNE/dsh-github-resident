@@ -6,7 +6,7 @@
  * 否则「幂等」「可对账」「可撤」都只是文案：
  *   ① 默认动作（audit）与三个动作**没拿到同意时**，一个字节都不许写；
  *   ② 写了什么、写的时候是什么、什么时候写的，必须落在台账里 —— verify 才有得对；
- *   ③ unwire 要**逐项**回到接线前，而且**只撤现在仍是我们写的值**：被别人改过的不动（不拿旧值盖新值）。
+ *   ③ unwire 要**逐项**回到接线前，而且**只撤现在仍是我们写的值**（强度见 ⑨：先归一化再比对）：被别人改过的不动（不拿旧值盖新值）。
  *
  * 判据（对抗式，逐条可证伪）：
  *   ① audit：回执形状不变，跑完 .gitconfig / hosts.yml / state **逐字节未变**、HOME 不多文件；
@@ -18,12 +18,16 @@
  *   ⑥ unwire：无 consent 不写；有 consent 后逐项还原（原本为空的**删键**），被别人改过的那项**跳过**并说明；
  *   ⑦ PATH 落点：**只在 PATH 上没有能跑的 gh 时**才落软链；已有系统 gh 时什么都不做；
  *   ⑧ 不泄漏：token 原文不出现在任何回执、台账、助手文件、gitconfig 里；hosts.yml 全程逐字节未变。
+ *   ⑨ 撤销判定**先归一化再比对**（2026-10-14 的裁决口径；票《unwire 的「先归一化再比对」补实施（票 19 已裁未做）》）：
+ *     三种结果各有判据 —— 只差首尾空白/引号 → 撤（`revoked`）；归一化后确实不同 → 放手（`abandoned`）；
+ *     判不出来（同一项被写成多行 / 已经回到接线前的样子）→ 跳过，且**一个字节都不写、台账也不下结论**。
+ *     最狠的一条：同一项被写成多行、而**最后一行恰好等于我们写的值**时，老写法会 `--unset-all` 把别人的行一起抹掉。
  *
  * 隔离：全部在 `_env-harness` 的合成环境里跑（假 HOME + 夹具 bin），**不碰真 HOME、不起网络**。
  * 用法：node tests/merge/host/identity-wire.test.mjs
  */
 import { execFileSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, readlinkSync, statSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, readlinkSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { check, note, section, summary } from './_check.mjs'
 import { makeHome, withPlugin, listingOf, sha256File } from './_env-harness.mjs'
 
@@ -50,10 +54,17 @@ const gitGet = (home, key) => {
     return execFileSync('git', ['config', '--global', '--get', key], { env: { ...process.env, HOME: home }, encoding: 'utf8' }).trim()
   } catch { return null }
 }
+/** 一个键**读出来的所有行**（`--get-all`）：用来证明「多行项撤销时没把别人的行一起抹掉」。 */
+const gitGetAll = (home, key) => {
+  try {
+    return execFileSync('git', ['config', '--global', '--get-all', key], { env: { ...process.env, HOME: home }, encoding: 'utf8' }).trim()
+  } catch { return null }
+}
 
 /** 一个装好「真源身份」的夹具：state 里有 token + login。 */
 const fixture = (tag, opts = {}) => makeHome(tag, {
   withGh: opts.withGh !== false,
+  withGit: opts.withGit !== false,
   files: { '.dsh/github-resident.json': STATE_FIXTURE, ...(opts.files || {}) },
 })
 
@@ -250,6 +261,278 @@ try {
     check(shaOrAbsent(hF.home + '/.config/gh/hosts.yml') === '(absent)', 'hosts.yml 从头到尾没被建出来（只读边界）')
   })
 } finally { hF.cleanup() }
+
+// ===========================================================================
+section('七、撤销判定：先归一化再比对（票 36）—— 三种结果各一条判据')
+// ===========================================================================
+/** 台账里一项的两笔结论：有没有被撤、有没有被放手。 */
+const marksOf = (home, key) => {
+  const e = readJsonOr(home + '/' + LEDGER_REL, { items: [] }).items.find((i) => i.key === key) || {}
+  return { revoked: Boolean(e.revokedAt), abandoned: Boolean(e.abandonedAt) }
+}
+const verdictOf = (u, key) => (u.results.find((r) => r.key === key) || {})
+
+// ---- ① 只差首尾引号 / 空白 → 撤（老写法把这种当成「被别人改过」而记 abandoned）----
+const hG = fixture('wire-g')
+try {
+  await withPlugin(hG.home, { path: hG.path, dataDir: hG.home + '/.dsh/gh-cli' }, async ({ tool }) => {
+    await tool('gh_identity').execute({ action: 'wire', consent: true }, {})
+    gitSet(hG.home, 'user.name', '"octocat"') // 用户手改：值只多了一对引号（git 把引号当值的一部分存下来）
+    const u = await tool('gh_identity').execute({ action: 'unwire', consent: true }, {})
+    const r = verdictOf(u, 'user.name')
+    check(r.verdict === 'revoked' && r.ok === true && r.skipped === false,
+      '只差首尾引号 → 判成 revoked（不再是 abandoned；实得 ' + JSON.stringify(r.verdict) + '）')
+    check(r.now === '"octocat"' && String(r.why).includes('归一化'),
+      '回执如实说清「现在是什么值」与「为什么仍算本插件写的」')
+    check(gitGet(hG.home, 'user.name') === null, '撤回去了：原本为空的项被**删键**（不是留空串）')
+    const m = marksOf(hG.home, 'user.name')
+    check(m.revoked && !m.abandoned, '台账那项标 revoked、不再标 abandoned')
+  })
+} finally { hG.cleanup() }
+
+// ---- ② 空白与引号叠在一起（`"  octocat  "`）→ 仍是我们写的值：钉住「反复剥」那一轮 ----
+const hH = fixture('wire-h')
+try {
+  await withPlugin(hH.home, { path: hH.path, dataDir: hH.home + '/.dsh/gh-cli' }, async ({ tool }) => {
+    await tool('gh_identity').execute({ action: 'wire', consent: true }, {})
+    gitSet(hH.home, 'user.name', '"  octocat  "')
+    const u = await tool('gh_identity').execute({ action: 'unwire', consent: true }, {})
+    const r = verdictOf(u, 'user.name')
+    check(r.verdict === 'revoked' && gitGet(hH.home, 'user.name') === null,
+      '引号里还裹着首尾空白 → 归一化后仍相同，照样撤（实得 ' + JSON.stringify(r.verdict) + '）')
+  })
+} finally { hH.cleanup() }
+
+// ---- ③ 归一化后确实不同 → 放手（abandoned），且不拿旧值盖新值 ----
+const hI = fixture('wire-i')
+try {
+  await withPlugin(hI.home, { path: hI.path, dataDir: hI.home + '/.dsh/gh-cli' }, async ({ tool }) => {
+    await tool('gh_identity').execute({ action: 'wire', consent: true }, {})
+    gitSet(hI.home, 'user.name', 'someone-else')
+    const u = await tool('gh_identity').execute({ action: 'unwire', consent: true }, {})
+    const r = verdictOf(u, 'user.name')
+    check(r.verdict === 'abandoned' && r.skipped === true && String(r.why).includes('不是本插件写的'),
+      '真不同 → abandoned，并如实报「不是本插件写的」（实得 ' + JSON.stringify(r.verdict) + '）')
+    check(gitGet(hI.home, 'user.name') === 'someone-else', '别人写的值原样留着（没被接线前的旧值盖掉）')
+    const m = marksOf(hI.home, 'user.name')
+    check(m.abandoned && !m.revoked, '台账那项标 abandoned')
+  })
+} finally { hI.cleanup() }
+
+// ---- ④ 判不出来（多行）：同一项被写成多行，而**最后一行恰好等于我们写的值** ----
+// 这一条同时是最狠的回归判据：老写法在这里会 `--unset-all`，把 `somebody-else` 那行一起抹掉。
+const hJ = fixture('wire-j')
+try {
+  await withPlugin(hJ.home, { path: hJ.path, dataDir: hJ.home + '/.dsh/gh-cli' }, async ({ tool }) => {
+    await tool('gh_identity').execute({ action: 'wire', consent: true }, {})
+    gitSet(hJ.home, 'user.name', 'somebody-else')
+    execFileSync('git', ['config', '--global', '--add', 'user.name', 'octocat'], { env: { ...process.env, HOME: hJ.home } })
+    const u = await tool('gh_identity').execute({ action: 'unwire', consent: true }, {})
+    const r = verdictOf(u, 'user.name')
+    check(r.verdict === 'undecidable' && r.skipped === true && r.ok === false,
+      '多行项 → 判不出来：跳过（实得 ' + JSON.stringify(r.verdict) + '）')
+    check(gitGetAll(hJ.home, 'user.name') === 'somebody-else\noctocat',
+      '别人的那一行**还在**（没有拿单值读法去整键撤销）')
+    const m = marksOf(hJ.home, 'user.name')
+    check(!m.revoked && !m.abandoned, '台账里也不下结论（既不记 revoked，也不猜成 abandoned）')
+  })
+} finally { hJ.cleanup() }
+
+// ---- ⑤ 判不出来（又被改回原样）：接线前「不存在」→ 现在又「不存在」 ----
+const hK = fixture('wire-k')
+try {
+  await withPlugin(hK.home, { path: hK.path, dataDir: hK.home + '/.dsh/gh-cli' }, async ({ tool }) => {
+    await tool('gh_identity').execute({ action: 'wire', consent: true }, {})
+    execFileSync('git', ['config', '--global', '--unset-all', 'user.name'], { env: { ...process.env, HOME: hK.home } })
+    const u = await tool('gh_identity').execute({ action: 'unwire', consent: true }, {})
+    const r = verdictOf(u, 'user.name')
+    check(r.verdict === 'undecidable' && r.skipped === true && String(r.why).includes('接线前一样'),
+      '值已经回到接线前的样子 → 判不出来，如实报（实得 ' + JSON.stringify(r.verdict) + '）')
+    check(gitGet(hK.home, 'user.name') === null, '没被写（不硬撤，也不盖）')
+    const m = marksOf(hK.home, 'user.name')
+    check(!m.revoked && !m.abandoned, '台账里不下结论（「我们撤的」还是「别人改回来的」无从判断）')
+    const u2 = await tool('gh_identity').execute({ action: 'unwire', consent: true }, {})
+    check(verdictOf(u2, 'user.name').verdict === 'undecidable',
+      '第二次 unwire 仍如实报出来（宁可反复报，也不替用户记一笔不实的账）')
+  })
+} finally { hK.cleanup() }
+
+// ---- ⑥ 判不出来（PATH 落点被换成真实文件）：读不出归属，更不能去删它 ----
+const hO = fixture('wire-o', { withGh: false })
+mkdirSync(hO.home + '/.dsh/gh-cli/bin', { recursive: true })
+writeFileSync(hO.home + '/.dsh/gh-cli/bin/gh', '#!/bin/sh\necho "gh version 9.9.9 (CACHE-STUB)"\n', { mode: 0o755 })
+try {
+  await withPlugin(hO.home, { path: hO.path, dataDir: hO.home + '/.dsh/gh-cli' }, async ({ tool }) => {
+    await tool('gh_identity').execute({ action: 'wire', consent: true }, {})
+    // 用户把那个软链换成了自己的真实文件
+    rmSync(hO.bin + '/gh')
+    writeFileSync(hO.bin + '/gh', '#!/bin/sh\necho mine\n', { mode: 0o755 })
+    const u = await tool('gh_identity').execute({ action: 'unwire', consent: true }, {})
+    const r = (u.results.find((x) => x.point === 'path-landing') || {})
+    check(r.verdict === 'undecidable' && r.skipped === true,
+      'PATH 落点被换成真实文件 → 判不出来：跳过（实得 ' + JSON.stringify(r.verdict) + '）')
+    check(String(r.why).includes('不是软链'), '回执说清它看到的是什么（不是软链），不是笼统一句「判不出来」')
+    check(existsSync(hO.bin + '/gh') && readFileSync(hO.bin + '/gh', 'utf8').includes('echo mine'),
+      '用户那个真实文件**没被删**（不拿 readlink 的 null 去 rm）')
+  })
+} finally { hO.cleanup() }
+
+// ---- ⑩ 归一化命中、而 `before` **非空**：写回的是台账里 `before` 的**原文**（归一化只用于判断，绝不拿去写） ----
+const hS = fixture('wire-s', {
+  files: {
+    '.dsh/github-resident/wire/ledger.json': JSON.stringify({
+      schema: 'dsh-github-resident/wire-ledger', schemaVersion: 1, updatedAt: '2026-10-14T00:00:00.000Z',
+      items: [{
+        point: 'git-identity', key: 'user.name', scope: 'git global',
+        before: 'old-name', after: 'octocat', at: '2026-10-14T00:00:00.000Z',
+        writer: 'gh_identity.wire', revokedAt: null,
+      }],
+    }),
+  },
+})
+try {
+  await withPlugin(hS.home, { path: hS.path, dataDir: hS.home + '/.dsh/gh-cli' }, async ({ tool }) => {
+    gitSet(hS.home, 'user.name', '"octocat"') // 归一化后 == after（接线前是 old-name，非空）
+    const u = await tool('gh_identity').execute({ action: 'unwire', consent: true }, {})
+    const r = verdictOf(u, 'user.name')
+    check(r.verdict === 'revoked' && r.restored === 'old-name',
+      '归一化命中 → 撤（实得 ' + JSON.stringify(r.verdict) + '）')
+    check(gitGet(hS.home, 'user.name') === 'old-name',
+      '写回的是台账里 before 的**原文**（不是归一化后的值，也不是空）')
+  })
+} finally { hS.cleanup() }
+
+// ---- ⑧ 被改成**空值**：全仓的读法把空值折成「未设置」（与 `--get` + trim 一致）→ 判不出来，不写 ----
+const hQ = fixture('wire-q')
+try {
+  await withPlugin(hQ.home, { path: hQ.path, dataDir: hQ.home + '/.dsh/gh-cli' }, async ({ tool }) => {
+    await tool('gh_identity').execute({ action: 'wire', consent: true }, {})
+    gitSet(hQ.home, 'user.name', '') // 键还在，值被清空
+    const u = await tool('gh_identity').execute({ action: 'unwire', consent: true }, {})
+    const r = verdictOf(u, 'user.name')
+    check(r.verdict === 'undecidable' && r.skipped === true,
+      '空值 = 读法里的「未设置」（与接线前一样）→ 判不出来、跳过（实得 ' + JSON.stringify(r.verdict) + '）')
+    check(gitGet(hQ.home, 'user.name') === '', '那个空值原样留着（没被写、也没被删键）')
+    const m = marksOf(hQ.home, 'user.name')
+    check(!m.revoked && !m.abandoned, '台账里不下结论')
+  })
+} finally { hQ.cleanup() }
+
+// ---- ⑨ 读不出来（git 跑不动）→ 未知不当成没有：跳过，别把「读不到」记成「被别人改过」 ----
+// 这一项刻意让 before **非空**：否则「已经和接线前一样」那条会先把结论吃掉，这条判据就测不到读失败那条路。
+const hR = fixture('wire-r', {
+  withGit: false,
+  files: {
+    '.dsh/github-resident/wire/ledger.json': JSON.stringify({
+      schema: 'dsh-github-resident/wire-ledger', schemaVersion: 1, updatedAt: '2026-10-14T00:00:00.000Z',
+      items: [{
+        point: 'git-identity', key: 'user.name', scope: 'git global',
+        before: 'old-name', after: 'octocat', at: '2026-10-14T00:00:00.000Z',
+        writer: 'gh_identity.wire', revokedAt: null,
+      }],
+    }),
+  },
+})
+try {
+  writeFileSync(hR.bin + '/git', '#!/bin/sh\nexit 2\n', { mode: 0o755 }) // git 在，但每次调用都失败
+  await withPlugin(hR.home, { path: hR.path, dataDir: hR.home + '/.dsh/gh-cli' }, async ({ tool }) => {
+    const shaLedger = shaOrAbsent(hR.home + '/' + LEDGER_REL)
+    const u = await tool('gh_identity').execute({ action: 'unwire', consent: true }, {})
+    const r = verdictOf(u, 'user.name')
+    check(r.verdict === 'undecidable' && r.skipped === true,
+      'git 读失败（未知）→ 跳过，不判「被别人改过」（实得 ' + JSON.stringify(r.verdict) + '）')
+    check(String(r.why).includes('读不出来'), '回执说清是「读不出来」，不是猜成被别人改过')
+    check(shaOrAbsent(hR.home + '/' + LEDGER_REL) === shaLedger,
+      '台账不下结论（读不到就永久记一笔 abandoned 才是真坑）')
+  })
+} finally { hR.cleanup() }
+
+// ---- ⑦ 归一化对**两侧**都生效（台账那侧也归一化）：台账里记的值带首尾空白，宿主上是它的去空白形式 ----
+const hL = fixture('wire-l', {
+  files: {
+    '.dsh/github-resident/wire/ledger.json': JSON.stringify({
+      schema: 'dsh-github-resident/wire-ledger', schemaVersion: 1, updatedAt: '2026-10-14T00:00:00.000Z',
+      items: [{
+        point: 'git-identity', key: 'user.name', scope: 'git global',
+        before: null, after: '  octocat  ', at: '2026-10-14T00:00:00.000Z',
+        writer: 'gh_identity.wire', revokedAt: null,
+      }],
+    }),
+  },
+})
+try {
+  await withPlugin(hL.home, { path: hL.path, dataDir: hL.home + '/.dsh/gh-cli' }, async ({ tool }) => {
+    // 宿主的改动必须在 withPlugin **之内**做：隔离运行器把 GIT_CONFIG_GLOBAL 指向它自己的临时文件，
+    // 而合成环境会把它清掉（`--global` 于是落在夹具 HOME 上）—— 在外面写会写进另一个文件，
+    // 判据看着绿、其实测的不是这条路径（本仓踩过这类「夹具把环境悄悄换掉」的坑）。
+    gitSet(hL.home, 'user.name', 'octocat') // 宿主上的值 = 台账那个值去掉首尾空白
+    const u = await tool('gh_identity').execute({ action: 'unwire', consent: true }, {})
+    const r = verdictOf(u, 'user.name')
+    check(r.verdict === 'revoked' && gitGet(hL.home, 'user.name') === null,
+      '台账那侧的首尾空白也算「同一个值」→ 撤（实得 ' + JSON.stringify(r.verdict) + '）')
+  })
+} finally { hL.cleanup() }
+
+section('八、撤销的边界：判不出来时连授权都不动（没改动就不写盘）')
+const hM = fixture('wire-m', {
+  files: {
+    '.dsh/github-resident/wire/ledger.json': JSON.stringify({
+      schema: 'dsh-github-resident/wire-ledger', schemaVersion: 1, updatedAt: '2026-10-14T00:00:00.000Z',
+      items: [{
+        point: 'git-identity', key: 'user.name', scope: 'git global',
+        before: null, after: 'octocat', at: '2026-10-14T00:00:00.000Z',
+        writer: 'gh_identity.wire', revokedAt: null,
+      }],
+    }),
+    '.dsh/github-resident/wire/consent.json': JSON.stringify({ schema: 'dsh-github-resident/wire-consent', granted: true, at: '2026-10-14T00:00:00.000Z', fingerprint: 'deadbeef', items: ['user.name'], tool: 'gh_identity' }),
+  },
+})
+try {
+  const shaConsent = shaOrAbsent(hM.home + '/.dsh/github-resident/wire/consent.json')
+  await withPlugin(hM.home, { path: hM.path, dataDir: hM.home + '/.dsh/gh-cli' }, async ({ tool }) => {
+    // 这一项「已经回到接线前的样子」（本来就没设置过）→ 判不出来 → 不写、也不该动已记录的授权。
+    const u = await tool('gh_identity').execute({ action: 'unwire', consent: true }, {})
+    check(verdictOf(u, 'user.name').verdict === 'undecidable' && u.wrote === false, '没有可撤的项 → wrote=false')
+    check(shaOrAbsent(hM.home + '/.dsh/github-resident/wire/consent.json') === shaConsent,
+      '判不出来时不动已记录的授权（计划没变，授权就还有效）')
+  })
+} finally { hM.cleanup() }
+
+// 同一件事的第二面：**多行项**单独存在时，判不出来 = 连 gitconfig / 台账 / 授权三个文件都不动。
+// 单一项的夹具是刻意的 —— 有别的项在场时「文件变了」可能只是别的项被撤，证不出「什么都没写」。
+const hN = fixture('wire-n', {
+  files: {
+    '.dsh/github-resident/wire/ledger.json': JSON.stringify({
+      schema: 'dsh-github-resident/wire-ledger', schemaVersion: 1, updatedAt: '2026-10-14T00:00:00.000Z',
+      items: [{
+        point: 'git-identity', key: 'user.name', scope: 'git global',
+        before: null, after: 'octocat', at: '2026-10-14T00:00:00.000Z',
+        writer: 'gh_identity.wire', revokedAt: null,
+      }],
+    }),
+    '.dsh/github-resident/wire/consent.json': JSON.stringify({ schema: 'dsh-github-resident/wire-consent', granted: true, at: '2026-10-14T00:00:00.000Z', fingerprint: 'deadbeef', items: ['user.name'], tool: 'gh_identity' }),
+  },
+})
+try {
+  await withPlugin(hN.home, { path: hN.path, dataDir: hN.home + '/.dsh/gh-cli' }, async ({ tool }) => {
+    // 同样的道理：宿主的改动（以及「改动前」的快照）都放在合成环境**之内**，
+    // 否则隔离运行器下写的是另一个全局配置文件，这条判据就测不到它要测的多行路径了。
+    gitSet(hN.home, 'user.name', 'somebody-else')
+    execFileSync('git', ['config', '--global', '--add', 'user.name', 'octocat'], { env: { ...process.env, HOME: hN.home } })
+    const before = {
+      cfg: shaOrAbsent(hN.home + '/.gitconfig'),
+      ledger: shaOrAbsent(hN.home + '/' + LEDGER_REL),
+      consent: shaOrAbsent(hN.home + '/.dsh/github-resident/wire/consent.json'),
+    }
+    const u = await tool('gh_identity').execute({ action: 'unwire', consent: true }, {})
+    check(verdictOf(u, 'user.name').verdict === 'undecidable' && u.wrote === false,
+      '多行项单独存在：判不出来 → 跳过、wrote=false')
+    check(shaOrAbsent(hN.home + '/.gitconfig') === before.cfg && gitGetAll(hN.home, 'user.name') === 'somebody-else\noctocat',
+      '一个字节都没写：gitconfig 逐字节未变、两行都还在')
+    check(shaOrAbsent(hN.home + '/' + LEDGER_REL) === before.ledger, '台账逐字节未变（没下任何结论）')
+    check(shaOrAbsent(hN.home + '/.dsh/github-resident/wire/consent.json') === before.consent, '已记录的授权也原样（计划没变）')
+  })
+} finally { hN.cleanup() }
 
 note('全流程都在合成环境的假 HOME 里跑：真宿主的 git 全局配置、gh hosts.yml、~/.dsh 一个字节都没碰。')
 note('闸门与真源的分工：本文件管行为（写没写 / 撤销对不对），tool-surface-contract 管形状（协议与回执同源）。')

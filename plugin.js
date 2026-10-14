@@ -3079,6 +3079,27 @@ sys.stdout.flush()
   const gitGlobalUnset = (key) => git(process.cwd(), ['config', '--global', '--unset-all', key]);
 
   /**
+   * 一个键在 git 全局配置里**读出来的所有行**（`--get-all`）：键不存在回 `[]`。
+   *
+   * 为什么撤销前必须问这一句（票 36《unwire 的「先归一化再比对」补实施（票 19 已裁未做）》，实测）：
+   * `--get` 是**单值**读法 —— 同一个键被写成多行时它只回**最后一行**，而撤销是**整键**动作
+   * （`--unset-all` / `--replace-all`）。于是「最后一行恰好等于我们写的值」时，撤下去会把别人的行一起抹掉
+   * （复现：`--add somebody-else` + `--add <我们写的值>` → unwire 之后 `somebody-else` 那行没了）。
+   *
+   * 不用 `--null` 去分辨「同一项有多条」与「值本身跨行」：那两种在**判定上完全等价**（都是读不准），
+   * 而多依赖一个老 git 未必支持的开关，换来的是「开关不被支持 → 读成空 → 判定静默退化」的风险。
+   */
+  const gitGlobalGetAll = async (key) => {
+    const r = await git(process.cwd(), ['config', '--global', '--get-all', key]);
+    if (r.code === 0) return r.stdout.replace(/\n$/, '').split('\n');
+    // 退出码 1 = git 说的「这个键没有」；别的非 0 = **读失败**（未知）。未知**不折成「没有」**：
+    // 折成没有的话，撤销在 before 非空时会判成「被别人改过」，还永久记一笔放手 —— 与票 29 那条
+    // 「探测超时 = 未知，不据此写宿主」同一个口径。读失败的项交给调用方跳过（`null`）。
+    if (r.code === 1) return [];
+    return null;
+  };
+
+  /**
    * 四个投影点的接线项：每条 = 一处宿主配置的 `before → after`。
    * 写不了的点照样出现，但标 `writable:false` + `why` —— 让回执说清「不是忘了，是写不了」。
    */
@@ -3209,6 +3230,92 @@ sys.stdout.flush()
     };
   }
 
+  /**
+   * 撤销比对用的**归一化**：去掉**首尾**空白与引号 —— 只用于**判断**，绝不拿去写（票 36）。
+   *
+   * 为什么反复剥（空白 → 引号 → 空白）：两者互相遮挡，`  "!helper"  ` 要能归到 `!helper`；
+   * 只剥一轮会在这种形状上留下引号。`null`（键不存在）与空串在这一层**不是**同一件事 ——
+   * 归一化不改变「有没有这个键」这一维，否则「原本为空 → 删键」那条判断会被抹平。
+   * （读那一侧另有一层全仓一致的约定：`--get` / `--get-all` + trim 会把**空值**折成「未设置」；
+   *   那条路径的行为由 §七⑧ 的判据钉着，不是这里悄悄决定的。）
+   */
+  function normalizeForCompare(v) {
+    if (v === null || v === undefined) return null;
+    let s = String(v);
+    for (let i = 0; i < 8; i += 1) {
+      const next = s.trim().replace(/^["']+/, '').replace(/["']+$/, '').trim();
+      if (next === s) break;
+      s = next;
+    }
+    return s;
+  }
+
+  /**
+   * 读一项的**现况**，并回答「这一次读能不能用来做归属判定」—— 票 36 的「判不出来」第一类。
+   *
+   * 读不准有两种：**同一项被写成多行**（git 键有多行，或值本身跨行 —— 单值读法只看到其中一份，
+   * 而撤是整键动作，会误伤别人那几行），以及 PATH 落点上「那个位置存在却不是软链」（读不出归属，
+   * 更不能拿 readlink 的 null 去 `rm`）。两种都交给调用方**跳过**，不据此写任何东西。
+   */
+  async function readUnwireCurrent(entry) {
+    if (entry.point !== 'path-landing') {
+      const all = await gitGlobalGetAll(entry.key);
+      if (all === null) {
+        return { current: null, readable: false, why: 'git 读不出来（退出码既不是 0 也不是「键不存在」的 1）—— 未知不当成没有，这次不判' };
+      }
+      if (all.length > 1) {
+        return {
+          current: all.join('\n'), readable: false,
+          why: '这个键在 git 里读出来是 ' + all.length + ' 行（同一项被写成多行，或值本身跨行）—— 单值读法只看到最后一行，撤它会把别的行一起抹掉',
+        };
+      }
+      return { current: all.length === 1 ? (all[0].trim() || null) : null, readable: true, why: null };
+    }
+    // 用 lstat（不是 stat）：悬空软链也要算「存在」—— 它是我们落的，readlink 照样读得出目标。
+    const st = await fs.lstat(entry.key).catch(() => null);
+    if (!st) return { current: null, readable: true, why: null };
+    if (!st.isSymbolicLink()) {
+      return { current: null, readable: false, why: '那个位置现在不是软链（不是本插件落的）—— 读不出归属，也不去删它' };
+    }
+    const target = await fs.readlink(entry.key).catch(() => null);
+    if (target === null) return { current: null, readable: false, why: '那个软链的目标读不出来' };
+    return { current: target, readable: true, why: null };
+  }
+
+  /**
+   * 撤销一项的判定 —— 票 36 的**三种结果**（顺序即优先级，「判不出来」优先，因为它只会**减少**写入）：
+   *
+   * - `undecidable` **判不出来** → 跳过：读不准（同一项被写成多行），或值已经回到接线前的样子
+   *   （撤与不撤结果相同，而「是我们撤的」还是「别人改回来的」无从判断）→ **不写、也不在台账里下结论**；
+   * - `revoked` 归一化后仍是我们写的那个值 → 撤（`before` 为 null 就**删键**）；
+   * - `abandoned` 归一化后确实不是我们写的值 → 跳过并在台账记「放手」。
+   *
+   * 「先归一化再比对」是 2026-10-14 对票面第 3 条验收的裁决口径：值与台账只差一个首尾引号/空白时
+   * **不该**被当成「被别人改过」—— 那会把还能撤的项误判成放手（行为更保守，但不是裁决要的那个）。
+   */
+  async function judgeUnwireEntry(entry) {
+    const read = await readUnwireCurrent(entry);
+    const shown = (v) => (v === null ? '(未设置)' : JSON.stringify(v));
+    if (!read.readable) return { verdict: 'undecidable', current: read.current, why: read.why };
+    if (normalizeForCompare(read.current) === normalizeForCompare(entry.before)) {
+      return {
+        verdict: 'undecidable', current: read.current,
+        why: '现在的值已经和接线前一样（' + shown(entry.before) + '）—— 撤与不撤结果相同，是「我们撤的」还是「别人改回来的」无从判断',
+      };
+    }
+    if (normalizeForCompare(read.current) === normalizeForCompare(entry.after)) {
+      // 归一化只影响这一次判断：真撤的时候写的仍是台账里记的 before 原文。
+      if (read.current !== entry.after) {
+        return { verdict: 'revoked', current: read.current, why: '现在的值与台账只差首尾空白/引号（' + shown(read.current) + ' ≈ ' + shown(entry.after) + '），归一化后相同 → 仍算本插件写的' };
+      }
+      return { verdict: 'revoked', current: read.current, why: null };
+    }
+    return {
+      verdict: 'abandoned', current: read.current,
+      why: '现在的值不是本插件写的（被别人改过）—— 不动它，只记「放手」',
+    };
+  }
+
   async function identityWireAction(action, args) {
     const ledger = await readWireLedger();
 
@@ -3329,7 +3436,7 @@ sys.stdout.flush()
       };
     }
 
-    // ---- unwire：按台账逐项还原（只撤「现在仍等于我们写的值」的项）----
+    // ---- unwire：按台账逐项还原（只撤「归一化后仍等于我们写的值」的项；三种结果见 judgeUnwireEntry）----
     const active = ledger.items.filter((i) => !i.revokedAt && !i.abandonedAt);
     if (active.length > 0 && !grantedByCall) {
       return {
@@ -3339,7 +3446,8 @@ sys.stdout.flush()
         ask: {
           question: '是否同意撤销身份接线、把宿主还原成接线前的样子？共 ' + active.length + ' 项：'
             + active.map((i) => '「' + i.key + '」' + (i.after === null ? '(未设置)' : i.after) + ' → ' + (i.before === null ? '(删除该项)' : i.before)).join('；')
-            + '。只还原本插件写过的、且现在仍是我们写的值；被别人改过的不动。',
+            + '。只还原本插件写过的、且现在去掉首尾空白/引号后仍是那个值的项；被别人改过的不动；'
+            + '判不出来的（同一项被写成多行、或已经回到接线前的样子）一律跳过并如实报，不猜、不硬撤。',
           options: ['同意撤销', '先看台账（' + WIRE_LEDGER_FILE + '）', '不同意'],
           onAgree: 'gh_identity {action:"unwire", consent:true}',
           onDecline: '什么都不改；之后每次调用都会再问一次',
@@ -3348,17 +3456,29 @@ sys.stdout.flush()
     }
     const restored = [];
     const nowIso = new Date().toISOString();
+    let ledgerChanged = false;
+    /** 三项回执共用的四个字段（哪一项 / 现在是什么值 / 我们写的是什么）—— 一处拼，别在三处手抄。 */
+    const receiptBase = (entry, j) => ({ point: entry.point, key: entry.key, now: j.current, written: entry.after });
     for (const entry of active) {
-      const current = entry.point === 'path-landing'
-        ? await fs.readlink(entry.key).catch(() => null)
-        : await gitGlobalGet(entry.key);
-      if (current !== entry.after) {
+      const j = await judgeUnwireEntry(entry);
+      if (j.verdict === 'undecidable') {
+        // 判不出来：一个字节都不写，台账里也不下结论（不猜是谁改的）—— 于是它仍是「未决」，
+        // 下次 unwire 还会如实报出来。宁可反复报，也不替用户记一笔不实的账。
+        restored.push({
+          ...receiptBase(entry, j),
+          verdict: 'undecidable', ok: false, skipped: true,
+          why: (j.why || '判不出来') + '；本插件不替你决定，也不硬撤（下次 unwire 仍会如实报出来）',
+        });
+        continue;
+      }
+      if (j.verdict === 'abandoned') {
         // 值已经被别人改过：我们撤不回「我们的值」（它不在了），也**不该**拿接线前的旧值去盖别人的新值。
         // 所以就地「放手」并记进台账 —— 这样它不会再被反复问起，历史也留着。
         entry.abandonedAt = nowIso;
         entry.abandonedBy = 'gh_identity.unwire';
         entry.abandonedWhy = '值被别人改过，不再由本插件管理';
-        restored.push({ point: entry.point, key: entry.key, now: current, written: entry.after, ok: false, skipped: true, why: '现在的值不是本插件写的（被别人改过）—— 不动它，只记「放手」' });
+        ledgerChanged = true;
+        restored.push({ ...receiptBase(entry, j), verdict: 'abandoned', ok: false, skipped: true, why: j.why });
         continue;
       }
       let ok = false;
@@ -3382,11 +3502,20 @@ sys.stdout.flush()
       if (ok) {
         entry.revokedAt = nowIso;
         entry.revokedBy = 'gh_identity.unwire';
+        ledgerChanged = true;
       }
-      restored.push({ point: entry.point, key: entry.key, now: current, written: entry.after, restored: entry.before, ok, skipped: false, error });
+      restored.push({
+        ...receiptBase(entry, j),
+        restored: entry.before, verdict: 'revoked', ok, skipped: false, error, why: j.why,
+      });
     }
     const wrote = restored.some((r) => r.ok);
-    if (active.length > 0) {
+    // 只有**台账真的变了**才落盘（revoked / abandoned 两种；判不出来那种什么都没变）——
+    // 与 wire 那一支「真的写了才落盘」同一个**习惯**（`if (wrote)`）：没改动就不写盘，
+    // 也不动已记录的授权（计划没变，授权就还有效）。
+    // 两处的 `wrote` 都指**宿主被写**：只记「放手」（abandoned）时台账会落盘，而 `wrote` 仍是 false ——
+    // 那只是记账，不是把配置还回去了。
+    if (ledgerChanged) {
       await writeJsonAtomic(WIRE_LEDGER_FILE, { schema: WIRE_LEDGER_SCHEMA, schemaVersion: 1, updatedAt: nowIso, items: ledger.items });
       await fs.rm(WIRE_CONSENT_FILE, { force: true });
     }
@@ -3458,7 +3587,7 @@ sys.stdout.flush()
   // 与从前逐字节一致；这些动作的机制见上面那一大段（email 只写插件自己的 state，不碰宿主，故不需要同意）。
   ctx.tools.register(textTool({
     toolName: 'gh_identity',
-    description: 'Identity audit and wiring in one tool. Default (no action) is a READ-ONLY audit: who the identity is, whether each of the four consumption points is wired, what is missing, and the exact command that fixes it. Points: git (credential-helper in BOTH scopes + global git identity) / gh CLI credentials / subprocess environment / PATH landing. action:"wire" projects the truth source onto the host (github.com credential helper pointing at this plugin\'s own helper, global user.name/user.email, bundled gh on PATH only when none is runnable) and writes nothing without consent:true; action:"verify" reconciles the host against the ledger (current value / what we wrote / when / whether it is not ours); action:"unwire" restores the pre-wire values item by item; action:"email" writes ONLY the git commit email into the plugin state (a non-credential value; no consent needed because it touches nothing on the host — the email reaches the host only through "wire", which keeps its consent gate). It never writes gh\'s hosts.yml, never stores a second token, and makes no network calls.',
+    description: 'Identity audit and wiring in one tool. Default (no action) is a READ-ONLY audit: who the identity is, whether each of the four consumption points is wired, what is missing, and the exact command that fixes it. Points: git (credential-helper in BOTH scopes + global git identity) / gh CLI credentials / subprocess environment / PATH landing. action:"wire" projects the truth source onto the host (github.com credential helper pointing at this plugin\'s own helper, global user.name/user.email, bundled gh on PATH only when none is runnable) and writes nothing without consent:true; action:"verify" reconciles the host against the ledger (current value / what we wrote / when / whether it is not ours); action:"unwire" restores the pre-wire values item by item, judging each item AFTER normalizing (surrounding whitespace/quotes trimmed — a value that only differs by quoting is still reclaimed) and reporting one of three verdicts per item (revoked / abandoned / undecidable): items somebody else changed are let go, and items it cannot judge (written on several lines, or already back to the pre-wire value) are skipped and reported rather than force-restored; action:"email" writes ONLY the git commit email into the plugin state (a non-credential value; no consent needed because it touches nothing on the host — the email reaches the host only through "wire", which keeps its consent gate). It never writes gh\'s hosts.yml, never stores a second token, and makes no network calls.',
     parameters: {
       action: { type: 'string', enum: GH_IDENTITY_ACTIONS, description: 'audit (default, read-only) | wire (needs consent) | verify (read-only reconcile) | unwire (needs consent, restores pre-wire values) | email (writes ONLY the commit email into the plugin state; no consent needed, it touches nothing on the host).' },
       consent: { type: 'boolean', description: 'Set true only after the user explicitly agreed to the plan returned by the previous call. Without it, wire/unwire write nothing and return {consentRequired:true, ask:{...}}.' },
