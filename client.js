@@ -16,6 +16,11 @@ window.__ModuleLoader__.load({
     // window.__DSH_GITHUB_RESIDENT_API__（插件半边是同名端口，只有浏览器能看到注入值）。
     const API = (typeof window !== 'undefined' && window.__DSH_GITHUB_RESIDENT_API__)
       || 'http://127.0.0.1:31790';
+    // 票 51 第 2 步：面板改走**宿主 RPC**（dsws 通道的 ghr.* 端点）—— call() 是唯一出口；
+    // 宿主半边没加载时如实拒绝（不再是「接口不可达」那句含混话）。
+    const call = (method, args) => (typeof host !== 'undefined' && host && typeof host.call === 'function')
+      ? host.call(method, args || {})
+      : Promise.reject(new Error('host.call 不可用（宿主半边未加载）'));
     const DEVICE_URL = 'https://github.com/login/device';
     const STEPS = [
       ['1', '生成码', '点下面的「生成一次性码」——插件在后台起 gh 的设备码流程并拉起浏览器'],
@@ -135,9 +140,9 @@ window.__ModuleLoader__.load({
       // 账号那一份和「GitHub」页读的是同一个 /state 快照 —— 两页共用一份事实，谁都不另存一份登录态。
       // 404 说明宿主还停在旧版本那一刻。
       const load = React.useCallback(() => Promise.all([
-        fetch(API + '/registry').then((r) => (r.status === 404 ? { unsupported: true } : r.json())),
-        fetch(API + '/registry/list').then((r) => (r.status === 404 ? { unsupported: true } : r.json())),
-        fetch(API + '/state?cached=1').then((r) => (r.ok ? r.json() : null)).catch(() => null),
+        call('ghr.registry').catch(() => ({ unsupported: true })),
+        call('ghr.registry.list').catch(() => ({ unsupported: true })),
+        call('ghr.state', { query: 'cached=1' }).catch(() => null),
       ]).then((pair) => {
         setAcct(pair[2] || null);
         if (pair[0].unsupported) { setReg({ phase: 'unsupported' }); setLib({ unsupported: true }); return; }
@@ -331,7 +336,7 @@ window.__ModuleLoader__.load({
       // 默认只读缓存（?cached=1）：不进任何子进程、不触发账号检查。
       const load = React.useCallback((opts) => {
         const q = opts && opts.refresh ? '?refresh=1' : '?cached=1';
-        return fetch(API + '/state' + q)
+        return call('ghr.state', { query: String(q).replace(/^\?/, '') })
           .then((r) => (r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status))))
           .then((j) => { setSvc({ phase: 'ok', data: j }); if (j.lastFlow) setFlow(j.lastFlow); })
           .catch((e) => setSvc({ phase: 'down', message: String((e && e.message) || e) }));
@@ -361,8 +366,7 @@ window.__ModuleLoader__.load({
       const startAuth = () => {
         setBusy(true);
         // 票 47：客户端也要有上界 —— 宿主那条路任何一步卡住，busy 都必须能自己松开（否则按钮永远点不动）。
-        fetch(API + '/auth/start', { method: 'POST', signal: AbortSignal.timeout(45000) })
-          .then((r) => r.json())
+        call('ghr.authStart', {})
           .then((j) => { setFlow(j); setBusy(false); load({ refresh: true }); })
           .catch((e) => { setFlow({ ok: false, error: String((e && e.message) || e) }); setBusy(false); });
       };
@@ -374,8 +378,7 @@ window.__ModuleLoader__.load({
         if (!value || emailBusy) return;
         setEmailBusy(true);
         setEmailMsg(null);
-        fetch(API + '/identity/email?email=' + encodeURIComponent(value), { method: 'POST' })
-          .then((r) => r.json())
+        call('ghr.identity.email', { query: 'email=' + encodeURIComponent(value) })
           .then((j) => {
             setEmailBusy(false);
             if (j && j.ok) { setEmailDraft(''); load({ refresh: true }); }
@@ -431,7 +434,7 @@ window.__ModuleLoader__.load({
                 copied === 'code' ? '已复制' : '复制码'))
             : h('div', { className: 'ghr-when', style: { marginTop: 12 } },
               svc.phase === 'down'
-                ? '插件接口不可达：确认插件已启用，然后刷新页面。'
+                ? '宿主连接不可用（host.call 不可达）：确认插件已启用，然后刷新页面。'
                 : (flow && flow.error ? '上次没成：' + flow.error : '点下面的按钮生成一次性码。')),
 
           h('div', { className: 'ghr-actions' },

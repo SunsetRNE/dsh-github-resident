@@ -4484,9 +4484,12 @@ sys.stdout.flush()
     };
   }
 
+  /** 票 51 第 2 步：回环 listener 的具名持有 —— 端口外壳与宿主 RPC 端点共用**同一份**处理体。 */
+  let handleResidentRequest = null;
+
   async function startLoopbackServer(port) {
     const http = await import('node:http');
-    const server = http.createServer(async (req, res) => {
+    handleResidentRequest = async (req, res) => {
       try {
         const url = new URL(req.url || '/', API_ORIGIN);
         const send = (code, body) => sendJson(res, code, body, req);
@@ -4635,7 +4638,8 @@ sys.stdout.flush()
         message: String((e && e.message) || e).slice(0, 200),
         note: '端口被占时首个实例继续服务；本实例的 HTTP 路由不可达',
       };
-    });
+    };
+    const server = http.createServer(handleResidentRequest);
     server.listen(port, '127.0.0.1');
     return server;
   }
@@ -4715,6 +4719,43 @@ sys.stdout.flush()
     scheduleAutoUpdate();
   }
 
+  /** 票 51 第 2 步：端点名 ghr.<名字>，参数 { method?, query? }。与端口外壳共享同一份分发（一份真源）。 */
+  const RESIDENT_ENDPOINTS = [
+    ['state', 'GET', '/state'], ['version', 'GET', '/gh/version'], ['update', 'POST', '/gh/update'],
+    ['protocol', 'GET', '/protocol'], ['registry', 'GET', '/registry'], ['registry.list', 'GET', '/registry/list'],
+    ['registry.plan', 'POST', '/registry/plan'], ['registry.verify', 'POST', '/registry/verify'],
+    ['registry.revoke', 'POST', '/registry/revoke'], ['registry.purge', 'POST', '/registry/purge'],
+    ['registry.build', 'POST', '/registry/build'], ['logout', 'POST', '/logout'],
+    ['authStart', 'POST', '/auth/start'], ['identity.email', 'POST', '/identity/email'],
+  ];
+
+  /** 最小 res 桩：sendJson 只用到 writeHead/setHeader/end，回执从 end 里解析。合成的 req 带**真实页面来源头**
+   *  （面板就是从那里来的）—— 与端口外壳走同一道来源闸门，不做特权旁路。 */
+  async function dispatchResident({ method = 'GET', url = '/' } = {}) {
+    if (typeof handleResidentRequest !== 'function') return { ok: false, error: '宿主分发未就绪' };
+    let out = null;
+    const res = {
+      writeHead() { return this },
+      setHeader() { return this },
+      end(body) { try { out = JSON.parse(String(body)) } catch { out = { ok: false, raw: String(body) } } },
+    };
+    await handleResidentRequest({ method, url, headers: { origin: 'http://127.0.0.1:3080' } }, res);
+    return out === null ? { ok: false, error: '宿主内部没有回话（路由未命中）' } : out;
+  }
+
+  /** 把 13 条路由挂到宿主 RPC 上（服务位 dswEndpoints 由另一半边 provide —— 票 51 裁决 B）。 */
+  function registerResidentEndpoints() {
+    const h = typeof ctx.get === 'function' ? ctx.get('dswEndpoints') : null;
+    if (!h || typeof h.handle !== 'function') return { ok: false, note: 'dswEndpoints 服务位不可用（宿主另一半边未加载）' };
+    for (const [name, method, path] of RESIDENT_ENDPOINTS) {
+      h.handle('ghr.' + name, async (args) => {
+        const a = args || {};
+        return await dispatchResident({ method: a.method || method, url: path + (a.query ? '?' + a.query : '') });
+      });
+    }
+    return { ok: true, count: RESIDENT_ENDPOINTS.length };
+  }
+
   if (typeof ctx.effect === 'function') {
     ctx.effect(() => {
       let handle = null;
@@ -4722,6 +4763,7 @@ sys.stdout.flush()
       // dispose 可能早于 listen 回调：那时也要关掉，否则端口留在旧实例手里（审计 L5）。
       // 同票 47 的教训：起服务这条路（`await import('node:http')` 等）也会抛 —— 链尾必须有拒绝处理，
       // 否则「路由起不来」会升级成「宿主进程结束」。端口被占那条路另由 server.on('error') 如实记账。
+      registerResidentEndpoints();   // 票 51：面板走宿主 RPC（端口外壳另行起停，见下）
       startLoopbackServer(API_PORT).then(
         (s) => { if (disposed) s.close(); else handle = s; },
         (err) => {
