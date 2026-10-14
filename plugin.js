@@ -141,6 +141,20 @@ async function readCredHelper() {
   return (await readCredHelpers()).effective;
 }
 
+/**
+ * 设备桥（3090）的**回执是不是一次拒绝** —— 导出成纯函数，门禁拿真回执样本钉它。
+ *
+ * 为什么必须有这一问（2026-10-14 本机实测，不是推断）：桥**拒绝时也回 HTTP 200**，
+ * 结论写在 body 里：无凭据调 `/app/open` → `{"result":"[UNAUTHORIZED]"}`。
+ * 只看 `res.ok` 会把「桥什么都没做」记成「浏览器已拉起」—— 面板因此说过一句不实的话
+ * （「生成于 … · 浏览器已拉起」），也让「这一步到底做没做成」无从判断。
+ * 回 `null` ＝ 不是拒绝（真成功，或桥给了别的正常回执）。
+ */
+export function bridgeRefusalOf(body) {
+  const m = String(body == null ? '' : body).match(/\[(UNAUTHORIZED|POLICY_BLOCKED|NO_PERMISSION|DISABLED)\]/);
+  return m ? m[1] : null;
+}
+
 async function readState() {
   try {
     return JSON.parse(await fs.readFile(STATE_FILE, 'utf8'));
@@ -2292,15 +2306,23 @@ export function apply(ctx) {
 
   /** 优先拉起手机上的默认浏览器 / GitHub 应用（DSHA 桥），退回桌面 xdg-open。 */
   async function openUrl(url) {
+    // 桥**拒绝时也是 200**（结论在 body 里，见 bridgeRefusalOf）：这里必须读 body 才判得出「它到底做没做」。
+    let bridgeRefusal = null;
     try {
       const res = await fetch(`http://127.0.0.1:3090/app/open?url=${encodeURIComponent(url)}`, {
         signal: AbortSignal.timeout(2500),
       });
-      if (res.ok) return { via: 'device-bridge', status: res.status };
+      const body = await res.text().catch(() => '');
+      bridgeRefusal = !res.ok ? ('HTTP ' + res.status) : bridgeRefusalOf(body);
+      if (!bridgeRefusal) return { via: 'device-bridge', status: res.status };
     } catch { /* 桥不在（非手机宿主），继续往下试 */ }
     const xdg = await run('xdg-open', [url]);
     if (xdg.code === 0) return { via: 'xdg-open' };
-    return { via: 'none', note: '自行打开返回的 verification_uri' };
+    return {
+      via: 'none',
+      note: (bridgeRefusal ? '设备桥拒了这次调用（' + bridgeRefusal + '）' : '没有设备桥')
+        + ' —— 自行打开返回的 verification_uri',
+    };
   }
 
     // gh 的交互流程必须挂在真 TTY 上，`script` 转发非终端 stdin 不可靠；

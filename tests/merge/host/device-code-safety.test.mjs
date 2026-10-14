@@ -15,7 +15,9 @@
  *
  * 用法：node tests/merge/host/device-code-safety.test.mjs
  */
-import { check, note, readText, section, summary } from './_check.mjs'
+import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
+import { REPO_ROOT, check, note, readText, section, summary } from './_check.mjs'
 
 /** 按花括号配平切出一个具名函数体；切不到回空串（由「切片自证」那条判据报红）。 */
 function sliceFn(src, name) {
@@ -59,7 +61,22 @@ check(seg.includes('.catch(') || /\(\s*err\s*\)\s*=>/.test(seg),
   '起服务那条链带拒绝去处（.catch 或双参 then）：import / 监听之前抛出的异常不该升级成宿主结束')
 
 // ===========================================================================
-section('三、判据自证：同一支判据对「坏样本」报红、对「好样本」报绿')
+section('三、设备桥的回执诚实性：拒绝也是 200，结论在 body 里（2026-10-14 实测）')
+// ===========================================================================
+const { bridgeRefusalOf } = await import(pathToFileURL(join(REPO_ROOT, 'plugin.js')).href)
+check(bridgeRefusalOf('{"result":"[UNAUTHORIZED]"}') === 'UNAUTHORIZED',
+  '真回执样本（本机无凭据调 /app/open 的原文）→ 判成拒绝，不再当成功')
+check(bridgeRefusalOf('{"result":"[POLICY_BLOCKED]"}') === 'POLICY_BLOCKED', '策略拦截也算拒绝')
+check(bridgeRefusalOf('{"result":"opened in the browser"}') === null, '正常回执不算拒绝')
+check(bridgeRefusalOf('') === null && bridgeRefusalOf(null) === null, '空 body / null 不误判成拒绝')
+const openUrlSrc = sliceFn(src, 'openUrl')
+check(openUrlSrc.length > 200 && openUrlSrc.includes('bridgeRefusalOf('),
+  '切片自证且 openUrl 用 bridgeRefusalOf 判「桥到底做没做」（' + openUrlSrc.length + ' 字符）')
+check(!/if \(res\.ok\) return \{ via: 'device-bridge'/.test(openUrlSrc),
+  '不再只看 res.ok 就宣称 device-bridge（旧的谎报写法已消失）')
+
+// ===========================================================================
+section('四、判据自证：同一支判据对「坏样本」报红、对「好样本」报绿')
 // ===========================================================================
 const BAD = 'function startDeviceFlowPty(){ return new Promise((r)=>{ resolveGh().then((g)=>{ r(g) }) }) }'
 const GOOD = 'function startDeviceFlowPty(){ return new Promise((r)=>{ resolveGh().then((g)=>{ r(g) }).catch((e)=>{ r(e) }) }) }'
