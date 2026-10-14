@@ -37,8 +37,13 @@ const seedState = (home, obj) => {
 const bootAndRead = async (home, tag) => {
   let out = null
   await withPlugin(home, { dataDir: home + '/.dsh/gh-cli', runEffects: true }, async ({ tool }) => {
-    await sleep(700)
-    out = await tool('gh_cli_resolve').execute({}, {})
+    // 轮询到接管**落定**为止（最多 20s）：CI 有真网络时「损坏→替换」那条会真下载，
+    // 固定等待窗口会随网络快慢飘 —— 判据不该依赖下载有多快（2026-10-14 CI 抓到）。
+    for (let i = 0; i < 80; i += 1) {
+      await sleep(250)
+      out = await tool('gh_cli_resolve').execute({}, {})
+      if (out && out.takeover) break
+    }
   })
   return { ...out, _tag: tag }
 }
