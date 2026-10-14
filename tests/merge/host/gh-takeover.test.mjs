@@ -57,7 +57,10 @@ try {
   check(Boolean(st) && st.pending === null, 'pending 被清掉（不留半截状态：' + JSON.stringify(st && st.pending) + '）')
   check(r.takeover.action === 'installed' ? Boolean(st && st.takeover && st.takeover.ok) : Boolean(st && st.lastFailed),
     '结论与记录一致（installed → 有接管记录；failed → 有 lastFailed）')
-  check(!(st && st.takeover && st.takeover.ok), '没写成的东西**不许**记成「已接管」')
+  check(r.takeover.action === 'installed'
+    ? Boolean(st && st.takeover && st.takeover.ok)
+    : !(st && st.takeover && st.takeover.ok),
+    '「没写成的东西不许记成已接管」：真装上了才有 ok:true 的接管记录（本机 failed / CI installed 各自成立）')
 } finally { hA.cleanup() }
 
 // ===========================================================================
