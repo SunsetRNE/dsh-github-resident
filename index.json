@@ -2,15 +2,15 @@
   "schema": "dsh-github-resident/artifact-index",
   "schemaVersion": 1,
   "package": "@sunsetrne/dsh-github-resident-v2",
-  "version": "1.9.2",
-  "publishedAt": "2026-10-14T20:37:05Z",
-  "sourceRef": "CI 发布 · 6525cc4",
-  "tarball": "sunsetrne-dsh-github-resident-v2-1.9.2.tgz",
-  "url": "https://sunsetrne.github.io/dsh-github-resident/sunsetrne-dsh-github-resident-v2-1.9.2.tgz",
-  "sha256": "4a6999ac72ea31b5ecee1fa9932c76056371694410c70ff328f55f5bead718a5",
-  "sha512": "sha512-JyTPKz6bnSMsbtR9ueW1y5e5L3GAr1YVp2R/+S1PHSNsjL3y+JvAzl+un+hHVX1Kzu/NK+TLUfwITd5x+Tq5ag==",
-  "bytes": 2733844,
-  "install": "npm i https://sunsetrne.github.io/dsh-github-resident/sunsetrne-dsh-github-resident-v2-1.9.2.tgz",
+  "version": "1.9.3",
+  "publishedAt": "2026-10-14T21:21:54Z",
+  "sourceRef": "CI 发布 · 950748a",
+  "tarball": "sunsetrne-dsh-github-resident-v2-1.9.3.tgz",
+  "url": "https://sunsetrne.github.io/dsh-github-resident/sunsetrne-dsh-github-resident-v2-1.9.3.tgz",
+  "sha256": "935c99010338f37ead8fafe4474c996aeb9de3ef3dd158fb9fffe91b9f5127d9",
+  "sha512": "sha512-6H04nBa/c+7Xb0Bh/9YEt9wM/0G2xORarQ63V08rAz0Sqr/t7897D0w8rS2tI9bpza0sDmRVyUZLwR427jJB9Q==",
+  "bytes": 2734957,
+  "install": "npm i https://sunsetrne.github.io/dsh-github-resident/sunsetrne-dsh-github-resident-v2-1.9.3.tgz",
   "previous": [
     {
       "version": "1.7.5",
@@ -55,6 +55,10 @@
     {
       "version": "1.9.1",
       "superseded": true
+    },
+    {
+      "version": "1.9.2",
+      "superseded": true
     }
   ],
   "verify": "解包后 node --input-type=module -e \"import('./dist/host.js').then(()=>console.log('LOADED-OK'))\" 必须打印 LOADED-OK",
@@ -62,7 +66,7 @@
     "origin": "https://sunsetrne.github.io/",
     "metadata": "https://sunsetrne.github.io/@sunsetrne/dsh-github-resident-v2/latest",
     "metadataEncoded": "https://sunsetrne.github.io/%40sunsetrne%2Fdsh-github-resident-v2/latest",
-    "tarball": "https://sunsetrne.github.io/@sunsetrne/dsh-github-resident-v2/-/@sunsetrne/dsh-github-resident-v2-1.9.2.tgz",
+    "tarball": "https://sunsetrne.github.io/@sunsetrne/dsh-github-resident-v2/-/@sunsetrne/dsh-github-resident-v2-1.9.3.tgz",
     "note": "面板自更新（dsh-plugin-update）只认「源 origin 根」下的这个形状；项目站带 /dsh-github-resident/ 前缀会判 invalid-release"
   },
   "deprecated": [
@@ -80,6 +84,12 @@
     }
   ],
   "superseded": [
+    {
+      "version": "1.9.2",
+      "tarball": "sunsetrne-dsh-github-resident-v2-1.9.2.tgz",
+      "sha256": "4a6999ac72ea31b5ecee1fa9932c76056371694410c70ff328f55f5bead718a5",
+      "reason": "被新版本取代；可作回滚件"
+    },
     {
       "version": "1.9.1",
       "tarball": "sunsetrne-dsh-github-resident-v2-1.9.1.tgz",
