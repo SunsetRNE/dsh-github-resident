@@ -45,6 +45,9 @@ export default {
     const __DSW_HANDLERS__ = new Map()
     // harness.handle 压成一行写法：本文件顶 350 行上限，省下的行留给真正要读的接线说明（见账本 §1）。
     const harness = { handle: (method, fn) => { __DSW_HANDLERS__.set(String(method).replace(/^wf\./, ''), fn) } }
+    // 票「面板改走宿主 RPC ＋ 删掉自开端口 31790」：把注册入口以**服务位**交付给另一半边（维护者三选一裁 B）——
+    // Resident 半边用 ctx.get('dswEndpoints').handle(...) 挂自己的端点，两半边之间不传整张表、也不新增端口。
+    if (typeof ctx.provide === 'function') ctx.provide('dswEndpoints', { handle: harness.handle })
     // ============ 配置 ============
     // v1.5.0（公共发布）：兜底 gh 路径经 platform.env.get('DSH_GH_PATH')（#171 migrated，零直读 process.env）
     // 默认工作区 = DSH 进程当前目录（可被 wf.snapshot args.cwd 覆盖；去本机硬编码）
