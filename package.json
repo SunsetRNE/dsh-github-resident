@@ -1,6 +1,6 @@
 {
   "name": "@sunsetrne/dsh-github-resident-v2",
-  "version": "1.9.5",
+  "version": "1.9.6",
   "type": "module",
   "main": "./dist/host.js",
   "description": "常驻 GitHub 身份与多仓库提交/推送/PR 工具（含自带 gh 落地与需用户同意的仓库登记文件库），并内置 Matt Skills Deck 的 issue / map 管理工具、随包 27 个技能、右侧栏面板与合并后的设置页。",

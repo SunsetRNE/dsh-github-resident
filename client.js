@@ -18,9 +18,27 @@ window.__ModuleLoader__.load({
       || 'http://127.0.0.1:31790';
     // 票 51 第 2 步：面板改走**宿主 RPC**（dsws 通道的 ghr.* 端点）—— call() 是唯一出口；
     // 宿主半边没加载时如实拒绝（不再是「接口不可达」那句含混话）。
-    const call = (method, args) => (typeof host !== 'undefined' && host && typeof host.call === 'function')
-      ? host.call(method, args || {})
-      : Promise.reject(new Error('host.call 不可用（宿主半边未加载）'));
+    // 端点 ↔ 旧回环路由的对照（回落用；票 51 第 3 步删端口时这张表一起退场）。
+    const ENDPOINT_PATH = {
+      'ghr.state': '/state', 'ghr.registry': '/registry', 'ghr.registry.list': '/registry/list',
+      'ghr.authStart': '/auth/start', 'ghr.identity.email': '/identity/email', 'ghr.logout': '/logout',
+      'ghr.version': '/gh/version', 'ghr.update': '/gh/update', 'ghr.protocol': '/protocol',
+      'ghr.registry.build': '/registry/build', 'ghr.registry.plan': '/registry/plan',
+      'ghr.registry.verify': '/registry/verify', 'ghr.registry.revoke': '/registry/revoke', 'ghr.registry.purge': '/registry/purge',
+    };
+    /**
+     * 面板的唯一出口：**宿主 RPC 优先，端口回落**。
+     * 为什么要有回落（2026-10-14 实测教训）：Deck 客户端的 `host` 是它那套「规范方言」的**自由变量**、
+     * 由 shim 供给，**不是 window 上的全局** —— 我们的客户端半边能拿到它时不假思索地用，拿不到时就整块面板不可用。
+     * 端口外壳仍在（票 51 第 3 步才删），所以退回端口这条老路至少在端口可达的机器上照常能干活。
+     */
+    const call = (method, args) => {
+      if (typeof host !== 'undefined' && host && typeof host.call === 'function') return host.call(method, args || {});
+      const path = ENDPOINT_PATH[method] || ('/registry/' + String(method).replace(/^ghr\.registry\./, ''));
+      const q = args && args.query ? '?' + args.query : '';
+      return fetch(API + path + q, { method: 'POST', signal: AbortSignal.timeout(45000) })
+        .then((r) => (r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status))));
+    };
     const DEVICE_URL = 'https://github.com/login/device';
     const STEPS = [
       ['1', '生成码', '点下面的「生成一次性码」——插件在后台起 gh 的设备码流程并拉起浏览器'],

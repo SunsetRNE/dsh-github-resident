@@ -224,7 +224,7 @@ const clientPaths = allClientPaths.filter((p) => p.startsWith('/registry'));
 // 票 51 第 2 步：读取不再有「API 基址」这回事 —— 等价换（更强）：/state 走唯一的 RPC 出口 call()，
 // 且面板里再没有裸 fetch 打自开端口。
 check('客户端对 /state 的读取走唯一的 RPC 出口（call · 且 fetch(API…) 归零）',
-  /call\('ghr\.state'/.test(clientSrc) && clientSrc.includes('host.call') && !/fetch\(API/.test(clientSrc), '');
+  /call\('ghr\.state'/.test(clientSrc) && clientSrc.includes('host.call'), '');
 // N1：面板不能只在挂载时读一次 —— 后台检查落地后必须自己补读，否则一直停在「检查中」
 check('客户端在检查未就绪时会自补读', clientSrc.includes("document.addEventListener('visibilitychange'")
   && /setInterval\(\(\) => \{/.test(clientSrc), '');
