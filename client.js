@@ -166,8 +166,10 @@ window.__ModuleLoader__.load({
 
       const post = (url, tag) => {
         setBusy(tag);
-        return fetch(url, { method: 'POST' })
-          .then((r) => (r.status === 404 ? { ok: false, error: '宿主未重启：这条路由还没上线（HTTP 404）' } : r.json()))
+        // 票 51 第 2 步：登记库写操作也走宿主 RPC —— 从 url 反推端点名（ghr.registry.<动作>，带 query）。
+        const m = String(url).match(/\/(registry\/[^?]*)(?:\?(.*))?$/);
+        if (!m) return Promise.reject(new Error('未知的登记库动作：' + String(url)));
+        return call('ghr.' + m[1].replace(/\//g, '.'), m[2] ? { query: m[2] } : {})
           .then((j) => { setLast(j); setBusy(''); return load(); })
           .catch((e) => { setLast({ ok: false, error: String((e && e.message) || e) }); setBusy(''); });
       };

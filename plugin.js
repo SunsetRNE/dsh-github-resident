@@ -4629,6 +4629,7 @@ sys.stdout.flush()
         send(500, { error: String(err) });
       }
     };
+    const server = http.createServer(handleResidentRequest);
     // 端口被占（重复加载）不该静默：留一条诊断，/state 里能看到（审计 L5）。
     server.on('error', (e) => {
       lastServerError = {
@@ -4639,7 +4640,6 @@ sys.stdout.flush()
         note: '端口被占时首个实例继续服务；本实例的 HTTP 路由不可达',
       };
     });
-    const server = http.createServer(handleResidentRequest);
     server.listen(port, '127.0.0.1');
     return server;
   }

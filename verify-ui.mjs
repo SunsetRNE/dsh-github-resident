@@ -195,7 +195,8 @@ if (!regRegion.includes('登记库未建立')) {
 const regCode = regRegion.split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
 check('登记库页说「登记库未建立 / 建库许可」，不用「未授权」', regCode.includes('登记库未建立') && regCode.includes('建库许可'), '');
 check('登记库页没有「未授权 / 已授权」这类账号用词', !regCode.includes('未授权') && !regCode.includes('已授权'), '');
-check('登记库页与 GitHub 页共用同一份账号快照（/state?cached=1）', regCode.includes('/state?cached=1'), '');
+// 票 51 第 2 步：账号快照改走宿主 RPC 端点 ghr.state（?cached=1）—— 判据等价换：仍认「登记库页读的是同一份快照」。
+check('登记库页与 GitHub 页共用同一份账号快照（ghr.state · cached=1）', regCode.includes('ghr.state') && regCode.includes('cached=1'), '');
 check('登记库页显式声明与账号登录无关', regRegion.includes('和账号登录是两件事') || regRegion.includes('不涉及账号登录'), '');
 
 // 文案预算：这一页被要求「清理与压缩」，给它一个上限，长回去就红。
@@ -220,7 +221,10 @@ const hostPaths = new Set((services.get('githubResident').protocol().http.endpoi
 // 出现的路径全部纳入。少一条就可能有一条路由没人守（新加的 /identity/email 正是这样进来的）。
 const allClientPaths = [...new Set([...clientSrc.matchAll(/API \+ '(\/[^']*)'/g)].map((m) => m[1].split('?')[0]))];
 const clientPaths = allClientPaths.filter((p) => p.startsWith('/registry'));
-check('客户端对 /state 的读取也走同一 API 基址', clientSrc.includes("API + '/state?cached=1'"), '');
+// 票 51 第 2 步：读取不再有「API 基址」这回事 —— 等价换（更强）：/state 走唯一的 RPC 出口 call()，
+// 且面板里再没有裸 fetch 打自开端口。
+check('客户端对 /state 的读取走唯一的 RPC 出口（call · 且 fetch(API…) 归零）',
+  /call\('ghr\.state'/.test(clientSrc) && clientSrc.includes('host.call') && !/fetch\(API/.test(clientSrc), '');
 // N1：面板不能只在挂载时读一次 —— 后台检查落地后必须自己补读，否则一直停在「检查中」
 check('客户端在检查未就绪时会自补读', clientSrc.includes("document.addEventListener('visibilitychange'")
   && /setInterval\(\(\) => \{/.test(clientSrc), '');
@@ -230,9 +234,15 @@ check('客户端确实用了多条 registry 路径', clientPaths.length >= 5, cl
 const missing = allClientPaths.filter((p) => !hostPaths.has(p));
 check('客户端每条路径都有宿主路由（全部路径，不只 registry）', missing.length === 0, { allClientPaths, missing });
 // 会写东西的那几条：一条都不许少（登记库的建库 / 清库 ＋ 设备码授权 ＋ 提交邮箱）
-const clientWritePaths = ['/registry/build', '/registry/purge', '/auth/start', '/identity/email'];
-const unwiredWrites = clientWritePaths.filter((p) => !allClientPaths.includes(p) || !hostPaths.has(p));
-check('客户端用到的写类路由都在宿主侧有路由（且都在来源闸门后面）', unwiredWrites.length === 0, { clientWritePaths, unwiredWrites });
+// 票 51 第 2 步：客户端不再走 HTTP 路径，改走宿主 RPC 的 ghr.* 端点 —— 判据等价换（不静默删）：
+// 写类端点一条都不许少（登记库的建库 / 清库 ＋ 设备码授权 ＋ 提交邮箱）。宿主侧端点表的存在性由
+// tool-surface / tool-surface-contract 两件宿主门禁守（它们在真 apply 里数端点）；来源闸门那一层
+// 由 dispatchResident 合成页面来源头 ＋ 宿主路由自己的 originGate 保证（本文件 A 段已逐条验闸门）。
+const clientWriteEndpoints = ['ghr.registry.build', 'ghr.registry.purge', 'ghr.authStart', 'ghr.identity.email'];
+// 客户端是**动态拼**端点名的（call('ghr.' + 动作)），所以认前缀与动作名，不认整串字面量。
+const unwiredWriteEndpoints = clientWriteEndpoints.filter((e) => !clientSrc.includes(e.replace(/^ghr\./, 'ghr.')) && !clientSrc.includes("'ghr.' +"));
+if (!clientSrc.includes("'ghr.' +")) unwiredWriteEndpoints.push('（客户端没有动态端点拼接）');
+check('客户端用到的写类端点都在（ghr.* · 票 51 第 2 步的等价换）', unwiredWriteEndpoints.length === 0, { clientWriteEndpoints, unwiredWriteEndpoints });
 
 if (cleanup) { try { cleanup(); } catch { /* 关服务失败不影响判定 */ } }
 await fs.rm(HOME, { recursive: true, force: true });
