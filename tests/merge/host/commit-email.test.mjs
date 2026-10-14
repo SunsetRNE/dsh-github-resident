@@ -19,9 +19,10 @@
  * 用法：node tests/merge/host/commit-email.test.mjs
  */
 import { execFileSync } from 'node:child_process'
-import { existsSync, readFileSync, statSync } from 'node:fs'
+import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { createServer } from 'node:net'
 import { check, note, section, summary, readText } from './_check.mjs'
-import { makeHome, withPlugin, sha256File } from './_env-harness.mjs'
+import { makeHome, withPlugin, sha256File, PLUGIN_URL } from './_env-harness.mjs'
 
 const TOKEN_FAKE = 'gho_COMMITEMAIL_fixture_abcdefghijkl'
 const LOGIN = 'octocat'
@@ -249,6 +250,168 @@ section('五、邮箱随 state 一起走（登出路径删的就是这份文件�
     '邮箱与 token 确实在同一份 state 里（不是第二份存储 → 也就没有第二处要清理）')
   hE.cleanup()
   note('登出后邮箱消失这条走的是「同一份 state + 销毁路径删它」的同源判据，没有真跑 gh_cli_logout（那条路带宿主级动作）')
+}
+
+// ===========================================================================
+section('六、面板那一半：快照里的入口条件（离线跑真回环，面板走的就是这条 HTTP）')
+// ===========================================================================
+
+/** 找一个空闲端口：先绑 0 拿到号再放掉（别撞上真插件占的 31790 与 verify-ui 的 31791）。 */
+const freePort = async () => {
+  const srv = createServer()
+  await new Promise((r) => srv.listen(0, '127.0.0.1', r))
+  const port = srv.address().port
+  await new Promise((r) => srv.close(r))
+  return port
+}
+
+/** 夹具里的 gh 桩：`auth status` 的成败可控，`api user --jq .login` 回登录名，`--version` 回版本串。 */
+const ghStubFor = (home, { authed }) => writeFileSync(home + '/.bin/gh', authed
+  ? '#!/bin/sh\ncase "$1 $2" in\n  "auth status") exit 0 ;;\n  "api user") echo ' + LOGIN + ' ;;\n  *) echo "gh version 9.9.9 (STUB)" ;;\nesac\n'
+  : '#!/bin/sh\nexit 1\n', { mode: 0o755 })
+
+/**
+ * 起真回环（verify-ui 同款口径：effect 真跑、三条启动调度全关、端口自己挑）。
+ * 返回 { call, restore }：call 打的就是面板会打的那几条路由。
+ */
+const bootLoopback = async (home) => {
+  const keys = ['HOME', 'PATH', 'DSH_GH_API_PORT', 'DSH_GH_NO_STATE_CHECK', 'DSH_GH_NO_BOOTSTRAP', 'DSH_GH_NO_UPDATE',
+    'DSH_GH_DATA_DIR', 'GH_TOKEN', 'GITHUB_TOKEN']
+  const saved = {}
+  for (const k of keys) saved[k] = process.env[k]
+  const port = await freePort()
+  process.env.HOME = home
+  process.env.PATH = home + '/.bin'
+  process.env.DSH_GH_API_PORT = String(port)
+  process.env.DSH_GH_NO_STATE_CHECK = '1'
+  process.env.DSH_GH_NO_BOOTSTRAP = '1'
+  process.env.DSH_GH_NO_UPDATE = '1'
+  process.env.DSH_GH_DATA_DIR = home + '/.dsh/gh-cli'
+  delete process.env.GH_TOKEN
+  delete process.env.GITHUB_TOKEN
+  const mod = await import(PLUGIN_URL + '?env=' + encodeURIComponent(home + '|panel'))
+  let stop = null
+  mod.apply({
+    tools: { register: () => () => {} },
+    provide() {}, inject() {}, get() { return undefined },
+    effect: (fn) => { stop = fn(); return () => {} },
+    logger: { info() {}, warn() {}, error() {}, debug() {} },
+  })
+  const restore = () => {
+    try { if (stop) stop() } catch { /* 关服务失败不影响判定 */ }
+    for (const k of keys) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k] }
+  }
+  const call = async (path, init) => {
+    const res = await fetch('http://127.0.0.1:' + port + path, init)
+    let body = null
+    try { body = await res.json() } catch { body = null }
+    return { status: res.status, body }
+  }
+  for (let i = 0; i < 60; i += 1) {   // 等端口起来（最多 ~6s）
+    try { await call('/state?cached=1'); break } catch { await new Promise((r) => setTimeout(r, 100)) }
+  }
+  return { call, restore, port }
+}
+
+const PAGE_ORIGIN = 'http://127.0.0.1:3080'
+
+// 票面三条入口条件 + 一条反例：**规则在宿主侧算好**（快照里的 commitEmail.offer），面板只读它。
+const PANEL_COMBOS = [
+  { tag: 'authed-no-email', authed: true, state: { token: TOKEN_FAKE, login: LOGIN }, want: { stored: null, asked: false, offer: true }, why: '已授权 ＋ 没填过 ＋ 没问过 → 给入口' },
+  { tag: 'authed-has-email', authed: true, state: { token: TOKEN_FAKE, login: LOGIN, user_email: CUSTOM }, want: { stored: CUSTOM, asked: false, offer: false }, why: '已填过 → 不给入口（但如实回报存的是什么）' },
+  { tag: 'authed-asked', authed: true, state: { token: TOKEN_FAKE, login: LOGIN, emailAskedAt: '2026-10-14T00:00:00.000Z' }, want: { stored: null, asked: true, offer: false }, why: '问过（没填）→ 不再给入口' },
+  { tag: 'not-authed', authed: false, state: { token: TOKEN_FAKE, login: LOGIN }, want: { stored: null, asked: false, offer: false }, why: '没授权 → 不给入口' },
+]
+
+for (const c of PANEL_COMBOS) {
+  const h = fixture('ce-panel-' + c.tag, c.state)
+  ghStubFor(h.home, { authed: c.authed })
+  const { call, restore } = await bootLoopback(h.home)
+  try {
+    const st = await call('/state?refresh=1')
+    const ce = (st.body && st.body.commitEmail) || null
+    check(Boolean(ce), '[' + c.tag + '] 快照里有 commitEmail 这一段（面板据此决定入口）')
+    check(Boolean(ce) && ce.stored === c.want.stored,
+      '[' + c.tag + '] stored 如实 = ' + JSON.stringify(c.want.stored) + '（实得 ' + JSON.stringify(ce && ce.stored) + '）')
+    check(Boolean(ce) && ce.asked === c.want.asked, '[' + c.tag + '] asked 如实 = ' + c.want.asked)
+    check(Boolean(ce) && ce.offer === c.want.offer, '[' + c.tag + '] offer = ' + c.want.offer + '（' + c.why + '）')
+  } finally {
+    restore()
+  }
+  h.cleanup()
+}
+
+// ===========================================================================
+section('七、面板的写路由 POST /identity/email：来源头闸门 + 真写 + 不写')
+// ===========================================================================
+
+const hR = fixture('ce-panel-route', { token: TOKEN_FAKE, login: LOGIN })
+ghStubFor(hR.home, { authed: true })
+{
+  const { call, restore } = await bootLoopback(hR.home)
+  try {
+    const statePath = hR.home + '/' + STATE_REL
+    const gitPath = hR.home + '/.gitconfig'
+    const state0 = shaOrAbsent(statePath)
+    const git0 = shaOrAbsent(gitPath)
+
+    // ① 机器调用（没有来源头）：拒绝，且一个字节都不写
+    const noOrigin = await call('/identity/email?email=' + encodeURIComponent(CUSTOM), { method: 'POST' })
+    check(Boolean(noOrigin.body) && noOrigin.body.ok === false, '不带来源头：ok=false（机器调用不许写）')
+    check(String(noOrigin.body && noOrigin.body.error).includes('E_IDENTITY_EMAIL_ORIGIN'),
+      '拒绝理由点名了这条闸门：' + String(noOrigin.body && noOrigin.body.error).slice(0, 70))
+    check(shaOrAbsent(statePath) === state0, '不带来源头：state 逐字节不变')
+    check(shaOrAbsent(gitPath) === git0, '不带来源头：git 配置逐字节不变')
+
+    // ② 外来来源头：同样拒绝（只认本机页面）
+    const foreign = await call('/identity/email?email=' + encodeURIComponent(CUSTOM), { method: 'POST', headers: { Origin: 'http://evil.example' } })
+    check(Boolean(foreign.body) && foreign.body.ok === false, '外来来源头：ok=false')
+    check(shaOrAbsent(statePath) === state0, '外来来源头：state 逐字节不变')
+
+    // ③ 空值 = 只读回报：不写
+    const empty = await call('/identity/email', { method: 'POST', headers: { Origin: PAGE_ORIGIN } })
+    check(Boolean(empty.body) && empty.body.ok === true && empty.body.wrote === false, '空值：ok=true、wrote=false（只回报现状）')
+    check(shaOrAbsent(statePath) === state0, '空值：state 逐字节不变')
+
+    // ④ 坏值：拒绝且不写
+    const bad = await call('/identity/email?email=' + encodeURIComponent('not-an-email'), { method: 'POST', headers: { Origin: PAGE_ORIGIN } })
+    check(Boolean(bad.body) && bad.body.ok === false && String(bad.body.error).length > 0, '坏值：ok=false 且给具体原因')
+    check(shaOrAbsent(statePath) === state0, '坏值：state 逐字节不变')
+
+    // ⑤ 带页面来源头：真写，而且只写插件自己的 state
+    const ok = await call('/identity/email?email=' + encodeURIComponent(CUSTOM), { method: 'POST', headers: { Origin: PAGE_ORIGIN } })
+    check(Boolean(ok.body) && ok.body.ok === true && ok.body.wrote === true && ok.body.email === CUSTOM,
+      '带页面来源头：写成功（email=' + String(ok.body && ok.body.email) + '）')
+    check(stateOf(hR.home).user_email === CUSTOM, 'state 文件里真有它')
+    check(stateOf(hR.home).token === TOKEN_FAKE, '同一次改动没丢别的字段（token 还在）')
+    check(modeOf(statePath) === '0600', 'state 仍是 0600')
+    check(shaOrAbsent(gitPath) === git0, '**不碰宿主**：git 配置逐字节不变（接宿主归 wire）')
+    check(!JSON.stringify(ok.body).includes(TOKEN_FAKE), '路由回执里不出现 token 原文')
+
+    // ⑥ 闭环：写完再读快照，入口随即消失
+    const after = await call('/state?refresh=1')
+    const ce = (after.body && after.body.commitEmail) || {}
+    check(ce.stored === CUSTOM && ce.offer === false, '写完再读快照：stored 就是它、offer 变 false（入口消失）')
+
+    // ⑦ 只认 POST
+    const getIt = await call('/identity/email')
+    check(getIt.status === 404, 'GET 这条路径 = 404（只有 POST 是入口）')
+  } finally {
+    restore()
+  }
+}
+hR.cleanup()
+
+// ===========================================================================
+section('八、面板源码侧：接的是新字段与新路由（tripwire；渲染不在门禁范围）')
+// ===========================================================================
+{
+  const src = readText('client.js')
+  check(src.includes("API + '/identity/email?email="), '面板打的是这条新路由（tripwire）')
+  check(src.includes('email.offer'), '面板的显示条件读快照给的 offer（不自己重算那三条）')
+  check(src.includes("className: 'ghr-input'") && src.includes('saveEmail'), '面板里有输入框与保存处理（tripwire）')
+  check(!/user_email/.test(src), '面板不认 state 的字段名（两半之间只走快照字段，不共享存储细节）')
+  note('渲染本身不在门禁范围（沿用 verify-ui 的纪律：没有浏览器控制就不写假渲染器）——这里只钉「接的是哪根线」')
 }
 
 summary()

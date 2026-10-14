@@ -166,7 +166,7 @@ bash tools/account-ui-check.sh
 | `gh_env_probe` | 环境能力矩阵：gh / curl / node / 架构 / HOME 可写 + 三路网络可达性（fetch/curl 双通道、报成功率与落点） | 是 |
 | `gh_protocol` | 机器可读的协议文档 | 是 |
 
-HTTP（只监听 `127.0.0.1`）：`GET /state`、`GET /state?cached=1`、`GET /state?refresh=1`、`GET /gh/version`、`POST /gh/update`、`GET /protocol`、`GET /registry`、`GET /registry/list`、`POST /registry/plan`、`POST /registry/verify`、`POST /registry/revoke`、`POST /registry/purge?confirm=1`、`POST /registry/build?consent=1`、`POST /auth/start`、`POST /logout`。
+HTTP（只监听 `127.0.0.1`）：`GET /state`、`GET /state?cached=1`、`GET /state?refresh=1`、`GET /gh/version`、`POST /gh/update`、`GET /protocol`、`GET /registry`、`GET /registry/list`、`POST /registry/plan`、`POST /registry/verify`、`POST /registry/revoke`、`POST /registry/purge?confirm=1`、`POST /registry/build?consent=1`、`POST /auth/start`、`POST /logout`、`POST /identity/email?email=…`（面板的提交邮箱填写入口；只认带浏览器来源头的请求，机器调用走 `gh_identity {action:"email"}`）。
 
 ## 安装
 

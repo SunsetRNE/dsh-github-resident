@@ -77,6 +77,10 @@ window.__ModuleLoader__.load({
       '.{p}-codebox{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-top:12px;padding:12px 14px;border-radius:8px;background:var(--dsw-alias-bg-layer-2);border:1px dashed var(--dsw-alias-border-l2)}',
       '.{p}-code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:22px;font-weight:600;letter-spacing:.16em;color:var(--dsw-alias-label-primary)}',
       '.{p}-when{font-size:11.5px;color:var(--dsw-alias-label-secondary);margin-top:4px}',
+      // 提交邮箱的填写入口（票「面板的提交邮箱入口…」）：一行输入 + 一个保存，只在「该给入口」时才渲染。
+      '.{p}-email{display:flex;align-items:center;gap:9px;flex-wrap:wrap;padding:10px 0 2px}',
+      '.{p}-input{font:inherit;font-size:12.5px;line-height:1;padding:8px 10px;border-radius:7px;min-width:220px;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-2);border:1px solid var(--dsw-alias-border-l2)}',
+      '.{p}-input:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}',
     ]);
     const REG_CSS = cssFor('ghreg', [
       '.{p}-ask{margin-top:12px;padding:12px 14px;border-radius:8px;background:var(--dsw-alias-bg-layer-2);border:1px dashed var(--dsw-alias-border-l2);font-size:12.5px;line-height:1.65}',
@@ -320,6 +324,9 @@ window.__ModuleLoader__.load({
       const [flow, setFlow] = React.useState(null);
       const [busy, setBusy] = React.useState(false);
       const [copied, setCopied] = React.useState(null);
+      const [emailDraft, setEmailDraft] = React.useState('');
+      const [emailBusy, setEmailBusy] = React.useState(false);
+      const [emailMsg, setEmailMsg] = React.useState(null);
 
       // 默认只读缓存（?cached=1）：不进任何子进程、不触发账号检查。
       const load = React.useCallback((opts) => {
@@ -359,6 +366,23 @@ window.__ModuleLoader__.load({
           .catch((e) => { setFlow({ ok: false, error: String((e && e.message) || e) }); setBusy(false); });
       };
 
+      // 面板侧的填写：POST 打到宿主那条**唯一写入口**（带来源头闸门，机器调用会被拒）；成功后重读快照，
+      // 入口随即消失（快照里 offer 变 false）。不填 / 不点保存 ⇒ 一个字节都不发。
+      const saveEmail = () => {
+        const value = String(emailDraft || '').trim();
+        if (!value || emailBusy) return;
+        setEmailBusy(true);
+        setEmailMsg(null);
+        fetch(API + '/identity/email?email=' + encodeURIComponent(value), { method: 'POST' })
+          .then((r) => r.json())
+          .then((j) => {
+            setEmailBusy(false);
+            if (j && j.ok) { setEmailDraft(''); load({ refresh: true }); }
+            else setEmailMsg((j && j.error) || '没写成（看插件日志）');
+          })
+          .catch((e) => { setEmailBusy(false); setEmailMsg(String((e && e.message) || e)); });
+      };
+
       const flash = (tag, text) => {
         const done = () => { setCopied(tag); window.setTimeout(() => setCopied(null), 1500); };
         if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(done, done);
@@ -368,6 +392,9 @@ window.__ModuleLoader__.load({
       const d = svc.data || null;
       const probing = Boolean(d && (d.probing || d.authenticated === null));
       const authed = Boolean(d && d.authenticated === true);
+      // 提交邮箱：**该不该给入口由宿主算好**（快照里的 commitEmail.offer）—— 面板不自己重算那三条条件。
+      const email = (d && d.commitEmail) || null;
+      const offerEmail = Boolean(email && email.offer);
       const tone = svc.phase !== 'ok' ? 'var(--dsw-alias-state-error-primary)'
         : probing ? 'var(--dsw-alias-label-secondary)'
           : authed ? 'var(--dsw-alias-state-success-primary)'
@@ -433,6 +460,23 @@ window.__ModuleLoader__.load({
                 : d.updates.updateAvailable
                   ? ('可更新：' + (d.updates.current || '?') + ' → ' + (d.updates.latest || '?'))
                   : ('已是最新 ' + (d.updates.current || '?') + (d.updates.error ? '（版本探测失败：' + d.updates.error.slice(0, 40) + '）' : '')))),
+          h('div', { className: 'ghr-row' }, h('span', { className: 'ghr-k' }, '提交邮箱'),
+            h('span', { className: 'ghr-v' },
+              email && email.stored ? email.stored : '未填 —— 提交用 GitHub 的隐私邮箱')),
+          offerEmail
+            ? h('div', { className: 'ghr-email' },
+              h('input', {
+                className: 'ghr-input', type: 'text', spellCheck: false, disabled: emailBusy,
+                placeholder: 'name@example.com', value: emailDraft,
+                onChange: (e) => { setEmailDraft(e.target.value); setEmailMsg(null); },
+                onKeyDown: (e) => { if (e.key === 'Enter') saveEmail(); },
+              }),
+              h(Btn, { onClick: saveEmail, disabled: emailBusy || !String(emailDraft || '').trim() },
+                emailBusy ? '保存中…' : '保存'),
+              emailMsg ? h('span', { className: 'ghr-when', style: { color: 'var(--dsw-alias-state-error-primary)', marginTop: 0 } }, emailMsg) : null,
+              h('span', { className: 'ghr-when', style: { flexBasis: '100%' } },
+                '只写进本插件（与 token 同一份文件）；要让终端里的 git 也用它，回会话跑一次 wire。'))
+            : null,
           h('p', { className: 'ghr-when', style: { marginTop: 8 } },
             d && d.cached === false
               ? '还没有快照：账号检查在后台跑，跑完这里会自动刷新（也可以点「立即刷新」当场查一次）。'

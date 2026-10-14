@@ -216,7 +216,10 @@ check('登记库页最长一句 ≤ 60 字', Math.max(...regLits.map((x) => x.le
 
 // ---------- C. 接线判据：客户端用的路径 ⊆ 宿主路由 ----------
 const hostPaths = new Set((services.get('githubResident').protocol().http.endpoints || []).map((e) => e.path));
-const clientPaths = [...new Set([...clientSrc.matchAll(/API \+ '(\/registry[^']*)'/g)].map((m) => m[1].split('?')[0]))];
+// 2026-10-14（票「面板的提交邮箱入口…」）：**不再只看 /registry\*** —— 客户端里凡是以 `API + '/…'`
+// 出现的路径全部纳入。少一条就可能有一条路由没人守（新加的 /identity/email 正是这样进来的）。
+const allClientPaths = [...new Set([...clientSrc.matchAll(/API \+ '(\/[^']*)'/g)].map((m) => m[1].split('?')[0]))];
+const clientPaths = allClientPaths.filter((p) => p.startsWith('/registry'));
 check('客户端对 /state 的读取也走同一 API 基址', clientSrc.includes("API + '/state?cached=1'"), '');
 // N1：面板不能只在挂载时读一次 —— 后台检查落地后必须自己补读，否则一直停在「检查中」
 check('客户端在检查未就绪时会自补读', clientSrc.includes("document.addEventListener('visibilitychange'")
@@ -224,9 +227,12 @@ check('客户端在检查未就绪时会自补读', clientSrc.includes("document
 check('客户端按 probe 阶段显示（进行中 / 未启动 / 失败）',
   clientSrc.includes("probe.state === 'disabled'") && clientSrc.includes("probe.state === 'failed'"), '');
 check('客户端确实用了多条 registry 路径', clientPaths.length >= 5, clientPaths);
-const missing = clientPaths.filter((p) => !hostPaths.has(p));
-check('客户端每条路径都有宿主路由', missing.length === 0, { clientPaths, missing });
-check('授权/破坏性路由都在宿主侧有来源门', clientPaths.includes('/registry/build') && clientPaths.includes('/registry/purge'), clientPaths);
+const missing = allClientPaths.filter((p) => !hostPaths.has(p));
+check('客户端每条路径都有宿主路由（全部路径，不只 registry）', missing.length === 0, { allClientPaths, missing });
+// 会写东西的那几条：一条都不许少（登记库的建库 / 清库 ＋ 设备码授权 ＋ 提交邮箱）
+const clientWritePaths = ['/registry/build', '/registry/purge', '/auth/start', '/identity/email'];
+const unwiredWrites = clientWritePaths.filter((p) => !allClientPaths.includes(p) || !hostPaths.has(p));
+check('客户端用到的写类路由都在宿主侧有路由（且都在来源闸门后面）', unwiredWrites.length === 0, { clientWritePaths, unwiredWrites });
 
 if (cleanup) { try { cleanup(); } catch { /* 关服务失败不影响判定 */ } }
 await fs.rm(HOME, { recursive: true, force: true });

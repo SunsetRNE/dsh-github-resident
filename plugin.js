@@ -1425,6 +1425,7 @@ const ERROR_CODES = {
   E_ORIGIN: '这条路由只接受带本机页面来源头（Origin/Referer）的请求',
   E_REGISTRY_ORIGIN: '写登记库的路由只接受来自设置页的请求（缺 Origin/Referer）',
   E_REGISTRY_CONSENT_ORIGIN: 'consent=1 只接受来自设置页的请求（缺 Origin/Referer）；机器调用请走 gh_repo_registry 工具，它会先回 ask',
+  E_IDENTITY_EMAIL_ORIGIN: '写提交邮箱的路由只接受来自设置页的请求（缺 Origin/Referer）；机器调用请走 gh_identity {action:"email"}',
 };
 
 /** 注册表就绪的工具定义；execute 的返回值统一套上协议信封。 */
@@ -2784,6 +2785,7 @@ sys.stdout.flush()
         { method: 'POST', path: '/registry/purge', returns: '删整棵库（?confirm=1）' },
         { method: 'POST', path: '/auth/start', returns: '一次性码 + 授权页' },
         { method: 'POST', path: '/logout', returns: '凭据拆除勘察或执行结果（token 只回掩码）' },
+        { method: 'POST', path: '/identity/email', returns: '写提交邮箱（?email=…；只认带浏览器来源头的请求，机器调用请走 gh_identity {action:"email"}；空值只回报现状、不写）' },
       ],
     },
     envelope: {
@@ -3335,11 +3337,37 @@ sys.stdout.flush()
   }
 
   /**
-   * `action:"email"` —— 提交邮箱的**唯一填写入口**（票「登录后可选填提交邮箱（不填用隐私邮箱），wire 优先用它」）。
+   * 提交邮箱的**唯一写入口** —— 工具动作（`gh_identity {action:"email"}`）与面板的回环路由（`POST /identity/email`）
+   * 都调它：校验只写一遍、落盘只走一处，面板不许再实现第二套（否则「唯一口径」立刻变两份）。
+   *
+   * 只写插件自己的 state（跟 token 同一份文件、0600），**不碰宿主**；把值接到宿主（全局 `user.email`）归 `wire`。
+   * `raw` 为空 = 只读地报现状，一个字节都不写。返回值 `{ ok, email, effective, wrote, error }`：
+   *   - `email` = state 里现在存着的值（null = 没填过）；`effective` = 现在接线会用到的那个值（见 commitEmail）。
+   */
+  async function applyCommitEmail(raw) {
+    const state = await readState();
+    const resolved = await resolveIdentity(state);
+    const login = identityLogin(state, resolved);
+    const current = typeof state.user_email === 'string' && state.user_email.trim() ? state.user_email.trim() : null;
+    const value = typeof raw === 'string' ? raw.trim() : '';
+    if (!value) return { ok: true, email: current, effective: commitEmail(state, login), wrote: false, error: null };
+    // 校验从严、拒绝得具体：邮箱不是凭据，但写进去的值会被拿去当 git 的 user.email，不能是换行/空白拼出来的串。
+    if (value.length > 254 || /\s/.test(value) || !/^[^@\s]+@[^@\s]+$/.test(value)) {
+      return {
+        ok: false, email: current, effective: commitEmail(state, login), wrote: false,
+        error: '不是有效的邮箱（不能有空白，形如 name@example.com，长度 ≤254）：' + value.slice(0, 60),
+      };
+    }
+    const next = await writeState({ user_email: value });
+    return { ok: true, email: value, effective: commitEmail(next, login), wrote: true, error: null };
+  }
+
+  /**
+   * `action:"email"` —— 提交邮箱在**会话侧**的入口（票「登录后可选填提交邮箱（不填用隐私邮箱），wire 优先用它」）。
    *
    * 为什么它是独立的一个动作：填邮箱**不能要求用户重填 token**（`gh_resident_login` 的 `user_email` 参数挂在
-   * 一个 token 必填的工具上，当不了填写入口）。它只写插件自己的 state（跟 token 同一份文件、0600）——
-   * 不动宿主上任何东西，所以**不需要同意**；把值接到宿主（全局 `user.email`）仍然归 `wire`，那一步照样要同意。
+   * 一个 token 必填的工具上，当不了填写入口）。它只写插件自己的 state —— 不动宿主上任何东西，所以**不需要同意**；
+   * 把值接到宿主（全局 `user.email`）仍然归 `wire`，那一步照样要同意。
    *
    * 两种用法：
    *   - 带 `email` → 校验后写进 state（`email` 可回显：它不是凭据；token 依旧只出掩码）；
@@ -3348,34 +3376,16 @@ sys.stdout.flush()
    * 「不填」不是一个值：不调它就行 —— state 里不会多出任何字段，`wire` 走回退（登录名生成的隐私邮箱形式）。
    */
   async function identityEmailAction(args) {
-    const state = await readState();
-    const resolved = await resolveIdentity(state);
-    const login = identityLogin(state, resolved);
-    const raw = typeof args.email === 'string' ? args.email.trim() : '';
-    const view = (extra) => ({
-      action: 'email', email: null, effective: null, wrote: false, stateFile: STATE_FILE, note: null, error: null, ...extra,
-    });
-
-    if (!raw) {
-      const current = typeof state.user_email === 'string' ? state.user_email.trim() : '';
-      return view({
-        ok: true, email: current || null, effective: commitEmail(state, login),
-        note: current
+    const r = await applyCommitEmail(typeof args.email === 'string' ? args.email : '');
+    const note = r.wrote
+      ? '已写进插件 state（0600，与 token 同一份文件，不是第二份凭据存储）。'
+        + '要让 git 用它：跑 gh_identity {action:"wire"} —— 计划变了会重新问一次同意'
+      : r.ok
+        ? (r.email
           ? 'state 里现在存的就是它；要改就带 email 再调一次。接线是另一步：gh_identity {action:"wire"}（要同意）'
-          : 'state 里还没存过提交邮箱；现在接线会用登录名生成的隐私邮箱形式。要填就带 email 再调一次',
-      });
-    }
-    // 校验从严、拒绝得具体：邮箱不是凭据，但写进去的值会被拿去当 git 的 user.email，不能是换行/空白拼出来的串。
-    if (raw.length > 254 || /\s/.test(raw) || !/^[^@\s]+@[^@\s]+$/.test(raw)) {
-      return view({ ok: false, email: typeof state.user_email === 'string' ? state.user_email.trim() || null : null, effective: commitEmail(state, login), error: '不是有效的邮箱（不能有空白，形如 name@example.com，长度 ≤254）：' + raw.slice(0, 60) });
-    }
-
-    const next = await writeState({ user_email: raw });
-    return view({
-      ok: true, email: raw, effective: commitEmail(next, login), wrote: true,
-      note: '已写进插件 state（0600，与 token 同一份文件，不是第二份凭据存储）。'
-        + '要让 git 用它：跑 gh_identity {action:"wire"} —— 计划变了会重新问一次同意',
-    });
+          : 'state 里还没存过提交邮箱；现在接线会用登录名生成的隐私邮箱形式。要填就带 email 再调一次')
+        : null;
+    return { action: 'email', stateFile: STATE_FILE, note, ...r };
   }
 
   // ---------- 身份体检（只读；票「新工具 gh_identity（只读体检 + 准确补救命令）」） ----------
@@ -4040,6 +4050,16 @@ sys.stdout.flush()
       gh: { installed: g.ok, version: g.ok ? g.version : null, layer: g.layer, path: g.path, willAutoLand: !g.ok },
       authenticated,
       account,
+      // 提交邮箱（票「面板的提交邮箱入口：已授权但没填过时给一次填写机会」）：面板据此决定要不要给填写入口。
+      // **规则只写在这里** —— 已授权 ＋ 没填过 ＋ 没问过 三条的唯一判定处，面板不自己算一遍（离线可验）。
+      // `stored` 是普通值（邮箱不是凭据，可回显）；`asked` 就是 tool 那次询问的记账（没填才算数，见票 28）。
+      commitEmail: {
+        stored: typeof state.user_email === 'string' && state.user_email.trim() ? state.user_email.trim() : null,
+        asked: Boolean(typeof state.emailAskedAt === 'string' && state.emailAskedAt),
+        offer: authenticated && Boolean(account)
+          && !(typeof state.user_email === 'string' && state.user_email.trim())
+          && !(typeof state.emailAskedAt === 'string' && state.emailAskedAt),
+      },
       hostsPath: HOSTS_FILE,
       stateFile: STATE_FILE,
       // gh auth setup-git 写的是 host 作用域的 helper（credential.https://github.com.helper），
@@ -4281,6 +4301,14 @@ sys.stdout.flush()
             verification_uri: GH_DEVICE_URL,
             opened,
           });
+          return;
+        }
+        if (url.pathname === '/identity/email' && req.method === 'POST') {
+          // 面板的填写入口（票「面板的提交邮箱入口：已授权但没填过时给一次填写机会」）：
+          // **只认带本机页面来源头的请求** —— 机器调用请走 `gh_identity {action:"email"}`（同一条写入口、
+          // 同一套校验、只是回执形状不同）。写的是插件自己的 state，不碰宿主；不带 email（空值）时只回报现状。
+          if (originGate(res, req, 'identity-email', 'E_IDENTITY_EMAIL_ORIGIN')) return;
+          send(200, { action: 'email', stateFile: STATE_FILE, ...(await applyCommitEmail(url.searchParams.get('email') || '')) });
           return;
         }
         send(404, { error: 'not found' });
