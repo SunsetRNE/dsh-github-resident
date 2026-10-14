@@ -70,8 +70,8 @@ try {
   const r2 = await bootAndRead(hB.home, 'b2')
   check(r2.takeover && r2.takeover.action === 'confirmed',
     '第二次启动＝确认接管（action=' + (r2.takeover && r2.takeover.action) + '）—— 不再重复执行接管')
-  check(Array.isArray(r2.takeover && r2.takeover.attempts) && r2.takeover.attempts.length === 0,
-    '确认那一趟的落地尝试数 = 0（' + JSON.stringify(r2.takeover && r2.takeover.attempts) + '）')
+  check(r2.takeover && r2.takeover.attempts === 0,
+    '确认那一趟的落地尝试数 = 0（实得 ' + JSON.stringify(r2.takeover && r2.takeover.attempts) + '）')
   const after = readState(hB.home)
   check(after && after.pending === null && after.takeover && after.takeover.at === before.takeover.at,
     '记录没被无谓改写（at 未变、pending 仍空）')
@@ -114,8 +114,8 @@ try {
     '大小与记录不符 → **那份副本一次都没被执行**（桩没留痕）')
   check(r.takeover && (r.takeover.action === 'repaired' || r.takeover.action === 'failed'),
     '判定为损坏并尝试替换一次（action=' + (r.takeover && r.takeover.action) + '）')
-  check(Array.isArray(r.takeover && r.takeover.attempts) && r.takeover.attempts.length > 0,
-    '替换真去试了（离线所以失败，但 attempts 有记录：' + JSON.stringify(r.takeover && r.takeover.attempts && r.takeover.attempts.map((a) => a.step)) + '）')
+  check(typeof (r.takeover && r.takeover.attempts) === 'number' && r.takeover.attempts > 0,
+    '替换真去试了（离线所以失败，但 attempts 计数 > 0：实得 ' + JSON.stringify(r.takeover && r.takeover.attempts) + '）')
 } finally { hD.cleanup() }
 
 note('这一件钉的是**决策**：五种格子各自的动作与「确认之后不再重复」；真下载由 CI 的真网络那几件覆盖。')
