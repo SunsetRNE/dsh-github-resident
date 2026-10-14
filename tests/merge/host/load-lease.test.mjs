@@ -31,9 +31,13 @@ const readJson = (f) => { try { return JSON.parse(readFileSync(f, 'utf8')) } cat
 /** 跑一次 runner（子进程），回 `{ code, out }`。`lease` 给的是租约文件路径（要占锁时先自己写好）。 */
 function runRunner(args, lease, extraEnv = {}) {
   return new Promise((resolve) => {
+    // 把外层可能带着的「祖先已持有」记号**显式摘掉**（本票自己的门禁在全量 runner 下面跑过一遍，
+    // 就是因为继承了它而误判：嵌套 runner 见状直接放行、压根没去取锁 —— 判据不许看环境）。
+    const base = { ...process.env }
+    delete base[ENV_HELD]
     const child = spawn(process.execPath, [join(REPO_ROOT, 'tests', 'merge', 'run.mjs'), ...args], {
       cwd: REPO_ROOT,
-      env: { ...process.env, [ENV_FILE]: lease, ...extraEnv },
+      env: { ...base, [ENV_FILE]: lease, ...extraEnv },
     })
     let out = ''
     child.stdout.on('data', (c) => { out += c })
