@@ -31,6 +31,8 @@ const GATES = {
   // 票「gh_pr 共用解析器 + 回落 gh pr create」：自己造 gh 桩与假 fetch，全离线；
   // 放进矩阵是为了证明它**不看跑门禁这台机器**有什么（no-gh 那一格照样绿）。
   pr: 'tests/merge/host/pr-fallback.test.mjs',
+  // 票「gh 探测也要有界」：挂死的 gh 桩同样是自造的 —— 同理进矩阵（外层有没有 gh 都不该影响它）。
+  probeBound: 'tests/merge/host/gh-probe-bound.test.mjs',
 }
 
 /**
@@ -47,6 +49,7 @@ const TABLE = [
       { gate: 'surface', expect: 'pass' },
       { gate: 'probe', expect: 'pass' },
       { gate: 'pr', expect: 'pass' },
+      { gate: 'probeBound', expect: 'pass', why: '挂死的 gh 桩是它自己造的：外层有没有 gh 都不该影响' },
     ],
   },
   {
@@ -58,6 +61,7 @@ const TABLE = [
       { gate: 'surface', expect: 'pass' },
       { gate: 'probe', expect: 'pass', why: '这一格正是「无 gh 也要如实」的主判据' },
       { gate: 'pr', expect: 'pass', why: '回落那半自己造 gh 桩：外层没有 gh 也得照样绿（门禁不看这台机器）' },
+      { gate: 'probeBound', expect: 'pass', why: '同上：这一半全用自造的挂死桩，外层环境不参与' },
     ],
   },
   {
@@ -147,6 +151,15 @@ async function pool(items, limit, worker) {
   return out
 }
 
+/**
+ * 并发度：默认 3，`DSH_TEST_MATRIX_POOL` 可覆盖（钳 1–4）。
+ *
+ * 为什么留这个旋钮（2026-10-14 实测）：矩阵是整套门禁里唯一**并发跑子进程**的地方，
+ * 也是两次全量回归**恰好都死在这一格**的地方（27 个文件跑完 8 个、第 9 个进到矩阵就被中断，
+ * 宿主进程被系统杀掉）。手机 / 小内存机器上 `DSH_TEST_MATRIX_POOL=1` 能把峰值压到一个门禁。
+ */
+const MATRIX_POOL = Math.min(4, Math.max(1, Number(process.env.DSH_TEST_MATRIX_POOL) || 3))
+
 section('一、矩阵：七种环境 × 环境敏感门禁，逐格对照期望结论')
 const startedAt = Date.now()
 const prepared = TABLE.map((row) => {
@@ -159,7 +172,7 @@ const prepared = TABLE.map((row) => {
   return { row, h, dataDir }
 })
 
-const results = await pool(prepared, 3, async ({ row, h, dataDir }) => {
+const results = await pool(prepared, MATRIX_POOL, async ({ row, h, dataDir }) => {
   const cells = []
   for (const cell of row.gates) {
     if (cell.expect === 'skip') { cells.push({ ...cell, skipped: true }); continue }

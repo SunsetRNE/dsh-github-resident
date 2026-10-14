@@ -18,9 +18,8 @@
  * 用法：node tests/merge/host/pr-fallback.test.mjs
  */
 import { join } from 'node:path'
-import { spawn } from 'node:child_process'
 import { check, note, section, summary } from './_check.mjs'
-import { makeHome, withPlugin, readGhCalls } from './_env-harness.mjs'
+import { makeHome, withPlugin, readGhCalls, orphanHoldsPipes } from './_env-harness.mjs'
 
 const FAKE_TOKEN = 'ghp_prFallbackFake0000000000000000000000'
 const REPO = 'SunsetRNE/dsh-github-resident'
@@ -66,23 +65,6 @@ function stubFetch(handler) {
 }
 const poison = () => jsonRes(599, { message: '这一格不该发任何 REST 请求' })
 const prCreateCalls = (ghLog) => readGhCalls(ghLog).filter((a) => a[0] === 'pr' && a[1] === 'create')
-
-/**
- * 纯 `spawn` + `kill`：孙进程攥着管道时，'close' 到底来不来。
- * 返回 true = 800ms 内没等到 'close'（此路的父进程会被钉住）。用它证明下面那一格的形状不是
- * 「随便挂一下」，而是本仓「子进程不退」的现场。
- */
-async function orphanHoldsPipes(cmd) {
-  const child = spawn(cmd, ['pr', 'create'], { stdio: ['pipe', 'pipe', 'pipe'] })
-  let closed = false
-  child.on('close', () => { closed = true })
-  await new Promise((r) => setTimeout(r, 400))
-  try { child.kill('SIGKILL') } catch { /* 已经死了 */ }
-  await new Promise((r) => setTimeout(r, 400))
-  try { if (child.stdout) child.stdout.destroy() } catch { /* 收尾 */ }
-  try { if (child.stderr) child.stderr.destroy() } catch { /* 收尾 */ }
-  return !closed
-}
 
 // ---------------------------------------------------------------------------
 section('① 有 token：走 REST（authPath=token-rest），回落没有被触发')

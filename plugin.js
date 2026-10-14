@@ -282,6 +282,24 @@ function prFallbackTimeoutMs() {
   return Math.min(600 * 1000, Math.max(200, ms));
 }
 
+/**
+ * gh **探测**的上界（票「gh 探测也要有界：probeGh（gh --version）不能无限等」）。
+ *
+ * 探测 = 跑一次 `<gh> --version`（或 `command -v gh`）。它是本插件最热的一次子进程，
+ * 也是「gh 一卡死就永远等」的那个入口 —— 所以上界做成**默认值**，而不是让每个调用点自己记得传：
+ * 实测（票 29 的诊断）十来个调用点里只有环境探针传了，其余全在无上界的 `run()` 上。
+ *
+ * 默认 5s（与既有进程探针同档），`DSH_GH_PROBE_TIMEOUT_MS` 可覆盖；钳 100ms–60s。
+ * 调用时才读，改环境不用重载插件。
+ */
+const GH_PROBE_DEFAULT_MS = 5000;
+
+function ghProbeTimeoutMs() {
+  const raw = Number(process.env.DSH_GH_PROBE_TIMEOUT_MS);
+  const ms = Number.isFinite(raw) && raw > 0 ? Math.round(raw) : GH_PROBE_DEFAULT_MS;
+  return Math.min(60 * 1000, Math.max(100, ms));
+}
+
 // ---------- 仓库发现与状态 ----------
 
 async function isRepo(dir) {
@@ -1382,11 +1400,16 @@ export function apply(ctx) {
     // 读路径（install:false）：不因为「要开个 PR」就顺手下载几十 MB 的 gh，更不在写动作里出网。
     const gh = await resolveGh({ install: false });
     if (!gh.ok || !gh.path) {
+      // 票 29：「探测超时（未知）」与「这台机器没有 gh」要给不同的下一步 —— 前者不该劝人去重新落地。
       return {
         ok: false,
         layer: gh.layer || 'none',
-        reason: '这台机器上没有能跑的 gh（' + String(gh.note || '系统层与插件缓存都没有') + '）'
-          + '；要走这条回落得先跑 gh_cli_install 落地一份',
+        timedOut: Boolean(gh.timedOut),
+        reason: gh.timedOut
+          ? 'gh 探测超时（' + String(gh.note || '上界内没有回话') + '）—— 此刻**无法确认**这台机器上的 gh 能不能跑，这条回落没法开始；'
+            + '稍后重试，或显式跑 gh_cli_install 落地一份'
+          : '这台机器上没有能跑的 gh（' + String(gh.note || '系统层与插件缓存都没有') + '）'
+            + '；要走这条回落得先跑 gh_cli_install 落地一份',
       };
     }
 
@@ -1571,20 +1594,24 @@ export function apply(ctx) {
    * 真跑一次 --version。带 mtime+size 缓存：文件没换就不重复 fork；
    * 文件被换掉（自更新）时 mtime 变了，缓存自然失效。
    */
-  async function probeGh(bin, { fresh = false, timeoutMs = 0 } = {}) {
-    if (!bin) return { ok: false, bin: null };
+  async function probeGh(bin, { fresh = false, timeoutMs = ghProbeTimeoutMs() } = {}) {
+    if (!bin) return { ok: false, bin: null, version: null, timedOut: false };
     let st = null;
     try { st = await fs.stat(bin); } catch { /* PATH 里的名字 stat 不到，按无缓存处理 */ }
     const key = bin;
     const hit = probeCache.get(key);
     if (!fresh && hit && st && hit.mtimeMs === st.mtimeMs && hit.size === st.size) {
-      return { ok: hit.ok, bin, version: hit.version };
+      return { ok: hit.ok, bin, version: hit.version, timedOut: false };
     }
-    // timeoutMs > 0 时给这次探测加上界（环境探针要「最坏情况也能返回」；其它调用点不传，行为不变）。
+    // 上界**默认就有**（票 29）：到点 SIGKILL，并把这次结论单独标出来 ——
+    // 「探测超时（未知）」与「探测过、确实没有」是两种事实；混成一个 ok:false，调用方就会按下错的按钮
+    //（最贵的一个按钮是「去下载一份 gh」）。timeoutMs <= 0 时不设上界（只给显式要它的调用方）。
     const r = await run(bin, ['--version'], timeoutMs > 0 ? { timeout: timeoutMs, killSignal: 'SIGKILL' } : {});
-    const version = r.code === 0 ? versionLine(r.stdout) : null;
-    if (st) probeCache.set(key, { mtimeMs: st.mtimeMs, size: st.size, ok: Boolean(version), version });
-    return { ok: Boolean(version), bin, version };
+    const timedOut = r.signal === 'SIGKILL';
+    const version = !timedOut && r.code === 0 ? versionLine(r.stdout) : null;
+    // 超时**不写探测缓存**：一次卡死不能被记成长期结论（否则同一个路径以后连跑都不跑，直接读回「没有」）。
+    if (st && !timedOut) probeCache.set(key, { mtimeMs: st.mtimeMs, size: st.size, ok: Boolean(version), version });
+    return { ok: Boolean(version), bin, version, timedOut };
   }
 
   /**
@@ -1819,10 +1846,11 @@ export function apply(ctx) {
         && sysProbedAt > 0 && (Date.now() - sysProbedAt) < SYS_LAYER_TTL_MS;
       if (sysStateFresh || (!sysMemoPending && ghMemo.layer !== 'system')) return ghMemo;
     }
-    const sys = await probeGh('gh');
+    const probeMs = ghProbeTimeoutMs();
+    const sys = await probeGh('gh', { timeoutMs: probeMs });
     if (sys.ok) {
       // 报告真实路径：下游（buildSnapshot / gh_cli_status / teardown）都是拿这个路径去执行（N5）。
-      const abs = sys.bin === 'gh' ? ((await whichCmd('gh')) || '/usr/bin/gh') : sys.bin;
+      const abs = sys.bin === 'gh' ? ((await whichCmd('gh', probeMs)) || '/usr/bin/gh') : sys.bin;
       ghMemo = { ok: true, layer: 'system', path: abs, version: sys.version };
       sysMemoPending = false;
       sysProbedAt = Date.now();
@@ -1831,10 +1859,27 @@ export function apply(ctx) {
     // L1 未命中：只把这次结论当"此刻的快照"，下次读路径重探（见 sysMemoPending）。
     sysMemoPending = true;
     sysProbedAt = Date.now();
-    const cached = await probeGh(GH_BIN);
+    const cached = await probeGh(GH_BIN, { timeoutMs: probeMs });
     if (cached.ok) {
-      ghMemo = { ok: true, layer: 'plugin-cache', path: GH_BIN, version: cached.version };
+      // 系统层没答上来、插件缓存这层有一份能跑的：这份是**能用的**答案，但系统层那次超时要如实带着走。
+      ghMemo = {
+        ok: true, layer: 'plugin-cache', path: GH_BIN, version: cached.version,
+        ...(sys.timedOut ? { systemProbeTimedOut: true, note: '系统层的 gh 探测超时（未知）；这一份来自插件缓存' } : {}),
+      };
       return ghMemo;
+    }
+    // 探测超时 = **未知**（不是「这一层没有 gh」）：不落 ghMemo、不去 ensureGh（不下载），如实回。
+    // 票 29 的三条硬规矩：① 不把「卡死」翻译成「去下载一份」；② 一次卡死不能变成长期结论（下次重探）；
+    //                   ③ 回执里「超时」与「没有」必须能分开。
+    if (sys.timedOut || cached.timedOut) {
+      ghMemo = null;                        // 旧结论此刻不可信 → 下次调用必须重探
+      const which = [sys.timedOut ? '系统层' : null, cached.timedOut ? '插件缓存层' : null].filter(Boolean).join(' 与 ');
+      return {
+        ok: false, layer: 'none', path: null, version: null, timedOut: true,
+        systemProbeTimedOut: Boolean(sys.timedOut), cacheProbeTimedOut: Boolean(cached.timedOut),
+        note: which + '的 gh 探测在 ' + probeMs + 'ms 上界内没有回话（超时）：gh 在不在、能不能跑，此刻 **未知** —— '
+          + '不是「没装」，也没有替你去下载；下次调用会重新探测（要调上界：DSH_GH_PROBE_TIMEOUT_MS）',
+      };
     }
     if (install === false) {
       return { ok: false, layer: 'none', path: null, version: null, note: '系统没有 gh，插件缓存也没落地（install:false）' };
@@ -2120,11 +2165,14 @@ sys.stdout.flush()
       steps.push({ step: 'gh-config-dir', removed: true });
     }
 
+    const sysProbe = await probeGh('gh');
     const verify = {
       hostsHasToken: Boolean(await hostsToken(hostname)),
       gitCredentialsExists: await pathExists(CRED_FILE),
       stateFileExists: await pathExists(STATE_FILE),
-      ghSystemExists: (await probeGh('gh')).ok,
+      // 票 29：探测超时 = 未知 —— 不写成「不存在」（那会让这次销毁验收误报「已清干净」）。
+      ghSystemExists: sysProbe.ok,
+      ...(sysProbe.timedOut ? { ghSystemTimedOut: true } : {}),
       ghCacheExists: await pathExists(GH_BIN),
       helpers: {},
     };
@@ -2133,6 +2181,7 @@ sys.stdout.flush()
       verify.hostsHasToken && 'hosts.yml',
       verify.gitCredentialsExists && '.git-credentials',
       verify.stateFileExists && 'state-file',
+      sysProbe.timedOut && '系统 gh（探测超时，未能确认清没清）',
       verify.ghSystemExists && '系统 gh',
       verify.ghCacheExists && '插件自带 gh 缓存',
     ].filter(Boolean);
@@ -2224,13 +2273,17 @@ sys.stdout.flush()
       const sys = await probeGh('gh');
       const cached = await probeGh(GH_BIN);
       const state = await fs.readFile(GH_STATE, 'utf8').then((t) => JSON.parse(t)).catch(() => null);
+      // 票 29：探测超时是**第三种事实**（未知），既不是 system 也不是「没有」——
+      // 别让 resolved='none' 与 autoLandOnNextUse=true 替用户按下一个错的按钮（那次「自动落地」会去下载）。
+      const timedOut = Boolean(sys.timedOut || cached.timedOut);
       return {
-        resolved: sys.ok ? 'system' : (cached.ok ? 'plugin-cache' : 'none'),
+        resolved: sys.ok ? 'system' : (cached.ok ? 'plugin-cache' : (timedOut ? 'unknown' : 'none')),
         system: sys,
         pluginCache: { path: GH_BIN, ...cached },
         dataDir: GH_DATA_DIR,
         arch: GH_ARCH,
-        autoLandOnNextUse: !sys.ok && !cached.ok,
+        autoLandOnNextUse: !sys.ok && !cached.ok && !timedOut,
+        ...(timedOut ? { timedOut: true } : {}),
         lastInstall: state,
         lastEnsure: lastEnsure ? { ok: lastEnsure.ok, pending: lastEnsure.pending === true, layer: lastEnsure.layer, arch: lastEnsure.arch, attempts: lastEnsure.attempts } : null,
       };
@@ -2250,7 +2303,12 @@ sys.stdout.flush()
     readOnly: false,
     execute: async (args) => {
       const g = await resolveGh();
-      if (!g.ok) return { ok: false, error: 'gh 不可用，且自带落地没成功', ensure: g.ensure || null };
+      if (!g.ok) {
+        // 票 29：探测超时时「落地没成功」是假话 —— 我们**故意没去**下载（未知 ≠ 没有）。
+        return g.timedOut
+          ? { ok: false, timedOut: true, error: 'gh 探测超时（此刻未知）：稍后重试；本插件不会在超时时替你下载，确需一份自带副本请显式跑 gh_cli_install', ensure: null }
+          : { ok: false, error: 'gh 不可用，且自带落地没成功', ensure: g.ensure || null };
+      }
       const version = g.version;
       const flow = await startDeviceFlowPty();
       const opened = args.open_browser === false ? { via: 'skipped' } : await openUrl(GH_DEVICE_URL);
@@ -2277,7 +2335,16 @@ sys.stdout.flush()
     readOnly: true,
     execute: async () => {
       const g = await resolveGh({ install: false });
-      if (!g.ok) return { installed: false, hint: '下次调用任意 gh_* 工具会自动落地一份，或显式跑 gh_cli_install' };
+      if (!g.ok) {
+        // 票 29：探测超时 ≠ 没装。别在这时说「下次会自动落地一份」——超时那条路**故意不下载**。
+        if (g.timedOut) {
+          return {
+            installed: false, timedOut: true, note: g.note,
+            hint: 'gh 探测超时（此刻未知）：下次调用会重新探测；确需一份自带副本，显式跑 gh_cli_install（本插件不会在超时时替你下载）',
+          };
+        }
+        return { installed: false, hint: '下次调用任意 gh_* 工具会自动落地一份，或显式跑 gh_cli_install' };
+      }
       const version = g.version;
       const status = await run(g.path, ['auth', 'status', '--hostname', 'github.com']);
       const helper = await readCredHelper();
@@ -2323,7 +2390,12 @@ sys.stdout.flush()
     readOnly: false,
     execute: async (args) => {
       const g = await resolveGh();
-      if (!g.ok) return { ok: false, error: 'gh 不可用，且自带落地没成功', ensure: g.ensure || null };
+      if (!g.ok) {
+        // 票 29：探测超时时「落地没成功」是假话 —— 我们**故意没去**下载（未知 ≠ 没有）。
+        return g.timedOut
+          ? { ok: false, timedOut: true, error: 'gh 探测超时（此刻未知）：稍后重试；本插件不会在超时时替你下载，确需一份自带副本请显式跑 gh_cli_install', ensure: null }
+          : { ok: false, error: 'gh 不可用，且自带落地没成功', ensure: g.ensure || null };
+      }
       const setup = await run(g.path, ['auth', 'setup-git', '--hostname', 'github.com']);
       const result = { exitCode: setup.code, ghLayer: g.layer, stderr: setup.stderr.trim().slice(0, 300) };
       result.credentialHelper = (await readCredHelper()) || null;
@@ -2648,13 +2720,17 @@ sys.stdout.flush()
     // ---- 点 4：PATH 落点（**只在 PATH 上没有能跑的 gh 时**才落；解析器优先系统层，不抢系统的）----
     const sysGh = await probeGh('gh');
     const cachedGh = await probeGh(GH_BIN);
-    const landingDir = sysGh.ok ? null : await firstWritablePathDir();
+    // 票 29：探测超时 = 未知 —— **不据此落 PATH**。否则一个卡死的 gh 会被当成「没有 gh」，
+    // 于是往宿主的 PATH 目录里写一个软链（那是**写动作**，比报错难收回）。
+    const landingDir = (sysGh.ok || sysGh.timedOut) ? null : await firstWritablePathDir();
     const landingTarget = landingDir ? path.join(landingDir, 'gh') : null;
     let landingBefore = null;
     let landingWritable = false;
     let landingWhy = null;
     if (sysGh.ok) {
       landingWhy = 'PATH 上已经有能跑的 gh（' + (sysGh.version || '版本未知') + '）—— 什么都不做，不抢系统的';
+    } else if (sysGh.timedOut) {
+      landingWhy = '系统层的 gh 探测超时（此刻未知）—— 不据此落 PATH：把「未知」当成「没有」会往宿主上白写一个软链';
     } else if (!cachedGh.ok) {
       landingWhy = 'PATH 上没有 gh，插件自带缓存里也没有可跑的副本 —— 先跑 gh_cli_install';
     } else if (!landingTarget) {
@@ -2989,10 +3065,19 @@ sys.stdout.flush()
 
       // ---- 消费点 4：PATH 落点（解析层级 + 能否真跑）----
       const ghResolved = await resolveGh({ install: false });
+      // 票 29：探测超时 = 未知。状态词表只有 pass/drift/missing 三个值（门禁与面板都按它渲染，不新造），
+      // 所以超时归 drift（「有待确认」，不是「没有」），诚实性放在 detail.timedOut 与 verdict / fix 的文案里。
       const pathCheck = {
-        name: 'landing', state: ghResolved.ok ? 'pass' : 'missing',
-        detail: { resolved: ghResolved.ok ? ghResolved.layer : 'none', path: ghResolved.path || null, version: ghResolved.version || null, runnable: Boolean(ghResolved.ok) },
-        fix: ghResolved.ok ? null : 'gh_cli_install   # 本插件工具：系统没有 gh 时落地一份自带副本',
+        name: 'landing',
+        state: ghResolved.ok ? 'pass' : (ghResolved.timedOut ? 'drift' : 'missing'),
+        detail: {
+          resolved: ghResolved.ok ? ghResolved.layer : (ghResolved.timedOut ? 'unknown' : 'none'),
+          path: ghResolved.path || null, version: ghResolved.version || null,
+          runnable: Boolean(ghResolved.ok), timedOut: Boolean(ghResolved.timedOut),
+        },
+        fix: ghResolved.ok ? null
+          : ghResolved.timedOut ? 'gh 探测超时（此刻未知）：稍后重试；确需一份自带副本，显式跑 gh_cli_install'
+            : 'gh_cli_install   # 本插件工具：系统没有 gh 时落地一份自带副本',
       };
 
       const mkPoint = (point, checks, verdict) => ({ point, state: rollup(checks.map((c) => c.state)), verdict, checks });
@@ -3006,7 +3091,9 @@ sys.stdout.flush()
         mkPoint('env', [envCheck],
           envCheck.state === 'pass' ? '有环境变量覆盖' : '没有环境变量覆盖（不是必须：身份可由 state 或 gh CLI 供给）'),
         mkPoint('path', [pathCheck],
-          ghResolved.ok ? 'gh 落在 ' + ghResolved.layer + ' 层：' + ghResolved.path : '找不到能跑的 gh'),
+          ghResolved.ok ? 'gh 落在 ' + ghResolved.layer + ' 层：' + ghResolved.path
+            : ghResolved.timedOut ? 'gh 探测超时（此刻未知）——不是「没装」，本插件也不会据此去下载'
+              : '找不到能跑的 gh'),
       ];
 
       // ---- 配置面：指向不存在的目录今天会静默扫 0，这里明说 ----
@@ -3085,13 +3172,16 @@ sys.stdout.flush()
       // ---- 能力 ----
       const gh = await resolveGh({ install: false });
       const ghProbe = (gh.ok && gh.path) ? await probeGh(gh.path, { fresh: true, timeoutMs: PROC_TIMEOUT_MS }) : { ok: false, version: null };
+      // 票 29：探测超时归 degraded（「待确认」），不归 missing（那是「确认没有」）；next 也不许劝人去重新落地。
+      const ghTimedOut = Boolean(gh.timedOut);
       items.push({
         name: 'gh',
-        state: (gh.ok && ghProbe.ok) ? 'ok' : gh.ok ? 'degraded' : 'missing',
-        detail: { layer: gh.ok ? gh.layer : 'none', path: gh.path || null, runnable: Boolean(ghProbe.ok), version: ghProbe.version || null },
+        state: (gh.ok && ghProbe.ok) ? 'ok' : (gh.ok || ghTimedOut) ? 'degraded' : 'missing',
+        detail: { layer: gh.ok ? gh.layer : 'none', path: gh.path || null, runnable: Boolean(ghProbe.ok), version: ghProbe.version || null, timedOut: ghTimedOut },
         next: (gh.ok && ghProbe.ok) ? null
-          : gh.ok ? '解析到了 gh（' + gh.path + '）但它跑不起来：多半是架构不符或缺动态库 —— 跑 gh_cli_install {force:true} 重落地'
-            : '跑 gh_cli_install（本插件工具）落地一份自带 gh；或装系统 gh 后重试',
+          : ghTimedOut ? 'gh 探测超时（此刻未知）：稍后重试即可（本插件不会在超时时去下载）；要显式落地就 gh_cli_install'
+            : gh.ok ? '解析到了 gh（' + gh.path + '）但它跑不起来：多半是架构不符或缺动态库 —— 跑 gh_cli_install {force:true} 重落地'
+              : '跑 gh_cli_install（本插件工具）落地一份自带 gh；或装系统 gh 后重试',
       });
       const curlPath = await whichCmd('curl', PROC_TIMEOUT_MS);
       items.push({
@@ -3349,11 +3439,13 @@ sys.stdout.flush()
     versionState = {
       at: Date.now(),
       current: cur ? cur.raw : null,
-      layer: g.ok ? g.layer : 'none',
+      // 票 29：探测超时时 layer 报 'unknown'（不是 'none' —— 那会被读成「没有 gh」）。
+      layer: g.ok ? g.layer : (g.timedOut ? 'unknown' : 'none'),
       latest: latestVer ? latestVer.raw : null,
       updateAvailable: Boolean(cur && latestVer && newerThan(latestVer, cur)),
       checkedAt: new Date().toISOString(),
       ttlMs: VERSION_PROBE_TTL_MS,
+      ...(g.timedOut ? { timedOut: true, note: g.note } : {}),
       ...(latest.error ? { error: latest.error } : {}),
       ...(lastAutoUpdate ? { lastUpdate: lastAutoUpdate } : {}),
     };

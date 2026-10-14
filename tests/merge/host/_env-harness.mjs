@@ -20,6 +20,7 @@
  *   const r = await withPlugin(h.home, { path: h.path, dataDir: h.home + '/.dsh/gh-cli' }, ({ tool }) => tool('gh_identity').execute({}, {}))
  */
 import http from 'node:http'
+import { spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
   chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync,
@@ -92,6 +93,23 @@ export function readGhCalls(logFile) {
 }
 
 /**
+ * 「挂死形状是不是真的」的自证：纯 `spawn` + `kill`，看 'close' 到不到。
+ * 返回 true = 800ms 内没等到 'close'（孙进程攥着管道不放）—— 说明这个桩**真能钉住一个父进程**，
+ * 不是「随便挂一下」。两处门禁共用：回落那张票的第 ④ 节、探测这张票的第 ① 节。
+ */
+export async function orphanHoldsPipes(cmd, args = ['pr', 'create']) {
+  const child = spawn(cmd, args, { stdio: ['pipe', 'pipe', 'pipe'] })
+  let closed = false
+  child.on('close', () => { closed = true })
+  await new Promise((r) => setTimeout(r, 400))
+  try { child.kill('SIGKILL') } catch { /* 已经死了 */ }
+  await new Promise((r) => setTimeout(r, 400))
+  try { if (child.stdout) child.stdout.destroy() } catch { /* 收尾 */ }
+  try { if (child.stderr) child.stderr.destroy() } catch { /* 收尾 */ }
+  return !closed
+}
+
+/**
  * gh 桩的脚本正文（2026-10-14，票「gh_pr 共用解析器 + 回落 gh pr create」扩的口子）。
  *
  * 不传 `prCreate` 时行为**与从前逐字节一致**：任何 argv 都只回版本行、exit 0（既有用例靠它）。
@@ -105,13 +123,23 @@ export function readGhCalls(logFile) {
  *
  * 桩里**不写裸命令名**：夹具的 PATH 只有夹具 bin，`sleep` 一律走绝对路径。
  */
-export function ghStubScript({ log = null, prCreate = null } = {}) {
+export function ghStubScript({ log = null, prCreate = null, hangAll = null } = {}) {
   const q = (s) => "'" + String(s).replace(/'/g, "'\\''") + "'"
   const L = ['#!/bin/sh']
   if (log) {
     // 一次调用一组、一个参数一行（空参数也要留得住：`--body ''` 是「不给 gh 开交互式编辑器」的判据）。
     L.push(`printf '%s\\n' ${q(GH_CALL_MARKER)} >> ${q(log)}`)
     L.push(`for a in "$@"; do printf '%s\\n' "$a" >> ${q(log)}; done`)
+  }
+  // 「对任何 argv 都挂死」（票「gh 探测也要有界」）：连 `--version` 都不答 —— 无上界探测的现场形状。
+  // 默认**留下一个攥着管道的孙进程**（把坑放回原样），`exec: true` 才让 shell 自己被替换掉。
+  const hang = hangAll === true ? {} : hangAll
+  if (hang) {
+    const secs = Math.max(5, Math.round((hang.hangMs || 30000) / 1000))
+    const sleeper = (REAL.sleep ? q(REAL.sleep) : 'sleep') + ' ' + secs
+    L.push('      ' + (hang.exec ? 'exec ' : '') + sleeper)
+    if (!hang.exec) L.push('      exit 0')
+    return L.join('\n') + '\n'
   }
   L.push('case "$1" in')
   L.push('  --version) echo "gh version 9.9.9 (HARNESS-STUB)"; exit 0 ;;')
@@ -200,17 +228,28 @@ const ENV_KEYS = [
   'HOME', 'PATH', 'DSH_GH_DATA_DIR', 'GIT_CONFIG_GLOBAL', 'GH_TOKEN', 'GITHUB_TOKEN',
   // 回落路径的上界（票「gh_pr … 回落 gh pr create」）：门禁把它压到秒级，好做「挂死」用例。
   'DSH_GH_PR_TIMEOUT_MS',
+  // gh **探测**的上界（票「gh 探测也要有界：probeGh 不能无限等」）：同上 —— 不列在这里会被夹具清掉，
+  // 于是旋钮静默失效、用例退回 5s 默认值（本仓踩过这类「夹具把环境悄悄换掉」的坑）。
+  'DSH_GH_PROBE_TIMEOUT_MS',
   'HTTP_PROXY', 'HTTPS_PROXY', 'ALL_PROXY', 'NO_PROXY', 'http_proxy', 'https_proxy', 'all_proxy', 'no_proxy',
 ]
 
-function snapshotEnv() {
+function snapshotEnv(extraKeys) {
   const out = {}
-  for (const k of ENV_KEYS) out[k] = process.env[k]
+  for (const k of new Set([...ENV_KEYS, ...(extraKeys || [])])) out[k] = process.env[k]
   return out
 }
 
+/**
+ * 把合成环境装进 process.env。
+ *
+ * ⚠️ **调用方点名的键必须真的设进去**（`ENV_KEYS ∪ patch 的键`）—— 2026-10-14 实测踩过：
+ * 原来只遍历 `ENV_KEYS`，`opts.env` 里那些「不在清单里的键」会被**静默丢掉**：
+ * `DSH_GH_PROBE_TIMEOUT_MS` 没生效（用例退回 5s 默认值）、`DSH_GH_RELEASE_API` 没生效
+ *（于是「不外网」的判据其实打了真网，还测了个空）。没点名的键照旧一律清空。
+ */
 function applyEnv(patch) {
-  for (const k of ENV_KEYS) {
+  for (const k of new Set([...ENV_KEYS, ...Object.keys(patch || {})])) {
     if (Object.prototype.hasOwnProperty.call(patch, k)) {
       const v = patch[k]
       if (v === undefined || v === null) delete process.env[k]
@@ -223,7 +262,7 @@ function applyEnv(patch) {
 }
 
 function restoreEnv(saved) {
-  for (const k of ENV_KEYS) {
+  for (const k of Object.keys(saved)) {
     if (saved[k] === undefined) delete process.env[k]
     else process.env[k] = saved[k]
   }
@@ -260,7 +299,7 @@ export async function importPluginAt(home, tag) {
  * fn 收到 `{ mod, tools, tool(name), provided }`。
  */
 export async function withPlugin(home, opts, fn) {
-  const saved = snapshotEnv()
+  const saved = snapshotEnv(Object.keys(opts.env || {}))
   applyEnv({
     HOME: home,
     PATH: opts.path !== undefined ? opts.path : `${home}/.bin`,
@@ -306,8 +345,7 @@ export async function startStub(kind = 'ok', { failFirst = 2, to = null } = {}) 
 }
 
 /** 挂死服务：接受连接但**永不回包**（证「上界」真的生效）。 */
-export async function startBlackhole() {
-  const socks = []
+export async function startBlackhole() {  const socks = []
   const server = http.createServer(() => { /* 故意不回 */ })
   server.on('connection', (s) => { socks.push(s); s.on('error', () => {}) })
   await listen(server)
