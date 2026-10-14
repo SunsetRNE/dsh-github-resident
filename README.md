@@ -243,6 +243,7 @@ node verify-real-artifact.mjs  # 拿官方 release 真包验抽取器（断网�
 | `DSH_GH_SYS_LAYER_TTL_MS` | 系统层（L1）结论的保鲜期：期内复用、过期重探（宿主 apt 装卸 gh 都能及时反映） | `10000` |
 | `DSH_GH_RELEASE_API` / `DSH_GH_DOWNLOAD_BASE` | release 元数据 / 下载基址（夹具与私有镜像用） | 官方 |
 | `DSH_GH_OAUTH_CLIENT_ID` | 撤销 token 用的 OAuth client id | 占位常量 |
+| `DSH_GH_NET_TIMEOUT_MS` | 对 GitHub 的 REST 动作的上界（`api()` / release 元数据 / 撤销 token 三处；超时按「超时 / 未知」回，**不重试**）。钳 100ms–120s | `20000` |
 | `DSH_GH_API_PORT` | 插件回环接口端口（设置页/脚本都打它）。改端口要同时给页面注入 `window.__DSH_GITHUB_RESIDENT_API__`，否则面板失联（审计 L12） | `31790` |
 | `DSH_GH_REGISTRY_DIR` | 登记文件库的数据根（含 `registry/consent.json`、`index.json`、`repos/`） | `~/.dsh/github-resident` |
 

@@ -283,17 +283,61 @@ function mask(token) {
   return `${token.slice(0, 4)}…${token.slice(-4)} (len=${token.length})`;
 }
 
+/**
+ * 对 GitHub 的 REST 动作的**统一上界**（票「给对 GitHub 的网络动作定一套统一的有界冗余策略（可达性随机）」
+ * 的收窄版：只把三处**完全没有上界**的 REST 调用变成有界；重试 / 退避 / 双通道**不在本票范围**）。
+ * 默认 20s，`DSH_GH_NET_TIMEOUT_MS` 可覆盖；钳 100ms–120s。调用时才读，改环境不用重载插件
+ *（与 `ghProbeTimeoutMs` 同款写法）。
+ */
+const GH_NET_DEFAULT_MS = 20000;
+
+/** 导出给门禁直接钉「可配 + 上下限钳制 + 调用时才读」这三条（与 readHostsEntry / resolveIdentity 同一种接缝）。 */
+export function ghNetTimeoutMs() {
+  const raw = Number(process.env.DSH_GH_NET_TIMEOUT_MS);
+  const ms = Number.isFinite(raw) && raw > 0 ? Math.round(raw) : GH_NET_DEFAULT_MS;
+  return Math.min(120 * 1000, Math.max(100, ms));
+}
+
+/**
+ * 带上界的 fetch：超时抛一个**说得清是超时**的错（`err.timedOut` / `err.boundMs`），
+ * 而不是让调用方拿到一个泛化错误、或者永远等下去（本仓不许的第三态）。
+ * 只加上界这一件事 —— 传输层怎么选（fetch / curl）、要不要重试都保持现状（票面「留给下一轮」）。
+ */
+async function fetchBounded(url, init = {}) {
+  const ms = ghNetTimeoutMs();
+  try {
+    return await fetch(url, { ...init, signal: AbortSignal.timeout(ms) });
+  } catch (e) {
+    if (e && (e.name === 'TimeoutError' || e.name === 'AbortError')) {
+      const err = new Error('请求在 ' + ms + 'ms 上界内没有回话（超时）—— 结果**未知**，不是「没有」'
+        + '（要调上界：DSH_GH_NET_TIMEOUT_MS）');
+      err.timedOut = true;
+      err.boundMs = ms;
+      throw err;
+    }
+    throw e;
+  }
+}
+
 async function api(token, method, urlPath, body) {
-  const res = await fetch(`https://api.github.com${urlPath}`, {
-    method,
-    headers: {
-      accept: 'application/vnd.github+json',
-      'user-agent': 'dsh-github-resident',
-      ...(token ? { authorization: `Bearer ${token}` } : {}),
-      ...(body ? { 'content-type': 'application/json' } : {}),
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
+  let res;
+  try {
+    res = await fetchBounded(`https://api.github.com${urlPath}`, {
+      method,
+      headers: {
+        accept: 'application/vnd.github+json',
+        'user-agent': 'dsh-github-resident',
+        ...(token ? { authorization: `Bearer ${token}` } : {}),
+        ...(body ? { 'content-type': 'application/json' } : {}),
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch (e) {
+    // 超时是**第三种事实**：既不是「没身份」，也不是某个 HTTP 状态。如实回出去（`status` 留 null、
+    // `timedOut` 为真），由每个调用方按自己的话术说「超时 / 未知」—— 别在这里吞成泛化错误。
+    const message = String((e && e.message) || e);
+    return { status: null, ok: false, timedOut: true, error: message, json: { message } };
+  }
   const text = await res.text();
   let json;
   try {
@@ -1497,9 +1541,12 @@ export function apply(ctx) {
       let identity = null;
       if (token) {
         const me = await api(token, 'GET', '/user');
+        // 超时不是「HTTP null」：如实标成 timeout，把那条「上界内没有回话」的原话带上（票「…有界冗余策略」收窄版）。
         identity = me.ok
           ? { login: me.json.login, name: me.json.name ?? null, scopes: null }
-          : { error: `HTTP ${me.status}`, message: me.json.message ?? null };
+          : me.timedOut
+            ? { error: 'timeout', message: me.json.message ?? null }
+            : { error: `HTTP ${me.status}`, message: me.json.message ?? null };
       }
 
       return {
@@ -1573,7 +1620,11 @@ export function apply(ctx) {
         // 提交邮箱：如实报「现在接线会用哪个」；`ask` 只在**还没填过、也没问过**时出现，跳过即什么都不写。
         email: commitEmail(state, login),
         ask: askEmail ? emailQuestion(login) : null,
-        identity: me.ok ? { login: me.json.login, name: me.json.name ?? null } : { error: `HTTP ${me.status}`, message: me.json.message ?? null },
+        identity: me.ok
+          ? { login: me.json.login, name: me.json.name ?? null }
+          : me.timedOut
+            ? { error: 'timeout', message: me.json.message ?? null }
+            : { error: `HTTP ${me.status}`, message: me.json.message ?? null },
       };
     },
   }));
@@ -1791,7 +1842,9 @@ export function apply(ctx) {
           ok: created.ok,
           reason: created.ok
             ? null
-            : 'HTTP ' + created.status + (created.json && created.json.message ? '：' + created.json.message : ''),
+            : created.timedOut
+              ? '超时：' + ((created.json && created.json.message) || created.error || '请求没有回话')
+              : 'HTTP ' + created.status + (created.json && created.json.message ? '：' + created.json.message : ''),
         });
         return {
           ok: created.ok,
@@ -1973,9 +2026,9 @@ export function apply(ctx) {
     throw new Error('tar.gz 里没有 bin/gh');
   }
 
-  /** 拿到 release 元数据；测试可用 DSH_GH_RELEASE_API 指向本地夹具。 */
+  /** 拿到 release 元数据；测试可用 DSH_GH_RELEASE_API 指向本地夹具。**带上界**（超时的错说得清是超时）。 */
   async function releaseMeta() {
-    const res = await fetch(RELEASE_API, {
+    const res = await fetchBounded(RELEASE_API, {
       headers: { 'user-agent': 'dsh-github-resident', accept: 'application/vnd.github+json' },
     });
     if (!res.ok) throw new Error('release API HTTP ' + res.status);
@@ -2364,14 +2417,15 @@ sys.stdout.flush()
     }
     const id = process.env.DSH_GH_OAUTH_CLIENT_ID || 'DSH_GITHUB_RESIDENT_CLIENT_ID';
     try {
-      const r = await fetch('https://api.github.com/applications/' + id + '/token', {
+      const r = await fetchBounded('https://api.github.com/applications/' + id + '/token', {
         method: 'DELETE',
         headers: { accept: 'application/vnd.github+json', authorization: 'Basic ' + Buffer.from(id + ':').toString('base64') },
         body: JSON.stringify({ access_token: token }),
       });
       return { attempted: true, status: r.status, revoked: r.status === 204 };
     } catch (e) {
-      return { attempted: true, error: String(e) };
+      // 超时时**不许**说成「没撤成」：请求可能已经到达 GitHub —— 如实标「未知」（timedOut + 那句话）。
+      return { attempted: true, timedOut: Boolean(e && e.timedOut), error: String((e && e.message) || e) };
     }
   }
 
