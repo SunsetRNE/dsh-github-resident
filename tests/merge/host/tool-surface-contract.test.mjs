@@ -216,7 +216,7 @@ const businessKeys = (receipt) => Object.keys(receipt || {}).filter((k) => !ENVE
 
 // 两段只允许**描述性**键：谁要是把 login / masked / token 这类**取值**键塞进协议，这条会挡住 ——
 // 协议是描述，不是「跑这份协议这台机器」的快照。
-const DESCRIPTIVE_KEYS = ['what', 'sourceOfTruth', 'priority', 'points', 'pointsNote', 'fieldsFrom', 'fields', 'readers', 'tool', 'boundsNote', 'boundary', 'actions', 'views']
+const DESCRIPTIVE_KEYS = ['what', 'sourceOfTruth', 'priority', 'points', 'pointsNote', 'subprocessIdentity', 'fieldsFrom', 'fields', 'readers', 'tool', 'boundsNote', 'boundary', 'actions', 'views']  // subprocessIdentity：票 #37 加的「子进程身份能说到哪」那句（描述性，如实登记）
 
 const surfaceHome = makeHome('surface', { withGh: true })
 let surface = null

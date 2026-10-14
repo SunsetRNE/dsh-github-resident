@@ -14,6 +14,12 @@
  *   ③ **谁戴谁不戴**（漏一个或错戴一个即红）：行为判据（桩/包装脚本记下子进程 env）＋ 静态清单
  *      （每个 gh 的 fork 点必须显式写明「戴」或「不戴」，`badge.opts` 只许出现在两个声明过的位置）。
  *
+ *   ④ **「戴了」≠「赢了」（票 #37 已裁：经验判据 + 措辞收窄）**：git 组回执多一个 `gitCredential`
+ *      （`plugin-helper` / `none`），没指路时必须附一句 note；经验判据把「我们答的」钉在**实测**上 ——
+ *      宿主是 **host 作用域** 的 stale 助手（`gh auth setup-git` 写的就是那条）时仍回插件凭据，
+ *      并用**真 gh** 实测 `GH_TOKEN` 对 hosts.yml 的优先权（没有真 gh 就如实跳过，不假装）。
+ *      这条**不宣称**证到「整条链路就是用这份凭据认证成功的」（ssh 远端 / URL 内嵌凭据 / extraheader 与本注入无关）。
+ *
  * 隔离（沿用合成环境矩阵的规矩）：假 HOME + 只含夹具 bin 的 PATH + **自造的真源与 gh 桩**；
  * 不读真实 HOME、不碰宿主 git 配置、不起真实外网请求。用法：node tests/merge/host/subprocess-env.test.mjs
  */
@@ -21,7 +27,7 @@ import { dirname, join } from 'node:path'
 import { execFile, execFileSync } from 'node:child_process'
 import { chmodSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { check, note, readText, section, skip, summary } from './_check.mjs'
-import { makeHome, readGhEnv, readGhCalls, REAL, withPlugin } from './_env-harness.mjs'
+import { makeHome, readGhEnv, readGhCalls, REAL, whichReal, withPlugin } from './_env-harness.mjs'
 
 const TOKEN = 'ghp_subprocessEnvFake00000000000000000000'
 const TOKEN2 = 'ghp_subprocessEnvFake22222222222222222222'
@@ -450,6 +456,102 @@ check(staleFill.username === 'stale-user',
   '不戴工牌时拿到的仍是宿主那条（对照组成立，说明上面那条不是碰巧）')
 
 // ---------------------------------------------------------------------------
+section('六、票 #37（已裁：经验判据 + 措辞收窄）：把「戴了」与「指没指路」分开')
+
+// 6a. **host 作用域**的 stale 助手（`gh auth setup-git` 写的就是这一条 —— 本机最常见的那种形状，
+//     旧判据只覆盖了全局 `credential.helper`）：注入下仍必须是我们答的。
+const hE = home('se-e', { withGh: true })
+stateFile(hE, { token: TOKEN, login: LOGIN })
+const hostScopedCfg = join(hE.home, 'host-scoped.gitconfig')
+writeFileSync(hostScopedCfg, '[credential "https://github.com"]\n\thelper = store\n')
+writeFileSync(join(hE.home, '.git-credentials'), 'https://stale-user:stale-token@github.com\n', { mode: 0o600 })
+
+let eEnv = null
+await withPlugin(hE.home, { path: hE.pathWithReal, dataDir: join(hE.home, '.dsh', 'gh-cli') }, async ({ provided }) => {
+  eEnv = await provided.ghResolver.identityEnv({ groups: ['git'] })
+})
+const eBase = { ...process.env, PATH: hE.pathWithReal + ':' + dirname(process.execPath), HOME: hE.home }
+const eBadge = { ...eBase, ...eEnv.git, GIT_CONFIG_GLOBAL: hostScopedCfg, GIT_TERMINAL_PROMPT: '0' }
+const eFill = await gitCredentialFill(eBadge, 'github.com')
+check(eFill.username === LOGIN,
+  '宿主是 **host 作用域** 的 stale 助手时，winning 的仍是插件身份（' + eFill.username + '）')
+const eStale = await gitCredentialFill({ ...eBase, GIT_CONFIG_GLOBAL: hostScopedCfg, GIT_TERMINAL_PROMPT: '0' }, 'github.com')
+check(eStale.username === 'stale-user',
+  '对照：不戴工牌时那条 host 作用域助手照旧赢（说明上一条不是碰巧）')
+
+// 6b. 真源**没有 token** 时：git 组不许指路（不给「有助手但永远不答」的假接线），且回执必须如实说「没指路」。
+const hF = home('se-f', { withGh: true })
+stateFile(hF, { login: LOGIN, user_email: 'tester@example.com' })   // 有登录名、没 token
+const { repo: repoF } = makeRepo(hF, 'repo-f')
+let fEnv = null
+let fCommit = null
+await withPlugin(hF.home, { path: hF.pathWithReal, dataDir: join(hF.home, '.dsh', 'gh-cli') }, async ({ tool, provided }) => {
+  fEnv = await provided.ghResolver.identityEnv({ groups: ['git'] })
+  writeFileSync(join(repoF, 'f.txt'), 'f\n')
+  fCommit = await tool('gh_commit').execute({ repo: repoF, message: 't', push: false }, {})
+})
+const credEntriesOf = (gitEnv) => Object.keys(gitEnv)
+  .filter((k) => /^GIT_CONFIG_KEY_\d+$/.test(k) && gitEnv[k] === CRED_KEY)
+  .map((k) => gitEnv['GIT_CONFIG_VALUE_' + k.slice('GIT_CONFIG_KEY_'.length)])
+check(credEntriesOf(fEnv.git).length === 0,
+  '真源没 token → git 组**不指路**（不塞一个永远不答的助手）')
+check(fEnv.git.GIT_TERMINAL_PROMPT === '0' && Object.keys(fEnv.git).length > 0,
+  '但这一组照样戴（不许问人 + 身份两项）：applied 仍为真')
+const fBadge = fCommit && fCommit.identityEnv
+check(fBadge && fBadge.applied.includes('git') && fBadge.gitCredential === 'none',
+  '回执如实说「没指路」（gitCredential=none）：' + JSON.stringify(fBadge))
+check(fBadge && typeof fBadge.note === 'string' && /没有指路|不等于「赢了」/.test(fBadge.note),
+  '并附一句人话把「戴了 ≠ 赢了」说清：' + JSON.stringify(fBadge && fBadge.note))
+
+// 6c. 有 token 时：回执说「已指向插件自有助手」（这条路上实测是我们答的）。
+const hG = home('se-g', { withGh: true })
+stateFile(hG, { token: TOKEN, login: LOGIN })
+const { repo: repoG } = makeRepo(hG, 'repo-g')
+let gBadge = null
+let gEnvOfG = null
+await withPlugin(hG.home, { path: hG.pathWithReal, dataDir: join(hG.home, '.dsh', 'gh-cli') }, async ({ tool, provided }) => {
+  gEnvOfG = await provided.ghResolver.identityEnv({ groups: ['git'] })
+  writeFileSync(join(repoG, 'g.txt'), 'g\n')
+  const r = await tool('gh_commit').execute({ repo: repoG, message: 't', push: false }, {})
+  gBadge = r && r.identityEnv
+})
+check(gBadge && gBadge.gitCredential === 'plugin-helper',
+  '有 token → 回执说 plugin-helper（与 6a 的实测对得上）：' + JSON.stringify(gBadge))
+const gCreds = credEntriesOf(gEnvOfG.git)
+check(gCreds.length === 2 && gCreds[0] === '' && /^!/.test(gCreds[1] || ''),
+  '而且真的指路了：先空值清场、再指向插件助手（' + JSON.stringify(gCreds.map((v) => v.slice(0, 28))) + '）')
+check(gBadge && gBadge.note === undefined, '一切正常时不啰嗦（没指路那句 note 不出现）')
+
+// 6d. gh 那条：`GH_TOKEN` 对 hosts.yml 的优先权 —— 用**真 gh** 实测（没有真 gh 就如实跳过）。
+const realGh = whichReal('gh')
+if (!realGh) {
+  skip('本机没有真 gh：`GH_TOKEN` 优先权这条实测跳过（CI 上有 gh，会真断）')
+} else {
+  const hH = home('se-h', { withGh: true })
+  stateFile(hH, { token: TOKEN, login: LOGIN })
+  mkdirSync(join(hH.home, '.config', 'gh'), { recursive: true })
+  writeFileSync(join(hH.home, '.config', 'gh', 'hosts.yml'),
+    'github.com:\n    oauth_token: stale-gh-token\n    user: stale-user\n    git_protocol: https\n', { mode: 0o600 })
+  let ghEnv = null
+  await withPlugin(hH.home, { path: hH.pathWithReal, dataDir: join(hH.home, '.dsh', 'gh-cli') }, async ({ provided }) => {
+    ghEnv = await provided.ghResolver.identityEnv({ groups: ['gh'] })
+  })
+  check(ghEnv.gh.GH_TOKEN === TOKEN, 'gh 组注入的是真源 token（不是 hosts.yml 那条）')
+  // 显式指定夹具的 gh 配置目录：运行器把 GH_CONFIG_DIR 指向它自己的临时目录，
+  // 不指定的话「对照」那条读不到夹具 hosts.yml（走运行器才暴露的坑）。
+  const fixtureCfg = join(hH.home, '.config', 'gh')
+  const authEnv = { ...process.env, HOME: hH.home, GH_CONFIG_DIR: fixtureCfg, ...ghEnv.gh, NO_COLOR: '1' }
+  const withTok = await new Promise((resolve) => {
+    execFile(realGh, ['auth', 'token'], { env: authEnv, maxBuffer: 1024 * 1024 }, (err, stdout) => resolve(String(stdout || '').trim()))
+  })
+  check(withTok === TOKEN, '真 gh 在注入环境下取到的就是我们的 token（' + withTok.slice(0, 12) + '…）')
+  const noTok = await new Promise((resolve) => {
+    execFile(realGh, ['auth', 'token'], { env: { ...process.env, HOME: hH.home, GH_CONFIG_DIR: fixtureCfg, NO_COLOR: '1' }, maxBuffer: 1024 * 1024 }, (err, stdout) => resolve(String(stdout || '').trim()))
+  })
+  check(noTok === 'stale-gh-token', '对照：不带 GH_TOKEN 时真 gh 取的是 hosts.yml 那条（说明上一条不是碰巧）')
+}
+
+// ---------------------------------------------------------------------------
 section('五、跑完一圈：宿主配置面逐字节未变、不多出文件；token 不进回执')
 
 let gitConfigExists = true
@@ -475,9 +577,12 @@ check(readFileSync(join(hD.home, '.git-credentials'), 'utf8')
 check(readFileSync(hostGlobal, 'utf8') === '[credential]\n\thelper = store\n', '宿主的全局 git 配置逐字节未变')
 
 note('本用例覆盖：服务位那一支（两组 / 空重置 / 现值 / 落点 / 同源）、实跑两条（注入成、不注入败）、'
-  + '真 git credential fill 三条（工牌赢 / 不误伤别的 host / 对照）、戴与不戴的行为 + 静态清单、宿主不留痕。')
+  + '真 git credential fill 四条（工牌赢 / host 作用域形状也赢 / 不误伤别的 host / 对照）、戴与不戴的行为 + 静态清单、'
+  + '回执的 gitCredential 两态与「没指路」那句 note、真 gh 的 GH_TOKEN 优先权（含对照）、宿主不留痕。')
 note('没覆盖（写清楚，不假装）：真 GitHub 上的认证（这里全是桩与本地远端）；Deck 半边怎么消费这一支'
   + '（那是《Deck 半边接消费面（执行环境由消费面供给）》的事，它有自己的合成环境格）。')
+note('票 #37 的边界也写清楚：「谁赢了不可知」不是含糊话 —— 本用例证明的是**凭据助手这条路我们答的、gh 那条赢在优先权**；'
+  + '若真源没 token（gitCredential=none）则压根没指路，凭据由宿主自己的助手决定。')
 
 cleanup()
 summary()

@@ -662,6 +662,19 @@ async function withBadge(group, extra = {}) {
   const env = await identityEnv({ groups: [group] });
   const applied = Object.keys(env[group]).length > 0;
   const badge = { applied: applied ? [group] : [], source: env.source };
+  // 票 #37（已裁「经验判据 + 措辞收窄」）：`applied` 只说「往这一组注入了环境」，**不区分**两种情形 ——
+  //   · 已清场并指向插件自有助手（这条路上**实测是我们答的**：宿主压着过期的 store 助手时仍回插件凭据，判据在 subprocess-env）；
+  //   · 真源 state 里没有 token，**压根没指路**（identityEnv 那一支不进），凭据由宿主自己的助手决定。
+  // 后者最容易被读成「赢了」，所以单列一个字段如实说，没指路时再附一句 note。
+  if (group === 'git' && applied) {
+    // 注意：助手那条在 env 里是 `GIT_CONFIG_KEY_<i>` 的**值**（键名是 git 的配置项写法），不是属性名 ——
+    // 按属性名找会永远找不到（这一点是本票判据第一次跑就抓出来的：有 token 却被判成「没指路」）。
+    const pointed = Object.keys(env.git).some((k) => /^GIT_CONFIG_KEY_\d+$/.test(k) && env.git[k] === CRED_HOST_HELPER_KEY);
+    badge.gitCredential = pointed ? 'plugin-helper' : 'none';
+    if (!pointed) {
+      badge.note = 'git 这条**没有指路**（真源 state 里没有 token）：凭据由宿主自己的助手决定 —— 「戴了」不等于「赢了」';
+    }
+  }
   if (env.degraded && env.degraded.length) badge.degraded = env.degraded.slice();
   return { opts: { ...extra, env: { ...process.env, ...env[group] } }, badge };
 }
@@ -2919,6 +2932,8 @@ sys.stdout.flush()
       priority: ['env:GH_TOKEN', 'env:GITHUB_TOKEN', 'state:~/.dsh/github-resident.json', 'gh-cli:~/.config/gh/hosts.yml'],
       points: ['git', 'gh-cli', 'env', 'path'],
       pointsNote: '四个消费点：git（凭据助手两个作用域 + 全局身份）/ gh CLI 凭据 / 子进程环境 / PATH 落点；每个点的当前状态与补救命令在 gh_identity 的回执里',
+      // 票 #37 已裁（经验判据 + 措辞收窄）：这一句就是「子进程身份这条能说到哪、说不到哪」的**唯一口径**。
+      subprocessIdentity: '子进程身份（ghResolver.identityEnv）的回执分两层：`applied` 只说「往哪几组注入了环境」；git 组另有 `gitCredential` —— `plugin-helper` ＝ 已清场并指向插件自有助手，**这条路上实测是我们答的**（宿主里压着过期的 store 助手／host 作用域助手时，`git credential fill` 回的仍是插件凭据；判据在 tests/merge/host/subprocess-env.test.mjs），`none` ＝ 真源 state 里没有 token、**根本没有指路**，凭据由宿主自己的助手决定（此时回执带一句 note 明说）。gh 组靠 `GH_TOKEN`，对 hosts.yml 有**文档化优先权**（同判据实测）。两样都**不宣称**「整条链路就是用这份凭据认证成功的」：ssh 远端、URL 内嵌凭据、http.extraheader 这些路径与本注入无关，谁赢不可知。',
       fieldsFrom: 'gh_identity',
       // 这一段说的字段＝**体检视图**（身份事实：谁、接了没、缺什么）；工具另外三个动作（接线 / 对账 / 撤销）
       // 各自的字段在 `views` 里，同样是同一处声明（GH_IDENTITY_VIEWS）派生出来的。
