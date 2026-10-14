@@ -25,9 +25,9 @@
  */
 import { dirname, join } from 'node:path'
 import { execFile, execFileSync } from 'node:child_process'
-import { chmodSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
+import { accessSync, chmodSync, constants, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { check, note, readText, section, skip, summary } from './_check.mjs'
-import { makeHome, readGhEnv, readGhCalls, REAL, whichReal, withPlugin } from './_env-harness.mjs'
+import { makeHome, readGhEnv, readGhCalls, REAL, withPlugin } from './_env-harness.mjs'
 
 const TOKEN = 'ghp_subprocessEnvFake00000000000000000000'
 const TOKEN2 = 'ghp_subprocessEnvFake22222222222222222222'
@@ -523,7 +523,13 @@ check(gCreds.length === 2 && gCreds[0] === '' && /^!/.test(gCreds[1] || ''),
 check(gBadge && gBadge.note === undefined, '一切正常时不啰嗦（没指路那句 note 不出现）')
 
 // 6d. gh 那条：`GH_TOKEN` 对 hosts.yml 的优先权 —— 用**真 gh** 实测（没有真 gh 就如实跳过）。
-const realGh = whichReal('gh')
+//
+// 真 gh **只按固定绝对路径找，绝不扫 PATH**：合成环境矩阵把子进程的 PATH 设成「只有夹具 bin」，
+// 而那里放的是 gh **桩** —— 扫 PATH 会拿到桩，于是「真 gh 优先权」这条在矩阵三格里红
+// （2026-07-15 CI 抓出来的；本地直跑/走运行器都绿，正是矩阵要消灭的那类「看这台机器长什么样」）。
+const realGh = ['/usr/local/bin/gh', '/usr/bin/gh', '/bin/gh'].find((p) => {
+  try { accessSync(p, constants.X_OK); return true } catch { return false }
+}) || null
 if (!realGh) {
   skip('本机没有真 gh：`GH_TOKEN` 优先权这条实测跳过（CI 上有 gh，会真断）')
 } else {
