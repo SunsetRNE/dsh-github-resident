@@ -10,6 +10,8 @@
 
 Issues 与 specs 都在 GitHub Issues 里（`SunsetRNE/dsh-github-resident`，走 `gh` CLI）。See `docs/agents/issue-tracker.md`.
 （随包 `deck_*` 工具走同一 tracker；装了就是首选路径 —— origin 侧补充）
+（**开工中冒出来的需求怎么分流** —— 当场两问、当场开票、出声三行 —— 见该文件「Wayfinding operations」的
+Mid-flight discovery 一节；这条对**普通执行会话**（没跑 `/wayfinder` 的那些）同样适用 —— origin 侧补充）
 
 ### Triage labels
 
