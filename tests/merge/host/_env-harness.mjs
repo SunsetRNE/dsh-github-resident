@@ -351,7 +351,9 @@ export async function withPlugin(home, opts, fn) {
     mod.apply({
       tools: { register: (t) => { tools.set(t.name, t); return () => {} } },
       provide: (k, v) => { provided[k] = v },
-      effect: () => () => {},
+      // 启动路径（ctx.effect 里的那些）默认**不跑**：绝大多数用例要的是「不碰网络、不绑端口」的确定性。
+      // 需要驱动启动路径的用例显式开 opts.runEffects（票 47 的接管/熔断判据就是这么驱动的）。
+      effect: (cb) => { if (opts.runEffects && typeof cb === 'function') { try { cb() } catch { /* 启动路径自己的异常不该盖过用例 */ } } return () => {} },
       inject: () => {},
       get: () => undefined,
     })

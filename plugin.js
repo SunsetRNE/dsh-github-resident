@@ -1460,7 +1460,7 @@ const TOOL_PROTOCOL = [
   { name: 'gh_cli_status', kind: 'read', required: [], optional: [], returns: ['version', 'authenticated', 'activeAccount', 'gitCredentialHelper', 'hosts'] },
   { name: 'gh_cli_setup_git', kind: 'write', required: [], optional: ['set_identity'], returns: ['exitCode', 'credentialHelper', 'gitUserName', 'gitUserEmail', 'identityEnv'] },
   { name: 'gh_cli_logout', kind: 'write', required: [], optional: ['hostname', 'confirm', 'revoke', 'purge_git', 'reset_state', 'uninstall_gh', 'remove_gh_cache', 'remove_gh_config', 'dry_run'], returns: ['ok', 'dryRun', 'hostname', 'tokenMasked', 'steps', 'verify', 'leftover'] },
-  { name: 'gh_cli_resolve', kind: 'read', required: [], optional: [], returns: ['resolved', 'system', 'pluginCache', 'dataDir', 'arch', 'autoLandOnNextUse', 'lastInstall'] },
+  { name: 'gh_cli_resolve', kind: 'read', required: [], optional: [], returns: ['resolved', 'system', 'pluginCache', 'dataDir', 'arch', 'autoLandOnNextUse', 'lastInstall', 'takeover'] },
   // 2026-10-14（票「gh_identity {wire|verify|unwire}：投影接线 + 对账 + 可撤」）：它从只读工具变成
   // 「默认只读 + 三个能写的动作」，所以 kind 从 read 变 write（并从 guarantees.readOnlyTools 里退出 —— 诚实）。
   // 必填仍为空：不带 action 时就是体检，行为与从前逐字节一致。returns 是五个动作视图的并集（一处声明派生）。
@@ -2157,17 +2157,17 @@ export function apply(ctx) {
   }
 
   /** 落地一份自带 gh；已经能用则直接回。失败不抛，把诊断回给调用方。 */
-  async function ensureGh({ force = false, prefer = 'auto' } = {}) {
+  async function ensureGh({ force = false, prefer = 'auto', distrustCache = false } = {}) {
     // 同一时刻只允许一次落地：GC 会删下载残留，并发的两次落地会互相把包删掉。
     if (gcInFlight) await gcInFlight;      // 先等 GC 让开，免得它删掉我们正在下的包
     if (ensureGhInFlight) return ensureGhInFlight;
-    ensureGhInFlight = ensureGhOnce({ force, prefer }).finally(() => { ensureGhInFlight = null; });
+    ensureGhInFlight = ensureGhOnce({ force, prefer, distrustCache }).finally(() => { ensureGhInFlight = null; });
     return ensureGhInFlight;
   }
 
   let ensureGhInFlight = null;
 
-  async function ensureGhOnce({ force = false, prefer = 'auto' } = {}) {
+  async function ensureGhOnce({ force = false, prefer = 'auto', distrustCache = false } = {}) {
     if (!force) {
       const cached = await probeGh(GH_BIN);
       if (cached.ok) return { ok: true, layer: 'plugin-cache', path: GH_BIN, version: cached.version };
@@ -2187,7 +2187,11 @@ export function apply(ctx) {
         if (r.ok) break;
       }
     }
-    const probe = await probeGh(GH_BIN);
+    // 票 47：记录/大小显示这份副本可疑时，**绝不执行它**（没写成的东西一跑就可能把机器带走）；
+    // 只有这次真的重写了它（有成功的落地尝试）才去探。
+    const probe = (distrustCache && !attempts.some((a) => a.ok))
+      ? { ok: false, bin: GH_BIN, version: null, timedOut: false, skipped: '可疑副本不执行（票 47）' }
+      : await probeGh(GH_BIN);
     const result = {
       ok: probe.ok,
       layer: probe.ok ? 'plugin-cache' : 'none',
@@ -2200,15 +2204,47 @@ export function apply(ctx) {
     };
     if (probe.ok) {
       await fs.mkdir(GH_DATA_DIR, { recursive: true });
-      await fs.writeFile(GH_STATE, JSON.stringify({
+      const facts = await ghBinaryFacts(GH_BIN);
+      await writeGhStateFile({
         installedAt: new Date().toISOString(), version: probe.version, tag: result.tag,
         arch: GH_ARCH, source: attempts.filter((a) => a.ok).map((a) => a.step),
-      }, null, 2) + '\n', { mode: 0o600 });
+        // 票 47：落地即「确认接管」——下次启动只核对记录，不再重复落地。
+        takeover: {
+          at: new Date().toISOString(), by: 'auto', layer: result.layer, path: GH_BIN,
+          version: probe.version, size: facts.size, sha256: facts.sha256, ok: true,
+        },
+        pending: null,
+      });
     }
     lastEnsure = result;
     return result;
   }
 
+  /** 落地副本的体检事实：大小 ＋ sha256 —— 只在接管时算一次，不进探测热路径。 */
+  async function ghBinaryFacts(p) {
+    try {
+      const buf = await fs.readFile(p);
+      return { size: buf.length, sha256: createHash('sha256').update(buf).digest('hex') };
+    } catch { return { size: null, sha256: null }; }
+  }
+
+  const readGhStateFile = async () => fs.readFile(GH_STATE, 'utf8').then((t) => JSON.parse(t)).catch(() => ({}));
+  const writeGhStateFile = async (obj) => {
+    await fs.mkdir(GH_DATA_DIR, { recursive: true });
+    await fs.writeFile(GH_STATE, JSON.stringify(obj, null, 2) + '\n', { mode: 0o600 });
+  };
+
+  /** 缓存副本的完整性：与接管记录比对**大小**（便宜，且能抓住「没写完」那种）。 */
+  async function cacheGhIntact() {
+    const rec = (await readGhStateFile()).takeover;
+    if (!rec || !rec.ok || rec.path !== GH_BIN || !rec.size) return { known: false, intact: true };
+    const st = await fs.stat(GH_BIN).catch(() => null);
+    if (!st) return { known: true, intact: false, why: '记录说落地过，但文件不在了' };
+    if (st.size !== rec.size) return { known: true, intact: false, why: '大小与记录不符（' + st.size + ' ≠ ' + rec.size + '）—— 像是没写完的副本' };
+    return { known: true, intact: true };
+  }
+
+  let lastTakeover = null;
   let lastEnsure = null;
   let ghMemo = null;
   /**
@@ -2225,7 +2261,7 @@ export function apply(ctx) {
    * 全插件唯一的 gh 入口。system = 宿主已装（有就用），plugin-cache = 自带，
    * 两者都没有且 install !== false 时自动落地一份。
    */
-  async function resolveGh({ install = true, force = false, prefer = 'auto' } = {}) {
+  async function resolveGh({ install = true, force = false, prefer = 'auto', skipCache = false } = {}) {
     // install:false 是"读路径"（面板 buildSnapshot / gh_cli_status / 版本探测），它不落地，
     // 但系统层结论必须能过期重探：否则 L1 出现之前留下的 plugin-cache 会一直在，同一个插件里
     // gh_cli_resolve（install:true）报 system、gh_cli_status 报 plugin-cache，口径互相打架；
@@ -2248,7 +2284,9 @@ export function apply(ctx) {
     // L1 未命中：只把这次结论当"此刻的快照"，下次读路径重探（见 sysMemoPending）。
     sysMemoPending = true;
     sysProbedAt = Date.now();
-    const cached = await probeGh(GH_BIN, { timeoutMs: probeMs });
+    const cached = skipCache
+      ? { ok: false, bin: GH_BIN, version: null, timedOut: false, skipped: '记录显示这份副本可疑 —— 不执行（票 47）' }
+      : await probeGh(GH_BIN, { timeoutMs: probeMs });
     if (cached.ok) {
       // 系统层没答上来、插件缓存这层有一份能跑的：这份是**能用的**答案，但系统层那次超时要如实带着走。
       ghMemo = {
@@ -2695,6 +2733,11 @@ sys.stdout.flush()
         autoLandOnNextUse: !sys.ok && !cached.ok && !timedOut,
         ...(timedOut ? { timedOut: true } : {}),
         lastInstall: state,
+        takeover: lastTakeover
+          ? { action: lastTakeover.action, ok: Boolean(lastTakeover.ok), layer: lastTakeover.layer || null, path: lastTakeover.path || null,
+              version: lastTakeover.version || null, pendingAt: lastTakeover.pendingAt || null,
+              attempts: Array.isArray(lastTakeover.attempts) ? lastTakeover.attempts.length : null, note: lastTakeover.note || null }
+          : null,
         lastEnsure: lastEnsure ? { ok: lastEnsure.ok, pending: lastEnsure.pending === true, layer: lastEnsure.layer, arch: lastEnsure.arch, attempts: lastEnsure.attempts } : null,
       };
     },
@@ -4608,21 +4651,63 @@ sys.stdout.flush()
     refreshSnapshot(true).catch(() => {});
   }
 
+  /**
+   * gh 的**接管**（票 47 手机现场的收口）：启动时判断一次，之后**不再重复执行**。
+   *
+   * 为什么要有它（2026-10-14 手机实测）：没有 gh 的机器上，**每次启动**都会自动落地一次
+   * （下载 ~15MB ＋ 在 JS 里把整包读进内存解包出 39MB）。若这一步在某台机器上是致命的，
+   * 就成了「启动 → 落地 → 机器死 → 重启 → 又落地」的**自锁环**（现场表现：界面一直「检查中」/
+   * 「接口不可达」，点任何要 gh 的东西都白屏）。三条规矩：
+   *   ① **能跑就接管**（系统层优先）：记 {layer, path, version, size, sha256}；记录已在且没变 → 只「确认」，什么都不做；
+   *   ② **落地前先写 pending**；
+   *   ③ **熔断**：下次启动若还看得到 pending，说明上次落地没回来 → **不再自动落地**，如实记进 lastTakeover；
+   *      唯一解闸口是显式 gh_cli_install。普通失败（没网 / 4xx）**不算熔断**（清掉 pending，下次启动可再试）。
+   * 「损坏」＝ 记录说接管过、现在跑不起来（或大小与记录不符）→ **替换一次**，且**绝不执行可疑的那份**。
+   */
+  async function ghTakeover() {
+    const st = await readGhStateFile();
+    const intact = await cacheGhIntact();
+    const g = await resolveGh({ install: false, force: true, skipCache: !intact.intact });
+    if (g.ok) {
+      const facts = g.layer === 'plugin-cache' ? await ghBinaryFacts(GH_BIN) : { size: null, sha256: null };
+      const rec = st.takeover || null;
+      const same = Boolean(rec && rec.ok && rec.path === g.path && rec.version === g.version
+        && rec.size === facts.size && (facts.sha256 === null || rec.sha256 === facts.sha256));
+      if (!same || st.pending) {
+        await writeGhStateFile({
+          ...st, pending: null,
+          takeover: { at: new Date().toISOString(), by: 'adopt', layer: g.layer, path: g.path, version: g.version, size: facts.size, sha256: facts.sha256, ok: true },
+        });
+      }
+      return { ok: true, action: same ? 'confirmed' : 'adopted', layer: g.layer, path: g.path, version: g.version, attempts: [] };
+    }
+    if (st.pending) {
+      return {
+        ok: false, action: 'breaker-open', skipped: true,
+        pendingAt: st.pending.at || null, pendingReason: st.pending.reason || null,
+        note: '上一次自动落地没有回来（' + (st.pending.at || '时间未知') + '）—— 本插件**不再自动重试**；要落地请显式跑 gh_cli_install（它会清掉这条待办）',
+      };
+    }
+    const damaged = Boolean((st.takeover && st.takeover.ok) || !intact.intact);
+    await writeGhStateFile({ ...st, pending: { at: new Date().toISOString(), reason: damaged ? 'damaged' : 'first-run' } });
+    const res = await ensureGh({ force: damaged, distrustCache: damaged || !intact.intact });
+    const fresh = await readGhStateFile();
+    await writeGhStateFile(res.ok
+      ? { ...fresh, pending: null }
+      : { ...fresh, pending: null, lastFailed: { at: new Date().toISOString(), attempts: (res.attempts || []).slice(0, 4) } });
+    return { ...res, action: res.ok ? (damaged ? 'repaired' : 'installed') : 'failed' };
+  }
+
   function scheduleAutoLand() {
     if (process.env.DSH_GH_NO_BOOTSTRAP === '1') return;
-    resolveGh({ install: false })
-      .then((g) => {
-        if (g.ok) return null;
-        lastEnsure = { pending: true, at: new Date().toISOString() };
-        return ensureGh({});
-      })
+    ghTakeover()
       .then((res) => {
-        if (!res) return null;
+        lastTakeover = res;
         lastEnsure = res;
-        if (res.ok) return gcCache({}); // 落地顺带清残留，缓存目录不会被旧包堆满
+        if (res.ok && (res.action === 'installed' || res.action === 'repaired')) return gcCache({}); // 只有真落地过才顺手清残留
         return null;
       })
-      .catch(() => { /* 后台落地失败不影响插件加载，诊断留在 lastEnsure */ });
+      .catch((e) => { lastTakeover = { ok: false, action: 'error', error: String((e && e.message) || e) }; lastEnsure = lastTakeover; });
   }
 
   // 加载期预置第二部分：版本自更新（有更新才动手，24h 冷却）。
