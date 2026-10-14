@@ -109,8 +109,10 @@ check(routeSeg.length > 200 && /ghVersion\(\{ install: false \}\)/.test(routeSeg
 check(/resolveGh\(\{ install: false \}\)/.test(flow), 'startDeviceFlowPty 里的 resolveGh 也只读')
 check(/timeout: 5000/.test(sliceFn(src, 'openUrl')), 'openUrl 的 xdg-open 有上界（5s）—— 它一挂，请求就永不返回')
 const clientSrc = readText('client.js')
-check(/fetch\(API \+ '\/auth\/start', \{ method: 'POST', signal: AbortSignal\.timeout\(/.test(clientSrc),
-  '面板的 /auth/start 请求带上界：busy 一定会松开（按钮不会永远点不动）')
+// 票 51 第 2 步：面板改走宿主 RPC 后，「上界」这件事从 fetch 的 AbortSignal 换成了宿主侧的有界（见本文件第五节）——
+// 判据**等价换、不静默删**：断言取码走唯一出口 call('ghr.authStart')，且面板里再没有裸 fetch 打插件接口。
+check(/call\('ghr\.authStart'/.test(clientSrc), "取码走宿主 RPC 的唯一出口 call('ghr.authStart')")
+check(!/fetch\(API/.test(clientSrc), '面板里不再有裸 fetch 打自开端口（fetch(API…) 归零）')
 check(/flow && flow\.error \?/.test(clientSrc), '失败原因会渲染出来（原先 flow.error 没人用）')
 
 

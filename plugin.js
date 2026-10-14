@@ -4628,7 +4628,7 @@ sys.stdout.flush()
       } catch (err) {
         send(500, { error: String(err) });
       }
-    });
+    };
     // 端口被占（重复加载）不该静默：留一条诊断，/state 里能看到（审计 L5）。
     server.on('error', (e) => {
       lastServerError = {
@@ -4638,7 +4638,7 @@ sys.stdout.flush()
         message: String((e && e.message) || e).slice(0, 200),
         note: '端口被占时首个实例继续服务；本实例的 HTTP 路由不可达',
       };
-    };
+    });
     const server = http.createServer(handleResidentRequest);
     server.listen(port, '127.0.0.1');
     return server;
@@ -4745,15 +4745,23 @@ sys.stdout.flush()
 
   /** 把 13 条路由挂到宿主 RPC 上（服务位 dswEndpoints 由另一半边 provide —— 票 51 裁决 B）。 */
   function registerResidentEndpoints() {
-    const h = typeof ctx.get === 'function' ? ctx.get('dswEndpoints') : null;
+    let h = null;
+    // 取服务位这一步本身可能抛（真宿主与夹具的行为不同：夹具静默返回 undefined，真服务可能报「服务不存在」）——
+    // 注册失败只该少一条通道，绝不许影响加载期的其它工作（端口外壳、快照、工具注册）。
+    try { h = typeof ctx.get === 'function' ? ctx.get('dswEndpoints') : null; } catch { h = null; }
     if (!h || typeof h.handle !== 'function') return { ok: false, note: 'dswEndpoints 服务位不可用（宿主另一半边未加载）' };
-    for (const [name, method, path] of RESIDENT_ENDPOINTS) {
-      h.handle('ghr.' + name, async (args) => {
-        const a = args || {};
-        return await dispatchResident({ method: a.method || method, url: path + (a.query ? '?' + a.query : '') });
-      });
+    try {
+      for (const [name, method, path] of RESIDENT_ENDPOINTS) {
+        h.handle('ghr.' + name, async (args) => {
+          const a = args || {};
+          return await dispatchResident({ method: a.method || method, url: path + (a.query ? '?' + a.query : '') });
+        });
+      }
+      return { ok: true, count: RESIDENT_ENDPOINTS.length };
+    } catch (e) {
+      // 挂端点失败只该少一条通道 —— 加载期的其它工作（端口外壳、快照、工具注册）不受影响。
+      return { ok: false, note: '挂端点失败：' + String((e && e.message) || e) };
     }
-    return { ok: true, count: RESIDENT_ENDPOINTS.length };
   }
 
   if (typeof ctx.effect === 'function') {
