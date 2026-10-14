@@ -29,11 +29,12 @@
  */
 
 import { spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { releaseLease, requireLoadLease } from './_load-lease.mjs'
+import { removeTreeRobust } from './_rm-safe.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = resolve(HERE, '..', '..')
@@ -172,7 +173,12 @@ try {
     process.stdout.write('\n')
   }
 } finally {
-  rmSync(root, { recursive: true, force: true })
+  // 收尾**不该判红**：只读夹具目录（例如 env-probe 的「HOME 不可写」场景）在非 root 下删不动，
+  // 裸 rmSync 会抛 EACCES 把**全绿**的一遍判成失败（2026-10-15 v1.9.0 发版实测：判据全绿、Release 没发出去）。
+  const cleaned = removeTreeRobust(root)
+  if (!cleaned.removed) {
+    process.stdout.write('   note 收尾：临时目录没删干净（' + cleaned.error + '）—— 不影响本次结论\n')
+  }
 }
 
 console.log('===== tests/merge 汇总 =====')

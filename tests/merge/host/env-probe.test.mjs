@@ -176,6 +176,10 @@ if (isRoot()) {
     'H 只读 HOME = degraded（实得 ' + itemOf(rH, 'home-writable').state + '）')
   check(!!itemOf(rH, 'home-writable').next, 'H 只读 → 给下一步')
 }
+// 只读 HOME 是**故意**造的，用完立刻恢复：非 root 下删不动的目录会毒到运行器收尾
+// （2026-10-15 v1.9.0 发版实测：判据全绿、运行器收尾 EACCES、Release 没发出去）。
+chmodSync(hH.home, 0o700)
+
 // 两种跑法都能验的等价物：HOME 指向不存在的路径
 const goneH = join(tmpDir('envprobe-h-gone'), 'never-created')     // 真不存在的 HOME
 const rH2 = await withScenario(goneH, { path: join(goneH, '.bin'), dataDir: join(goneH, '.dsh'), tag: 'h2' },

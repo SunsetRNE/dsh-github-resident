@@ -31,6 +31,7 @@ import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { REPO_ROOT } from './_check.mjs'
+import { removeTreeRobust } from '../_rm-safe.mjs'
 
 export const PLUGIN_URL = pathToFileURL(join(REPO_ROOT, 'plugin.js')).href
 
@@ -253,7 +254,9 @@ export function makeHome(tag, { files = {}, withGh = false, ghExits = 0, withCur
     hasRealGit: Boolean(REAL.git),
     ghLog,
     ghEnvLog,
-    cleanup: () => { try { rmSync(home, { recursive: true, force: true }) } catch { /* 收尾 */ } },
+    // 只读夹具（makeHome 之后被 chmod 的，例如 env-probe 的 HOME 不可写场景）删之前先补权限：
+    // 裸 rmSync 会 EACCES 并**把只读目录留在运行器根里**，运行器收尾再炸一次（v1.9.0 发版实测）。
+    cleanup: () => { removeTreeRobust(home) },
   }
 }
 
