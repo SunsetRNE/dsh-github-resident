@@ -170,9 +170,15 @@ check(before.listing === after.listing, 'HOME 里没有多出文件（不落盘�
 // ================================================================ 不联网 + 复用接缝（源码级）
 section('不联网与复用接缝（源码这一格写的是什么）')
 const src = readText('plugin.js')
-const start = src.indexOf("toolName: 'gh_identity'")
-const end = src.indexOf("toolName: 'gh_protocol'")
-const block = (start >= 0 && end > start) ? src.slice(start, end) : ''
+// 切片钉到**这一段注册自己**：起点是 gh_identity 那一行，终点是它之后的**下一次注册**
+//（原来是切到 `toolName: 'gh_protocol'` —— 于是「两者之间新增一个工具」就会被误当成体检段的一部分：
+//  2026-10-14 加 gh_load_lease 时实测撞红，抓到的是新工具里的 'status'，不是体检在跑 gh auth status）。
+const anchor = "toolName: 'gh_identity'"
+const start = src.indexOf(anchor)
+const nextReg = start < 0 ? -1 : src.indexOf('ctx.tools.register(textTool({', start + anchor.length)
+const block = (start >= 0 && nextReg > start) ? src.slice(start, nextReg) : ''
+check(block.length > 0 && block.indexOf("toolName: 'gh_load_lease'") < 0,
+  'gh_identity 的注册段定位到了，且**只含它自己**（切到下一次注册为止）')
 check(block.length > 0, 'gh_identity 的注册段定位到了')
 check(block.indexOf('api(') < 0, '体检段不调 api(（REST 会打网）')
 // 判据按**调用形态**走：要跑 `gh auth status` 必然出现 'status' 这个参数，或者 run( 里带 'auth'。

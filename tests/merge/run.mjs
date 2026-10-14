@@ -33,6 +33,7 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync } from 'node:fs
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { releaseLease, requireLoadLease } from './_load-lease.mjs'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const REPO_ROOT = resolve(HERE, '..', '..')
@@ -119,6 +120,14 @@ if (entries.filter((e) => e.file).length === 0) {
   process.exit(3)
 }
 
+// 重活租约（票「重活租约」）：全量门禁是重活 —— 同一台机器一次只许一份。
+// 多会话并跑会把宿主压垮（本机实测被杀 6 次）。拿不到锁就**如实拒绝**，一个门禁子进程都不起。
+const LEASE_HOLDER = requireLoadLease({
+  holder: 'verify:merge@' + (process.env.DSH_SESSION_ID || ('pid' + process.pid)),
+  purpose: 'verify:merge（全量合并包门禁' + (only ? ' --only ' + only : '') + '）',
+})
+console.log('')
+
 const root = mkdtempSync(join(tmpdir(), 'tests-merge-'))
 const env = isolatedEnv(root)
 
@@ -169,6 +178,12 @@ try {
 console.log('===== tests/merge 汇总 =====')
 console.log(`通过 ${passed} · 失败 ${failed} · 被阻塞 ${blocked}`)
 for (const s of skipped) console.log('SKIP  ' + s)
+
+// 放锁：只有自己取的那份才放（祖先进程持有的话 LEASE_HOLDER 是 null，不替它放）。
+if (LEASE_HOLDER) {
+  const rel = releaseLease(LEASE_HOLDER)
+  console.log(rel && rel.released ? '重活租约：已释放' : ('重活租约：释放时如实回报 —— ' + JSON.stringify(rel)))
+}
 
 if (failed > 0) process.exit(1)
 if (blocked > 0) process.exit(2)

@@ -78,6 +78,9 @@ const writeStub = (dir, name, body) => {
 /** gh 桩记 argv 的分隔行（写与读共用一处，别在两处各写一遍格式）。 */
 export const GH_CALL_MARKER = '---CALL---'
 
+/** gh 桩记 env 的分隔行（票「子进程环境…」：桩要看得见「工牌到没到子进程」）。 */
+export const GH_ENV_MARKER = '---ENV---'
+
 /** 读回 gh 桩记下的 argv：每次调用一组参数，空参数也保留。 */
 export function readGhCalls(logFile) {
   if (!existsSync(logFile)) return []
@@ -88,6 +91,25 @@ export function readGhCalls(logFile) {
   for (const line of lines) {
     if (line === GH_CALL_MARKER) { cur = []; calls.push(cur); continue }
     if (cur) cur.push(line)
+  }
+  return calls
+}
+
+/**
+ * 读回 gh 桩记下的 env（与 argv 分开一个文件：argv 那份的格式已被两张门禁依赖，别动它）。
+ * 每次调用回一个对象：`{ GH_TOKEN: '…' | '<unset>', GIT_CONFIG_COUNT: … }` —— 记的是桩当时**真的**看到的那些键。
+ */
+export function readGhEnv(logFile) {
+  if (!existsSync(logFile)) return []
+  const lines = readFileSync(logFile, 'utf8').split('\n')
+  if (lines.length && lines[lines.length - 1] === '') lines.pop()
+  const calls = []
+  let cur = null
+  for (const line of lines) {
+    if (line === GH_ENV_MARKER) { cur = {}; calls.push(cur); continue }
+    if (!cur) continue
+    const i = line.indexOf('=')
+    if (i > 0) cur[line.slice(0, i)] = line.slice(i + 1)
   }
   return calls
 }
@@ -123,13 +145,21 @@ export async function orphanHoldsPipes(cmd, args = ['pr', 'create']) {
  *
  * 桩里**不写裸命令名**：夹具的 PATH 只有夹具 bin，`sleep` 一律走绝对路径。
  */
-export function ghStubScript({ log = null, prCreate = null, hangAll = null } = {}) {
+export function ghStubScript({ log = null, envLog = null, recordEnv = null, prCreate = null, hangAll = null } = {}) {
   const q = (s) => "'" + String(s).replace(/'/g, "'\\''") + "'"
   const L = ['#!/bin/sh']
   if (log) {
     // 一次调用一组、一个参数一行（空参数也要留得住：`--body ''` 是「不给 gh 开交互式编辑器」的判据）。
     L.push(`printf '%s\\n' ${q(GH_CALL_MARKER)} >> ${q(log)}`)
     L.push(`for a in "$@"; do printf '%s\\n' "$a" >> ${q(log)}; done`)
+  }
+  if (envLog) {
+    // 记**这次子进程 env 里那几个键长什么样**（票「子进程环境…」的取证手段）：没设的记 `<unset>`，
+    // 这样「工牌到没到子进程」是可判定的，而不是靠读父进程的代码猜。
+    L.push(`printf '%s\\n' ${q(GH_ENV_MARKER)} >> ${q(envLog)}`)
+    for (const k of (recordEnv && recordEnv.length ? recordEnv : ['GH_TOKEN'])) {
+      L.push(`printf '%s=%s\\n' ${q(k)} "\${${k}-<unset>}" >> ${q(envLog)}`)
+    }
   }
   // 「对任何 argv 都挂死」（票「gh 探测也要有界」）：连 `--version` 都不答 —— 无上界探测的现场形状。
   // 默认**留下一个攥着管道的孙进程**（把坑放回原样），`exec: true` 才让 shell 自己被替换掉。
@@ -178,8 +208,9 @@ export function ghStubScript({ log = null, prCreate = null, hangAll = null } = {
  *   pathWithReal —— bin + 真实 PATH（少数需要真环境的场景用）
  *   hasRealCurl / hasRealGit —— 如实报夹具里到底是不是真货
  *   ghLog —— gh 桩记 argv 的落点（只有传了 `gh: { log: true }` 才有；读它用 `readGhCalls`）
+ *   ghEnvLog —— gh 桩记 **env** 的落点（只有传了 `gh: { envLog: true, recordEnv: [...] }` 才有；读它用 `readGhEnv`）
  *
- * `gh`：富桩选项（见 ghStubScript）：`{ log, prCreate }` —— 用它才认 `pr create`。
+ * `gh`：富桩选项（见 ghStubScript）：`{ log, envLog, recordEnv, prCreate }` —— 用它才认 `pr create`、才记 env。
  */
 export function makeHome(tag, { files = {}, withGh = false, ghExits = 0, withCurl = true, withGit = true, withSh = true, gh = null } = {}) {
   const home = mkdtempSync(join(tmpdir(), 'dsh-env-' + tag + '-'))
@@ -194,10 +225,12 @@ export function makeHome(tag, { files = {}, withGh = false, ghExits = 0, withCur
   }
   // gh 桩记 argv 的落点：`gh.log === true` 时默认落在 home 里（调用方拿得到，见返回值 `ghLog`）。
   const ghLog = gh && gh.log ? (typeof gh.log === 'string' ? gh.log : join(home, 'gh-argv.log')) : null
+  // 记 env 的落点（票「子进程环境…」）：与 argv 那份**分开**（argv 的格式已被两张门禁依赖，别动它）。
+  const ghEnvLog = gh && gh.envLog ? (typeof gh.envLog === 'string' ? gh.envLog : join(home, 'gh-env.log')) : null
   if (withGh) {
-    // `gh` 选项给的是「会答 pr create / 会记 argv / 会挂死」的富桩；不给就还是老的两行桩。
+    // `gh` 选项给的是「会答 pr create / 会记 argv 与 env / 会挂死」的富桩；不给就还是老的两行桩。
     writeStub(bin, 'gh', gh
-      ? ghStubScript({ ...gh, log: ghLog })
+      ? ghStubScript({ ...gh, log: ghLog, envLog: ghEnvLog, recordEnv: gh.recordEnv })
       : (ghExits === 0
         ? '#!/bin/sh\necho "gh version 9.9.9 (HARNESS-STUB)"\n'
         : '#!/bin/sh\nexit 1\n'))
@@ -219,6 +252,7 @@ export function makeHome(tag, { files = {}, withGh = false, ghExits = 0, withCur
     hasRealCurl: Boolean(REAL.curl),
     hasRealGit: Boolean(REAL.git),
     ghLog,
+    ghEnvLog,
     cleanup: () => { try { rmSync(home, { recursive: true, force: true }) } catch { /* 收尾 */ } },
   }
 }

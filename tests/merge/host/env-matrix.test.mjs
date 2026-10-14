@@ -1,5 +1,5 @@
 /**
- * tests/merge/host/env-matrix.test.mjs —— 合成环境矩阵：同一套门禁 × 七种环境，各格**明确期望结论**。
+ * tests/merge/host/env-matrix.test.mjs —— 合成环境矩阵：同一套门禁 × 多种环境（现在是八种），各格**明确期望结论**。
  *
  * 为什么需要它（2026-10-14，票「合成环境矩阵门禁（把本轮的坑变成常态红灯）」）：
  * 在这之前，发布门禁只证明「在**跑门禁这台机器**上恰好绿」——合成环境是每张票顺手各写一遍
@@ -22,6 +22,7 @@ import { execFile } from 'node:child_process'
 import { join } from 'node:path'
 import { check, note, section, skip, summary, REPO_ROOT } from './_check.mjs'
 import { makeHome, isRoot } from './_env-harness.mjs'
+import { releaseLease, requireLoadLease } from '../_load-lease.mjs'
 
 const GATES = {
   resolver: 'tests/merge/host/identity-resolver.test.mjs',
@@ -33,6 +34,9 @@ const GATES = {
   pr: 'tests/merge/host/pr-fallback.test.mjs',
   // 票「gh 探测也要有界」：挂死的 gh 桩同样是自造的 —— 同理进矩阵（外层有没有 gh 都不该影响它）。
   probeBound: 'tests/merge/host/gh-probe-bound.test.mjs',
+  // 票「子进程环境：插件启动的 gh / git 子进程按需带上真源 token」：真源（state）与 gh 桩都是自造的，
+  // 桩会记下**子进程 env 长什么样** —— 同样进矩阵，证明它不看跑门禁这台机器有什么。
+  subprocessEnv: 'tests/merge/host/subprocess-env.test.mjs',
 }
 
 /**
@@ -50,6 +54,7 @@ const TABLE = [
       { gate: 'probe', expect: 'pass' },
       { gate: 'pr', expect: 'pass' },
       { gate: 'probeBound', expect: 'pass', why: '挂死的 gh 桩是它自己造的：外层有没有 gh 都不该影响' },
+      { gate: 'subprocessEnv', expect: 'pass', why: '真源与 gh 桩都是它自己造的，全离线' },
     ],
   },
   {
@@ -73,6 +78,22 @@ const TABLE = [
       { gate: 'surface', expect: 'pass' },
       { gate: 'probe', expect: 'skip', why: '身份判据在 resolver/audit 两格；探针不读 hosts.yml，没有新信息' },
       { gate: 'pr', expect: 'pass', why: '本票的目标环境就是它（有 gh、三处无 token）' },
+      { gate: 'subprocessEnv', expect: 'pass', why: '「宿主什么都没有」这一半正是它自己的环境之一（它另造真源）' },
+    ],
+  },
+  {
+    // 票「子进程环境：插件启动的 gh / git 子进程按需带上真源 token」的目标环境：
+    // **宿主没配 gh 凭据、也没全局 git 配置，但真源 state 里有 token 与登录名**。
+    // 这一格要回答的是「插件自己 spawn 的子进程能不能拿到身份」，与「宿主配没配」无关。
+    name: 'no-host-identity（宿主没配 gh 凭据 / 没全局 git 配置；真源 state 有 token）',
+    home: {
+      tag: 'm-noident', withGh: true,
+      files: { '.dsh/github-resident.json': JSON.stringify({ token: 'ghp_matrixFake0000000000000000000000000000', login: 'matrix-user' }) },
+    },
+    gates: [
+      { gate: 'subprocessEnv', expect: 'pass', why: '本票的目标环境（真源有身份、宿主什么都没有）' },
+      { gate: 'audit', expect: 'pass', why: '体检在这种环境里也得如实：不假绿、也不假装没身份' },
+      { gate: 'resolver', expect: 'pass' },
     ],
   },
   {
@@ -160,13 +181,23 @@ async function pool(items, limit, worker) {
  */
 const MATRIX_POOL = Math.min(4, Math.max(1, Number(process.env.DSH_TEST_MATRIX_POOL) || 3))
 
-section('一、矩阵：七种环境 × 环境敏感门禁，逐格对照期望结论')
+// 矩阵也是重活（一次起一堆子进程）：自己上锁。被全量 runner 带着跑时（祖先已持有）不重复取。
+const LEASE_HOLDER = requireLoadLease({
+  holder: 'env-matrix@' + (process.env.DSH_SESSION_ID || ('pid' + process.pid)),
+  purpose: '合成环境矩阵（tests/merge/host/env-matrix.test.mjs）',
+})
+
+section('一、矩阵：' + TABLE.length + ' 种环境 × 环境敏感门禁，逐格对照期望结论')
 const startedAt = Date.now()
 const prepared = TABLE.map((row) => {
   const h = makeHome(row.home.tag, {
     withGh: row.home.withGh,
     withCurl: row.home.withCurl !== false,
     ghExits: row.home.ghExits || 0,
+    // 环境自带文件（票「子进程环境…」那一格要一个「真源有 token」的 HOME）与富桩：
+    // 表说「这格长什么样」就得真长那样，别让门禁自己去猜。
+    files: row.home.files || {},
+    gh: row.home.gh || null,
   })
   const dataDir = row.home.dataDirMissing ? join(h.home, 'never-created', 'gh-cli') : join(h.home, '.dsh', 'gh-cli')
   return { row, h, dataDir }
@@ -236,5 +267,11 @@ note('  ④ HOME 有/无 gh 登录态 → baseline 与 gh-unauthenticated 两个
 for (const { h } of prepared) h.cleanup()
 hS.cleanup()
 hHang.cleanup()
+
+// 放锁（只有自己取的那份才放；被全量 runner 带着跑时 LEASE_HOLDER 是 null，不替它放）。
+if (LEASE_HOLDER) {
+  const rel = releaseLease(LEASE_HOLDER)
+  note('重活租约：' + (rel && rel.released ? '已释放' : ('释放时如实回报 —— ' + JSON.stringify(rel))))
+}
 
 summary()

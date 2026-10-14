@@ -58,7 +58,7 @@ function run(cmd, args, opts = {}) {
  * 所以这里到点就自己结算，并显式放掉我们这端的管道：上界由**这一段代码**保证，不由子进程的收场保证。
  * 返回形状与 run() 一致，只多一个 `timedOut`。
  */
-function runBounded(cmd, args, { timeoutMs, graceMs = 500 } = {}) {
+function runBounded(cmd, args, { timeoutMs, graceMs = 500, env = null } = {}) {
   return new Promise((resolve) => {
     let settled = false;
     let timer = null;
@@ -75,7 +75,11 @@ function runBounded(cmd, args, { timeoutMs, graceMs = 500 } = {}) {
       try { if (child && child.unref) child.unref(); } catch { /* 已经跑完 */ }
     };
     try {
-      child = execFile(cmd, args, { maxBuffer: 8 * 1024 * 1024, timeout: timeoutMs, killSignal: 'SIGKILL' }, (err, stdout, stderr) => {
+      // env 通道（票「子进程环境…」）：与 run() 同一条规矩 —— 只认调用方显式给的**合并结果**（见 withBadge）。
+      child = execFile(cmd, args, {
+        maxBuffer: 8 * 1024 * 1024, timeout: timeoutMs, killSignal: 'SIGKILL',
+        ...(env ? { env } : {}),
+      }, (err, stdout, stderr) => {
         finish({
           code: err ? (typeof err.code === 'number' ? err.code : 1) : 0,
           stdout: stdout || '',
@@ -97,8 +101,16 @@ function runBounded(cmd, args, { timeoutMs, graceMs = 500 } = {}) {
   });
 }
 
-function git(repo, args) {
-  return run('git', ['-C', repo, ...args]);
+/**
+ * git 子进程出口。
+ *
+ * `opts`（票「子进程环境…」）：透传给 run() —— 身份与凭据要戴工牌时走 `withBadge('git').opts`；
+ * **不传就是今天的样子**（继承现进程 env、只认宿主盘上的 git 配置）——体检 / 接线 / 对账那些「问盘上是什么」的
+ * 调用**必须**走这条不传的路（注入会把「盘上真值」读成注入值：实测 `git config --get` 与 `git var` 取注入值，
+ * 而 `git config --global --get` 仍读盘上）。
+ */
+function git(repo, args, opts = {}) {
+  return run('git', ['-C', repo, ...args], opts);
 }
 
 /**
@@ -342,12 +354,15 @@ async function commitRepo(repo, message, push) {
   if (add.code !== 0) return { repo, step: 'add', ok: false, stderr: add.stderr.trim() };
   const staged = (await git(repo, ['diff', '--cached', '--name-only'])).stdout.trim();
   if (!staged) return { repo, step: 'commit', ok: false, reason: 'no staged changes' };
-  const commit = await git(repo, ['commit', '-m', message]);
-  if (commit.code !== 0) return { repo, step: 'commit', ok: false, stderr: commit.stderr.trim() };
+  // 提交与推送**戴 git 组**（票「子进程环境…」）：提交要「谁写的」、推送要过凭据这一关 ——
+  // 宿主全局 git 配置与 ~/.git-credentials 撤掉之后，这两步靠的就是它。`add` / 读状态那些不戴。
+  const badge = await withBadge('git');
+  const commit = await git(repo, ['commit', '-m', message], badge.opts);
+  if (commit.code !== 0) return { repo, step: 'commit', ok: false, stderr: commit.stderr.trim(), identityEnv: badge.badge };
   const sha = (await git(repo, ['rev-parse', '--short', 'HEAD'])).stdout.trim();
-  const result = { repo, step: 'commit', ok: true, sha, files: staged.split('\n').length, message };
+  const result = { repo, step: 'commit', ok: true, sha, files: staged.split('\n').length, message, identityEnv: badge.badge };
   if (!push) return result;
-  const pushRes = await git(repo, ['push']);
+  const pushRes = await git(repo, ['push'], badge.opts);
   result.push = pushRes.code === 0 ? 'ok' : 'failed';
   if (pushRes.code !== 0) result.push_stderr = (pushRes.stderr || pushRes.stdout).trim().slice(0, 500);
   return result;
@@ -388,6 +403,21 @@ const WIRE_LEDGER_FILE = path.join(WIRE_DIR, 'ledger.json');
 const WIRE_CONSENT_FILE = path.join(WIRE_DIR, 'consent.json');
 const WIRE_LEDGER_SCHEMA = 'dsh-github-resident/wire-ledger';
 const WIRE_CONSENT_SCHEMA = 'dsh-github-resident/wire-consent';
+
+// 运行期身份环境的落点（票「子进程环境：插件启动的 gh / git 子进程按需带上真源 token」）。
+// 与接线目录 `WIRE_DIR` **故意分开**：接线是「把真源投射到宿主盘上」（可对账、可撤销、要同意），
+// 运行期是「给这一次子进程指路」（插件自有资产、不碰宿主、不需要同意）—— 合成一个目录会让体检/台账串味
+//（「助手存在」与「接线过没接过」变成同一个事实）。助手源码与接线那份**同源**（同一个常量）。
+const RUNTIME_DIR = process.env.DSH_GH_RUNTIME_DIR || path.join(STATE_DIR, 'github-resident', 'runtime');
+const RUNTIME_HELPER_FILE = path.join(RUNTIME_DIR, 'git-credential-helper');
+
+// 重活租约的落点（协议 `load` 段 / 工具 `gh_load_lease`）。
+// 「重活」＝全量门禁 / 合成环境矩阵这类会同时起一堆子进程的活。同一台机器上**一次只许一份**：
+// 本机实测宿主进程被系统杀过 6 次（00:35 / 00:51 / 01:07 / 01:17 / 02:16 / 02:18），签名都是「外部杀」，
+// 而相关性明确 —— 重活并跑 / 连着跑；多会话并跑时各自的 agent 看不见别人，所以规矩要写进协议、锁要自己上。
+const LOAD_LEASE_FILE = process.env.DSH_GH_LOAD_LEASE || path.join(STATE_DIR, 'github-resident', 'load-lease.json');
+const LOAD_LEASE_DEFAULT_TTL_MS = 30 * 60 * 1000;
+const LOAD_LEASE_HELD_ENV = 'DSH_GH_LOAD_LEASE_HELD';   // 祖先进程已持有时传给子进程的记号（runner 与门禁共用）
 /** 凭据助手的落点（host 作用域）：它**优先于**全局 `credential.helper`；写全局会把所有 host 都劫走。 */
 const CRED_HOST_HELPER_KEY = 'credential.https://' + GH_HOST + '.helper';
 
@@ -431,9 +461,222 @@ process.stdin.on('end', () => {
 `;
 
 /**
+ * 落一份插件自有凭据助手（0755；内容已一致就不重写，免得每次提交都改 mtime）。
+ *
+ * 两处共用**同一份源码**、两个落点，语义不同（见 `RUNTIME_DIR` 那段注释）：接线那处要台账可对账，
+ * 运行期这处只是「给这一次子进程指路」。写盘失败不抛给调用方 —— 由调用方按「没戴上」如实报。
+ */
+async function landGitCredentialHelper(dir, file) {
+  await fs.mkdir(dir, { recursive: true, mode: 0o700 });
+  await chmodQuiet(dir, 0o700);
+  const cur = await fs.readFile(file, 'utf8').catch(() => null);
+  if (cur !== GIT_CREDENTIAL_HELPER_SRC) {
+    await fs.writeFile(file, GIT_CREDENTIAL_HELPER_SRC, { mode: 0o755 });
+  }
+  await chmodQuiet(file, 0o755);
+  return file;
+}
+
+const ensureRuntimeHelper = () => landGitCredentialHelper(RUNTIME_DIR, RUNTIME_HELPER_FILE);
+
+/** 登录名：解析器的答案优先（state / hosts.yml 来源才有），否则退回 state 里可能存在的 login/user。 */
+function identityLogin(state, resolved) {
+  return (resolved && resolved.login) || (typeof state.login === 'string' ? state.login : '')
+    || (typeof state.user === 'string' ? state.user : '') || '';
+}
+
+/**
+ * 子进程身份环境（票「子进程环境：插件启动的 gh / git 子进程按需带上真源 token」）
+ * —— **两组、分开给**、值**现算不缓存**。
+ *
+ * 谁戴谁不戴，判断在**调用点**（本函数只负责"给什么"）：
+ *   戴 —— 真要以**插件身份**做事的动作：git 的提交 / 推送（身份与凭据）、`gh api user` 这类以身份作答的调用；
+ *   不戴 —— 探活（`gh --version`）、状态与读数（四处 `gh auth status`、`hosts.yml`、`git config --global …`）。
+ *   理由是**实测**的：`GH_TOKEN` 一旦给了子进程，它会**盖过** gh 自己的登录态（假 token 下 `auth status` 报
+ *   GH_TOKEN 无效、hosts.yml 里的账号不再 active）—— 戴在读数上会把「宿主自己登没登录」读成「插件有身份」，
+ *   也会把体检读成假绿。
+ *
+ * 返回 `{ gh, git, source, login, degraded }`（`degraded` 只在落盘失败这种降级情形下非空）：
+ *   - `gh` 组：`GH_TOKEN` + 非交互三件套（`GH_PROMPT_DISABLED` / `GH_PAGER` / `NO_COLOR`）；
+ *     **不含** `GH_CONFIG_DIR`（那是 gh 自己的家，替它搬家就读不出「它自己登没登录」）；
+ *     真源没有 token 时**空组** —— 宁可什么都不给，也不给一套看起来「配好了」的假环境。
+ *   - `git` 组：`GIT_TERMINAL_PROMPT=0` + `GIT_CONFIG_*` 注入身份与凭据助手；**不含** `GH_TOKEN`
+ *     （git 的环境「同屋共享」：commit hook、子模块、兄弟进程都读得到）。
+ *     ⚠️ **空值重置必须排在助手之前**（实测，git 2.43）：git 的助手是「按配置出现顺序依次问、先答者胜」，
+ *     而**文件的条目排在命令行（`GIT_CONFIG_*`）注入的条目之前** —— 宿主已有的 `credential.helper=store`
+ *     （里头常压着过期凭据）或 gh 写的 host 作用域助手会先被问到并作答，工牌根本没被问到（实测拿到的是 `stale-user`）。
+ *     先注入一条**空的同一个键**把这一组清掉，再指我们的助手 —— 这也是 gh 自己 `auth setup-git` 用的手法。
+ *     用**通用键** `credential.helper=` 清会连别的 host（例如 gitlab）的宿主凭据一起清掉 —— 越权，不许。
+ *   - `groups`：调用方声明这次要哪几组（默认两组都给）；只有真要 `git` 组时才**落助手文件**
+ *     （写盘只发生在要用的那一刻 —— 体检那种只读路径不该因为它多出一个文件）。
+ */
+async function identityEnv({ groups = ['gh', 'git'], land = true } = {}) {
+  const state = await readState();
+  const resolved = await resolveIdentity(state);
+  const login = identityLogin(state, resolved);
+  const out = { gh: {}, git: {}, source: resolved.source || '(none)', login: login || null, degraded: [] };
+
+  if (groups.includes('gh') && resolved.token) {
+    out.gh.GH_TOKEN = resolved.token;
+    out.gh.GH_PROMPT_DISABLED = '1';
+    out.gh.GH_PAGER = 'cat';
+    out.gh.NO_COLOR = '1';
+  }
+
+  if (groups.includes('git')) {
+    out.git.GIT_TERMINAL_PROMPT = '0';   // 不许它问人（GUI askpass 那条路也一并断掉）
+    const keys = [];
+    const values = [];
+    const stateToken = typeof state.token === 'string' ? state.token : '';
+    // 助手答的是**插件 state**（与接线那份同源）；凭据不在 state 里（例如只有 env 覆盖）时，
+    // 指过去也答不出东西 —— 那就不指，免得给 git 一个「有助手但永远不答」的假接线。
+    if (stateToken && land) {
+      // 落盘失败（HOME 只读、目录被占…）**不许把调用整个炸掉**：如实降级成「这一组没有凭据指路」，
+      // 由回执的 `degraded` 与体检的 `helperLanded` 说出去 —— 宁可少戴一样，也不能让提交/推送无谓失败。
+      try {
+        const helperFile = await ensureRuntimeHelper();
+        keys.push(CRED_HOST_HELPER_KEY); values.push('');            // ① 清掉这一组继承来的助手
+        keys.push(CRED_HOST_HELPER_KEY); values.push('!' + helperFile);  // ② 再指插件自有助手
+      } catch (e) {
+        out.degraded.push('git-helper');
+      }
+    }
+    if (login) {
+      const email = (typeof state.user_email === 'string' && state.user_email)
+        ? state.user_email : login + '@users.noreply.github.com';
+      keys.push('user.name'); values.push(login);
+      keys.push('user.email'); values.push(email);
+    }
+    if (keys.length) {
+      out.git.GIT_CONFIG_COUNT = String(keys.length);
+      keys.forEach((k, i) => { out.git['GIT_CONFIG_KEY_' + i] = k; out.git['GIT_CONFIG_VALUE_' + i] = values[i]; });
+    }
+  }
+  return out;
+}
+
+/**
+ * 体检用：**只读**地回答「子进程环境这一支现在能给出什么」—— 不落任何文件、不吐任何值。
+ * 与 `identityEnv()` 共用同一个登录名口径，避免两处各算一份。
+ */
+async function identityEnvFacts() {
+  const state = await readState();
+  const resolved = await resolveIdentity(state);
+  const login = identityLogin(state, resolved);
+  const helperLanded = await fs.access(RUNTIME_HELPER_FILE).then(() => true, () => false);
+  return {
+    canInjectGh: Boolean(resolved.token),
+    canInjectGit: Boolean((typeof state.token === 'string' && state.token) || login),
+    login: login || null,
+    helper: RUNTIME_HELPER_FILE,
+    helperLanded,
+  };
+}
+
+/**
+ * 戴工牌 + 如实回执：`{ opts, badge }` —— `opts` 交给 `run()` / `git()`，`badge` 放进这次的回执。
+ *
+ * env 是**合并**进现进程 env 的：Node 的 `env` 选项是**整体替换**，只给身份组会把 `PATH` / `HOME` 弄丢（实测）。
+ * `badge` 只报「戴了哪组、身份从哪来」，**不含任何值**（token 一律掩码、原文不出现在回执里）。
+ */
+async function withBadge(group, extra = {}) {
+  const env = await identityEnv({ groups: [group] });
+  const applied = Object.keys(env[group]).length > 0;
+  const badge = { applied: applied ? [group] : [], source: env.source };
+  if (env.degraded && env.degraded.length) badge.degraded = env.degraded.slice();
+  return { opts: { ...extra, env: { ...process.env, ...env[group] } }, badge };
+}
+
+// ---------- 重活租约：同一台机器上的重活一次只许一份 ----------
+
+/** pid 还活着吗？`null` = 没记 pid（不知道），true/false = 明确。EPERM 说明进程在、只是不是我的。 */
+function leasePidAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return null;
+  try { process.kill(pid, 0); return true; } catch (e) { return Boolean(e && e.code === 'EPERM'); }
+}
+
+/** 租约的**只读视图**：把「谁在跑、什么时候到期、那个 pid 还在不在、能不能回收」一次说清。 */
+function leaseView(lease) {
+  if (!lease || typeof lease !== 'object') return null;
+  const alive = leasePidAlive(lease.pid);
+  const expiresAt = typeof lease.expiresAt === 'string' ? lease.expiresAt : null;
+  const expired = expiresAt ? Date.parse(expiresAt) <= Date.now() : true;   // 没写到期时间 = 当作过期（可回收）
+  return {
+    holder: lease.holder || null, purpose: lease.purpose || null, pid: Number.isInteger(lease.pid) ? lease.pid : null,
+    host: lease.host || null, at: lease.at || null, expiresAt, ttlMs: Number.isFinite(lease.ttlMs) ? lease.ttlMs : null,
+    pidAlive: alive, expired,
+    // 可回收 = 过期，或持有人**明确**已经不在（pid 查不到）。查不到 pid 时只按过期算。
+    stale: expired || alive === false,
+  };
+}
+
+async function readLoadLease() {
+  try {
+    const raw = await fs.readFile(LOAD_LEASE_FILE, 'utf8');
+    return { file: LOAD_LEASE_FILE, exists: true, lease: JSON.parse(raw), error: null };
+  } catch (e) {
+    const missing = e && e.code === 'ENOENT';
+    return { file: LOAD_LEASE_FILE, exists: false, lease: null, error: missing ? null : String((e && e.message) || e) };
+  }
+}
+
+/**
+ * 取租约。**只在**没人持有 / 持有人过期 / 持有人 pid 明确已经不在时成功（这里**没有** force：
+ * 抢别人的锁正是这个机制要消灭的事）。回收不是悄悄发生的：回执里带 `reclaimed`。
+ */
+async function acquireLoadLease({ holder, purpose, ttlMs } = {}) {
+  const ttl = Number.isFinite(ttlMs) && ttlMs > 0 ? Math.round(ttlMs) : LOAD_LEASE_DEFAULT_TTL_MS;
+  const me = {
+    holder: String(holder || ('pid ' + process.pid)), purpose: String(purpose || '未注明'),
+    pid: process.pid, host: os.hostname(), at: new Date().toISOString(),
+    ttlMs: ttl, expiresAt: new Date(Date.now() + ttl).toISOString(),
+  };
+  await fs.mkdir(path.dirname(LOAD_LEASE_FILE), { recursive: true, mode: 0o700 });
+  let reclaimed = null;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      // `wx` = 存在就失败：取锁这一步必须是原子的，不能"先读再写"（那中间有窗口）。
+      await fs.writeFile(LOAD_LEASE_FILE, JSON.stringify(me, null, 2) + '\n', { mode: 0o600, flag: 'wx' });
+      await chmodQuiet(LOAD_LEASE_FILE, 0o600);
+      return { ok: true, acquired: true, lease: me, reclaimed };
+    } catch (e) {
+      if (!e || e.code !== 'EEXIST') return { ok: false, acquired: false, error: String((e && e.message) || e) };
+      const cur = await readLoadLease();
+      const view = leaseView(cur.lease);
+      if (view && view.stale) {
+        // 回收：先把陈旧的删掉，再抢一次（只重试一轮；有人同时抢就如实回"没拿到"）。
+        await fs.rm(LOAD_LEASE_FILE, { force: true });
+        reclaimed = view;
+        continue;
+      }
+      return { ok: false, acquired: false, heldBy: view, note: '同一台机器上已经有重活在跑：换时间，别无脑并跑' };
+    }
+  }
+  return { ok: false, acquired: false, error: '回收之后又撞上了（有人刚抢到）' };
+}
+
+/** 放租约。**只认持有者**（不替别人放 —— 那会把正在跑的那一位解锁）。 */
+async function releaseLoadLease({ holder } = {}) {
+  const cur = await readLoadLease();
+  if (!cur.lease) return { ok: true, released: false, note: '没有租约（已经是空的）' };
+  const mine = holder ? String(cur.lease.holder) === String(holder) : cur.lease.pid === process.pid;
+  if (!mine) return { ok: false, released: false, heldBy: leaseView(cur.lease), note: '租约不是你的：不替别人放' };
+  await fs.rm(LOAD_LEASE_FILE, { force: true });
+  return { ok: true, released: true, was: leaseView(cur.lease) };
+}
+
+/**
  * `gh_identity` 四个动作各自的回执视图 —— **一处声明**：工具目录那行、协议 identity 段、门禁都从这里派生。
  * 信封（`ok` / `protocol`）不算业务字段，不进这张表。改字段＝接口变更，先改这里。
  */
+/** `gh_load_lease` 三个动作各自的回执视图 —— 一处声明：工具目录那行与协议 `load` 段都从这里派生。 */
+const LOAD_LEASE_VIEWS = {
+  status: ['ok', 'action', 'held', 'lease', 'file', 'exists', 'note', 'error'],
+  acquire: ['ok', 'action', 'acquired', 'lease', 'heldBy', 'reclaimed', 'note', 'error'],
+  release: ['ok', 'action', 'released', 'was', 'heldBy', 'note', 'error'],
+};
+const LOAD_LEASE_RETURNS = [...new Set(Object.values(LOAD_LEASE_VIEWS).flat())];
+
 const GH_IDENTITY_VIEWS = {
   audit: ['identity', 'points', 'config', 'summary'],
   wire: ['action', 'consentRequired', 'wrote', 'plan', 'results', 'ledger', 'consent', 'ask'],
@@ -1086,7 +1329,7 @@ const TOOL_PROTOCOL = [
   { name: 'gh_repos', kind: 'read', required: [], optional: ['root', 'depth'], returns: ['root', 'count', 'repos'] },
   { name: 'gh_repo_registry', kind: 'write', required: [], optional: ['action', 'root', 'depth', 'consent', 'confirm', 'prune', 'path', 'slug', 'note', 'tags'], returns: ['ok', 'action', 'consentRequired', 'ask', 'dir', 'count', 'registered', 'added', 'refreshed', 'pruned', 'remoteBound', 'withoutRemote', 'drift', 'inSync', 'libraryExists'] },
   { name: 'gh_repo_registry_list', kind: 'read', required: [], optional: ['root', 'prefix', 'only_missing_remote', 'has_remote', 'host', 'tag'], returns: ['libraryExists', 'dir', 'count', 'libraryCount', 'remoteBound', 'withoutRemote', 'byHost', 'entries', 'malformed'] },
-  { name: 'gh_commit', kind: 'write', required: ['repo', 'message'], optional: ['push'], returns: ['ok', 'sha', 'files', 'push'] },
+  { name: 'gh_commit', kind: 'write', required: ['repo', 'message'], optional: ['push'], returns: ['ok', 'sha', 'files', 'push', 'identityEnv'] },
   { name: 'gh_sync', kind: 'write', required: [], optional: ['root', 'depth', 'message', 'push', 'dry_run'], returns: ['root', 'scanned', 'committed', 'failed', 'results'] },
   // 2026-10-14：成功分支实际还回 authSource / message / errors（源码里确有），表里一直漏着 —— 顺手改真。
   // 同一类漂移（表说少了）以前没人管：门禁只钉 gh_protocol 自己的 returns，不钉每工具那行。
@@ -1097,17 +1340,20 @@ const TOOL_PROTOCOL = [
   { name: 'gh_cli_install', kind: 'write', required: [], optional: ['force', 'prefer'], returns: ['installed', 'layer', 'path', 'version', 'attempts'] },
   { name: 'gh_cli_auth_web', kind: 'write', required: [], optional: ['open_browser'], returns: ['ok', 'version', 'ghLayer', 'ghPath', 'user_code', 'verification_uri', 'opened', 'note', 'logTail'] },
   { name: 'gh_cli_status', kind: 'read', required: [], optional: [], returns: ['version', 'authenticated', 'activeAccount', 'gitCredentialHelper', 'hosts'] },
-  { name: 'gh_cli_setup_git', kind: 'write', required: [], optional: ['set_identity'], returns: ['exitCode', 'credentialHelper', 'gitUserName', 'gitUserEmail'] },
+  { name: 'gh_cli_setup_git', kind: 'write', required: [], optional: ['set_identity'], returns: ['exitCode', 'credentialHelper', 'gitUserName', 'gitUserEmail', 'identityEnv'] },
   { name: 'gh_cli_logout', kind: 'write', required: [], optional: ['hostname', 'confirm', 'revoke', 'purge_git', 'reset_state', 'uninstall_gh', 'remove_gh_cache', 'remove_gh_config', 'dry_run'], returns: ['ok', 'dryRun', 'hostname', 'tokenMasked', 'steps', 'verify', 'leftover'] },
   { name: 'gh_cli_resolve', kind: 'read', required: [], optional: [], returns: ['resolved', 'system', 'pluginCache', 'dataDir', 'arch', 'autoLandOnNextUse', 'lastInstall'] },
   // 2026-10-14（票「gh_identity {wire|verify|unwire}：投影接线 + 对账 + 可撤」）：它从只读工具变成
   // 「默认只读 + 三个能写的动作」，所以 kind 从 read 变 write（并从 guarantees.readOnlyTools 里退出 —— 诚实）。
   // 必填仍为空：不带 action 时就是体检，行为与从前逐字节一致。returns 是四个动作视图的并集（一处声明派生）。
   { name: 'gh_identity', kind: 'write', required: [], optional: ['action', 'consent', 'targets'], returns: GH_IDENTITY_RETURNS },
+  // 重活租约（协议 `load` 段）：同一台机器上的全量门禁 / 矩阵一次只许一份 ——
+  // 多会话并跑看不见彼此，这个工具是那只能看见全局的眼睛；runner 自己也取同一份锁。
+  { name: 'gh_load_lease', kind: 'write', required: [], optional: ['action', 'holder', 'purpose', 'ttl_ms'], returns: LOAD_LEASE_RETURNS },
   { name: 'gh_env_probe', kind: 'read', required: [], optional: ['network_targets', 'attempts', 'timeout_ms'], returns: ['capabilities', 'network', 'proxy', 'dirs', 'summary', 'bounds', 'notes'] },
   { name: 'gh_cli_version', kind: 'write', required: [], optional: ['update', 'force'], returns: ['current', 'latest', 'layer', 'updateAvailable', 'checkedAt', 'updated', 'reason', 'lastUpdate'] },
   { name: 'gh_cache_gc', kind: 'write', required: [], optional: ['dry_run', 'keep_versions'], returns: ['dir', 'removed', 'removedCount', 'freedBytes', 'kept', 'keptVersions'] },
-  { name: 'gh_protocol', kind: 'read', required: [], optional: [], returns: ['id', 'version', 'spec', 'service', 'http', 'envelope', 'tools', 'errors', 'registry', 'identity', 'environment', 'guarantees'] },
+  { name: 'gh_protocol', kind: 'read', required: [], optional: [], returns: ['id', 'version', 'spec', 'service', 'http', 'envelope', 'tools', 'errors', 'registry', 'identity', 'environment', 'load', 'guarantees'] },
 ];
 
 /**
@@ -1423,6 +1669,8 @@ export function apply(ctx) {
     if (draft) argv.push('--draft');
 
     const boundMs = prFallbackTimeoutMs();
+    // **不戴工牌**（票「子进程环境…」的边界）：这条路只在三处都取不到 token 时才走到，
+    // 那一刻没有可注入的值；身份仍归 gh 自己（ADR 0001 边界，回执里 authSource 如实是 (none)）。
     const r = await runBounded(gh.path, argv, { timeoutMs: boundMs });
     if (r.timedOut) {
       return {
@@ -1606,6 +1854,8 @@ export function apply(ctx) {
     // 上界**默认就有**（票 29）：到点 SIGKILL，并把这次结论单独标出来 ——
     // 「探测超时（未知）」与「探测过、确实没有」是两种事实；混成一个 ok:false，调用方就会按下错的按钮
     //（最贵的一个按钮是「去下载一份 gh」）。timeoutMs <= 0 时不设上界（只给显式要它的调用方）。
+    // **不戴工牌**（票「子进程环境…」）：探活只回答「这个程序跑不跑得起来」，不是「我是谁」——
+    // 戴上会把「宿主 gh 自己什么状态」糊住（实测 GH_TOKEN 会盖过 hosts.yml 的登录态）。
     const r = await run(bin, ['--version'], timeoutMs > 0 ? { timeout: timeoutMs, killSignal: 'SIGKILL' } : {});
     const timedOut = r.signal === 'SIGKILL';
     const version = !timedOut && r.code === 0 ? versionLine(r.stdout) : null;
@@ -2139,6 +2389,7 @@ sys.stdout.flush()
     }
     if (opts.uninstall_gh === true) {
       const activeBin = (systemGh.ok && systemGh.bin) || GH_BIN;
+      // **不戴工牌**：下面几条问/动的是**宿主自己**的 gh 登录态（销毁路径按它决定做什么）。
       const st = await run(activeBin, ['auth', 'status', '--hostname', hostname]);
       if (st.code === 0) {
         const lg = await run(activeBin, ['auth', 'logout', '--hostname', hostname]);
@@ -2258,6 +2509,7 @@ sys.stdout.flush()
         res = await installGh({ prefer });
       }
       const ghBin = res.path || g.path || 'gh';
+      // **不戴工牌**：这条报的是「宿主自己的 gh 登录了没有」，戴上去会把它读成「插件有身份」。
       const auth = await run(ghBin, ['auth', 'status', '--hostname', 'github.com']);
       // installed = 调用结束后 gh 可用（不管是本次落地的还是已经在的）。
       return { ...res, installed: Boolean(ghBin !== 'gh' && res.version), authStatus: auth.code === 0 ? 'authenticated' : 'not-authenticated' };
@@ -2346,6 +2598,8 @@ sys.stdout.flush()
         return { installed: false, hint: '下次调用任意 gh_* 工具会自动落地一份，或显式跑 gh_cli_install' };
       }
       const version = g.version;
+      // **不戴工牌**（票「子进程环境…」的「不戴」清单）：本工具问的就是**宿主 gh 自己的状态**，
+      // 戴上 GH_TOKEN 会让它改口报「按 token 登录」（实测），把真相读成假象。
       const status = await run(g.path, ['auth', 'status', '--hostname', 'github.com']);
       const helper = await readCredHelper();
       const hostsPath = HOSTS_FILE;   // 路径只有模块顶部一处定义（原来这里又拼了一份）
@@ -2365,6 +2619,7 @@ sys.stdout.flush()
       } catch { hosts = { path: hostsPath, exists: false }; }
       let active = null;
       if (status.code === 0) {
+        // **不戴工牌**：同上 —— 这里答的是「宿主 gh 的活动账号是谁」，不是「插件是谁」。
         const who = await run(g.path, ['api', 'user', '--jq', '.login']);
         if (who.code === 0) active = who.stdout.trim();
       }
@@ -2396,12 +2651,16 @@ sys.stdout.flush()
           ? { ok: false, timedOut: true, error: 'gh 探测超时（此刻未知）：稍后重试；本插件不会在超时时替你下载，确需一份自带副本请显式跑 gh_cli_install', ensure: null }
           : { ok: false, error: 'gh 不可用，且自带落地没成功', ensure: g.ensure || null };
       }
-      const setup = await run(g.path, ['auth', 'setup-git', '--hostname', 'github.com']);
-      const result = { exitCode: setup.code, ghLayer: g.layer, stderr: setup.stderr.trim().slice(0, 300) };
+      // 这三条 gh 调用是**以插件身份做事**（写宿主 git 配置、问"我是谁"）—— 戴 gh 组（票「子进程环境…」）。
+      // 宿主没登录过 gh、或凭据在 keyring / hosts.yml 被清掉时，靠的就是这一戴。
+      const badge = await withBadge('gh');
+      const setup = await run(g.path, ['auth', 'setup-git', '--hostname', 'github.com'], badge.opts);
+      const result = { exitCode: setup.code, ghLayer: g.layer, stderr: setup.stderr.trim().slice(0, 300), identityEnv: badge.badge };
       result.credentialHelper = (await readCredHelper()) || null;
       if (args.set_identity !== false && setup.code === 0) {
-        const who = await run(g.path, ['api', 'user', '--jq', '.login']);
-        const mail = await run(g.path, ['api', 'user', '--jq', '.email']);
+        const who = await run(g.path, ['api', 'user', '--jq', '.login'], badge.opts);
+        const mail = await run(g.path, ['api', 'user', '--jq', '.email'], badge.opts);
+        // 下面两条 `git config --global` 是**写盘**：不戴（它们问/写的是宿主盘上真值，不是"我是谁"）。
         if (who.code === 0 && who.stdout.trim()) {
           await git(process.cwd(), ['config', '--global', 'user.name', who.stdout.trim()]);
           result.gitUserName = who.stdout.trim();
@@ -2449,6 +2708,7 @@ sys.stdout.flush()
           providedWhen: '同一 ctx 具备 provide 能力时（服务位被占则缺席，Deck 侧如实回落自己的 PATH 解析，不静默换口径）',
           methods: [
             { name: 'resolve', args: [], returns: 'string|null —— gh 可执行文件的绝对路径（系统层 gh 优先，其次插件自带缓存 ~/.dsh/gh-cli/bin/gh；install:false，不落地、不回抛，找不到就回 null）' },
+            { name: 'identityEnv', args: '{ groups?: ("gh"|"git")[] }', returns: '{ gh, git, source, login } —— **两组分开**的身份环境（值现算不缓存）：gh 组＝GH_TOKEN + 非交互三件套（不含 GH_CONFIG_DIR，真源没 token 时为空组）；git 组＝GIT_TERMINAL_PROMPT=0 + GIT_CONFIG_* 注入 user.name / user.email / 指向插件自有助手的 credential.helper（**空值重置在前**，且**不含 GH_TOKEN**）。谁戴谁不戴由调用方按「以插件身份做事 / 只是问宿主」判，别无差别注入' },
           ],
           why: '合并宿主先跑 Deck 后跑 Resident，所以 Deck 必须晚绑定；这条服务的存在就是为了「同一个插件只有一个 gh 在哪的答案」',
         },
@@ -2572,6 +2832,34 @@ sys.stdout.flush()
         '本包维护者': '新增能力项＝加字段（兼容，不动 version）；新增一段才 bump version',
       },
     },
+    // 2026-10-14（票「重活租约」）：重活并跑会把宿主压垮 —— 本机实测宿主被系统杀过 6 次
+    //（00:35 / 00:51 / 01:07 / 01:17 / 02:16 / 02:18），签名都是「外部杀」（无异常栈、无日志异常）。
+    // 多会话并跑时各自的 agent 看不见别人，所以这条规矩写进协议，锁由 runner 自己上。
+    load: {
+      what: '重活租约：同一台机器上的**重活**（全量门禁 npm run verify:merge、合成环境矩阵）一次只许一份。',
+      why: '重活会同时起一堆子进程；并跑 / 连着跑会把宿主压垮（本机实测被杀 6 次，凶手未定位但相关性明确）。',
+      leaseFile: LOAD_LEASE_FILE,
+      defaultTtlMs: LOAD_LEASE_DEFAULT_TTL_MS,
+      env: {
+        file: 'DSH_GH_LOAD_LEASE —— 覆盖租约文件路径（默认见 leaseFile）',
+        inherited: LOAD_LEASE_HELD_ENV + ' —— 祖先进程已持有时传给子进程的记号（子进程见到它就不再取一次）',
+      },
+      rule: [
+        '跑重活前先 acquire；**拿不到就换时间**，不硬跑、不并跑、不静默跳过',
+        'runner 自己也会取：tests/merge/run.mjs 与合成环境矩阵拿不到就 exit 2 + BLOCKED-LOAD-LEASE（如实拒绝，不假装绿）',
+        '持有者死了（pid 查不到）或过期 → 后来者可回收，**回收这件事在回执里看得见**（不悄悄抢）',
+        'release 只认持有者：不替别人放（那会把正在跑的那一位解锁）',
+        '它不属于「接线」：租约是运行期的事，不落宿主配置、不需要同意、不需要对账',
+      ],
+      tool: 'gh_load_lease',
+      views: LOAD_LEASE_VIEWS,
+      fieldsFrom: 'gh_load_lease',
+      readers: {
+        '任何要跑重活的 agent': '先 gh_load_lease {action:"status"}；有主就等（或换别的活），没主再 acquire，跑完 release',
+        'runner / 门禁': '自己取同一份锁（tests/merge/_load-lease.mjs）：拿不到就如实拒绝，退出码 2 + BLOCKED-LOAD-LEASE 行',
+      },
+    },
+
     guarantees: {
       masking: '任何输出都不含 token 原文，只出现掩码',
       loopbackOnly: 'HTTP 只监听 127.0.0.1',
@@ -2639,6 +2927,12 @@ sys.stdout.flush()
             return (r && r.ok && r.path) ? r.path : null;
           } catch (e) { return null; }
         },
+        // 2026-10-14（票「子进程环境：插件启动的 gh / git 子进程按需带上真源 token」）：这支服务位从此答的是
+        // 「gh 怎么跑」的**唯一答案** —— 除了"在哪"（resolve，语义与调用方都不动），还有"用谁的身份、带什么环境"
+        // （identityEnv，两组分开给）。挂在这里而不是另开一个服务位，是《Deck 半边接消费面（执行环境由消费面供给）》
+        // Q5=(a) 的裁决：消费面保持唯一入口。Deck 半边用它来给三个执行出口戴同一份；Resident 自己 spawn 的子进程
+        // 走的是同一个实现（见 withBadge），**两处各算一份环境**是明令禁止的。
+        identityEnv: async function (opts) { return await identityEnv(opts); },
       });
     } catch (eProvide) { /* 服务位被占：Deck 侧会如实回落 PATH（不静默换口径） */ }
   }
@@ -2661,16 +2955,9 @@ sys.stdout.flush()
     return null;
   }
 
-  /** 落盘自有凭据助手（0755；内容已一致就不重写，免得每次 wire 都改 mtime）。 */
+  /** 落盘自有凭据助手（0755；内容已一致就不重写，免得每次 wire 都改 mtime）。与运行期那份**同源**（同一个落盘实现）。 */
   async function ensureWireHelper() {
-    await fs.mkdir(WIRE_DIR, { recursive: true, mode: 0o700 });
-    await chmodQuiet(WIRE_DIR, 0o700);
-    const cur = await fs.readFile(WIRE_HELPER_FILE, 'utf8').catch(() => null);
-    if (cur !== GIT_CREDENTIAL_HELPER_SRC) {
-      await fs.writeFile(WIRE_HELPER_FILE, GIT_CREDENTIAL_HELPER_SRC, { mode: 0o755 });
-    }
-    await chmodQuiet(WIRE_HELPER_FILE, 0o755);
-    return WIRE_HELPER_FILE;
+    return await landGitCredentialHelper(WIRE_DIR, WIRE_HELPER_FILE);
   }
 
   const gitGlobalGet = async (key) => (await git(process.cwd(), ['config', '--global', '--get', key])).stdout.trim() || null;
@@ -3056,11 +3343,19 @@ sys.stdout.flush()
         fix: ghCliState === 'pass' ? null : 'gh auth login   # 或走本插件工具 gh_cli_auth_web（设备码）',
       };
 
-      // ---- 消费点 3：子进程环境（只报有无，不报值）----
+      // ---- 消费点 3：子进程环境（票「子进程环境…」之后，这一支**由插件自己供给**；只报「给不给 / 落没落」，不报值）----
+      // 两件事都在这里如实报，别混成一件：
+      //   ① 注入：本插件 fork 的 gh / git 子进程会**按需**戴上真源身份（gh 组 / git 组），不需要宿主做任何事；
+      //   ② 覆盖：用户自己在 env 里放 GH_TOKEN/GITHUB_TOKEN 想盖过真源 —— 那是可选的一条路，不是必须。
+      const envFacts = await identityEnvFacts();
+      const envOverrideOn = Boolean(process.env.GH_TOKEN || process.env.GITHUB_TOKEN);
       const envCheck = {
-        name: 'override-token', state: (process.env.GH_TOKEN || process.env.GITHUB_TOKEN) ? 'pass' : 'missing',
-        detail: { GH_TOKEN: Boolean(process.env.GH_TOKEN), GITHUB_TOKEN: Boolean(process.env.GITHUB_TOKEN) },
-        fix: (process.env.GH_TOKEN || process.env.GITHUB_TOKEN) ? null : 'export GH_TOKEN=<token>   # 可选：只有想用环境变量覆盖真源时才需要',
+        name: 'override-token', state: envOverrideOn ? 'pass' : 'missing',
+        detail: {
+          GH_TOKEN: Boolean(process.env.GH_TOKEN), GITHUB_TOKEN: Boolean(process.env.GITHUB_TOKEN),
+          injection: envFacts,
+        },
+        fix: envOverrideOn ? null : 'export GH_TOKEN=<token>   # 可选：只有想用环境变量覆盖真源时才需要',
       };
 
       // ---- 消费点 4：PATH 落点（解析层级 + 能否真跑）----
@@ -3089,7 +3384,11 @@ sys.stdout.flush()
           ghCliState === 'pass' ? 'hosts.yml 有凭据（login=' + (hostsEntry.login || '未知') + '）'
             : ghCliState === 'drift' ? 'hosts.yml 在但没有 oauth_token' : '没有 hosts.yml（gh CLI 未登录）'),
         mkPoint('env', [envCheck],
-          envCheck.state === 'pass' ? '有环境变量覆盖' : '没有环境变量覆盖（不是必须：身份可由 state 或 gh CLI 供给）'),
+          (envCheck.state === 'pass' ? '有环境变量覆盖' : '没有环境变量覆盖（不是必须：身份可由 state 或 gh CLI 供给）')
+          + '；子进程身份' + (envFacts.canInjectGh || envFacts.canInjectGit
+            ? '由本插件按需供给（' + [envFacts.canInjectGh ? 'gh 组' : null, envFacts.canInjectGit ? 'git 组' : null].filter(Boolean).join(' + ')
+              + '；助手' + (envFacts.helperLanded ? '已落盘' : '尚未落盘 —— 第一次真要 git 身份时落') + '）'
+            : '暂无来源：真源里没有可注入的身份')),
         mkPoint('path', [pathCheck],
           ghResolved.ok ? 'gh 落在 ' + ghResolved.layer + ' 层：' + ghResolved.path
             : ghResolved.timedOut ? 'gh 探测超时（此刻未知）——不是「没装」，本插件也不会据此去下载'
@@ -3126,6 +3425,63 @@ sys.stdout.flush()
   // **同一事实只报一处**（配置类路径 reposRoot / stateFile / hostsFile 的存在性在 gh_identity.config）。
   // **有界**：每个网络探测各自 4 秒上界、每个子进程探测 5 秒上界 —— 最坏情况也能返回，不出现「不退出」。
   // 只读：不写探针文件、不改配置（目录可写性用 fs.access(W_OK) 判，不落地试写）。
+  /**
+   * 重活租约（协议 `load` 段）：同一台机器上的全量门禁 / 合成环境矩阵一次只许一份。
+   *
+   * 为什么是个**工具**而不是只写一条文档：多会话并跑时，各自的 agent 看不见别人在跑重活 ——
+   * 这个工具是那只能看见全局的眼睛；而 runner（`tests/merge/_load-lease.mjs`）自己也取同一份锁，
+   * 所以「忘了问」也跑不成双份（拿不到就是 exit 2 + BLOCKED-LOAD-LEASE，不静默跳过）。
+   */
+  ctx.tools.register(textTool({
+    toolName: 'gh_load_lease',
+    description: 'Heavy-work lease for this machine. Heavy work — the full merge gate (npm run verify:merge) and the synthetic-environment matrix — must never run twice at once: concurrent heavy runs are what got the DSH host killed six times on this device. action:"status" (default, read-only) reports who holds the lease, for what, since when, when it expires and whether that pid is still alive; action:"acquire" succeeds only when nobody holds it, or the holder expired or died (a reclaim is reported, never silent); action:"release" only releases your own lease. When you cannot acquire it, the correct move is to come back later — not to run the heavy work anyway. The lease lives in the plugin own directory (0600, DSH_GH_LOAD_LEASE overrides the path); no host config, no network, no consent needed.',
+    parameters: {
+      action: { type: 'string', enum: ['status', 'acquire', 'release'], description: 'status (default, read-only) | acquire | release.' },
+      holder: { type: 'string', description: 'Who is asking (free text, e.g. "verify:merge@session-b5c43c0f"). Defaults to "pid <n>"; release only accepts the matching holder.' },
+      purpose: { type: 'string', description: 'What the heavy work is (free text; shown to whoever asks next).' },
+      ttl_ms: { type: 'number', description: 'Lease lifetime in ms (default 30 min). A lease whose holder died or whose time is up can be reclaimed by the next caller.' },
+    },
+    readOnly: false,
+    execute: async (args = {}) => {
+      const action = String(args.action || 'status');
+      if (!Object.prototype.hasOwnProperty.call(LOAD_LEASE_VIEWS, action)) {
+        return { ok: false, action, error: 'action 只支持 status / acquire / release（缺省＝status）' };
+      }
+      if (action === 'status') {
+        const cur = await readLoadLease();
+        const view = leaseView(cur.lease);
+        return {
+          ok: true, action, held: Boolean(view), lease: view, file: cur.file, exists: cur.exists,
+          note: view
+            ? (view.stale ? '这把锁已经陈旧（持有人不在或已过期）：下一个来的人可以回收' : '正在跑重活：换时间，别无脑并跑')
+            : '没有人在跑重活',
+        };
+      }
+      if (action === 'acquire') {
+        const r = await acquireLoadLease({
+          holder: args.holder ? String(args.holder) : ('pid ' + process.pid),
+          purpose: args.purpose ? String(args.purpose) : undefined,
+          ttlMs: Number(args.ttl_ms),
+        });
+        const out = { ok: Boolean(r.ok), action, acquired: Boolean(r.acquired) };
+        if (r.lease) out.lease = leaseView(r.lease);
+        if (r.heldBy) out.heldBy = r.heldBy;
+        if (r.reclaimed) out.reclaimed = r.reclaimed;
+        if (r.error) out.error = r.error;
+        out.note = r.ok
+          ? (r.reclaimed ? '拿到了（并且回收了一把陈旧的）' : '拿到了')
+          : (r.note || r.error || '没拿到');
+        return out;
+      }
+      const r = await releaseLoadLease({ holder: args.holder ? String(args.holder) : undefined });
+      const out = { ok: Boolean(r.ok), action, released: Boolean(r.released) };
+      if (r.was) out.was = r.was;
+      if (r.heldBy) out.heldBy = r.heldBy;
+      out.note = r.ok ? (r.released ? '放了' : r.note) : r.note;
+      return out;
+    },
+  }));
+
   ctx.tools.register(textTool({
     toolName: 'gh_env_probe',
     description: 'Read-only environment capability matrix: in one call it reports whether gh can really run (path, layer, version), whether curl exists, node version, arch/platform, HOME writability, reachability of the three network routes the plugin depends on (REST API / codeload / release CDN), which proxy variables are set (presence only, values are never echoed), and whether the environment input directories exist and are writable. Every non-ok item carries the exact next step. Reachability is treated as inherently random (China/VPN routes): each route is tried several times (default 3, override with `attempts`) over two channels — Node fetch and the system curl, since only curl honours HTTP(S)_PROXY — and the receipt reports successes, success rate, redirect landing and the channel that worked, never a bare yes/no. Bounded: 4s per fetch attempt, 15s total network budget, 8s curl ceiling, 5s per subprocess probe, so it always returns.',
@@ -3570,6 +3926,7 @@ sys.stdout.flush()
     let authenticated = false;
     let account = null;
     if (g.ok) {
+      // **不戴工牌**：面板那格「宿主 gh 登录态」要如实；插件自己的身份由消费面与体检回答。
       const st = await run(g.path, ['auth', 'status', '--hostname', 'github.com']);
       authenticated = st.code === 0;
       if (authenticated) {
