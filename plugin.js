@@ -2366,6 +2366,10 @@ sys.stdout.flush()
 
   function startDeviceFlowPty(timeoutMs = 20000) {
     return new Promise((resolve) => {
+      // 票 47 的 H2：`resolveGh()` 会走网络与落盘 —— `ensureGhOnce` 末尾那两处 `fs.mkdir` / `fs.writeFile`
+      // **不在 try/catch 里**，所以它**可以抛**。这条链一旦抛成「未处理的拒绝」，Node 默认直接结束
+      // **宿主进程**（面板随即白屏，取证见票 47）；而这里的失败本来只该让「这一次拿码」失败。
+      // 所以链尾必须有 `.catch`：把拒绝**结算成一次失败回执**，绝不让它冒到进程级。
       resolveGh().then((g) => {
         if (!g.ok) {
           resolve({ code: null, output: '', error: 'gh 不可用且自带安装未成功', ensure: g.ensure || null });
@@ -2400,6 +2404,9 @@ sys.stdout.flush()
       child.stderr.on('data', onData);
       child.on('error', (err) => { finish({ spawnError: String(err) }); });
       const timer = setTimeout(() => finish({ timedOut: true }), timeoutMs + 8000);
+      }).catch((err) => {
+        // 见上面那段注释：拒绝必须在这里**结算**，绝不让它变成 unhandledRejection（那会结束宿主进程）。
+        resolve({ code: null, output: '', error: 'gh 解析这条路抛了：' + String((err && err.message) || err) });
       });
     });
   }
@@ -4601,7 +4608,18 @@ sys.stdout.flush()
       let handle = null;
       let disposed = false;
       // dispose 可能早于 listen 回调：那时也要关掉，否则端口留在旧实例手里（审计 L5）。
-      startLoopbackServer(API_PORT).then((s) => { if (disposed) s.close(); else handle = s; });
+      // 同票 47 的教训：起服务这条路（`await import('node:http')` 等）也会抛 —— 链尾必须有拒绝处理，
+      // 否则「路由起不来」会升级成「宿主进程结束」。端口被占那条路另由 server.on('error') 如实记账。
+      startLoopbackServer(API_PORT).then(
+        (s) => { if (disposed) s.close(); else handle = s; },
+        (err) => {
+          lastServerError = {
+            at: new Date().toISOString(), port: API_PORT, code: null,
+            message: String((err && err.message) || err).slice(0, 200),
+            note: '回环服务没起来（这次异常发生在监听之前）：本实例的 HTTP 路由不可达',
+          };
+        },
+      );
       scheduleStartupChecks();
       scheduleAutoLand();
       scheduleVersionWork();
