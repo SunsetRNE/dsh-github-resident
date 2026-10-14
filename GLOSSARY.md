@@ -13,6 +13,9 @@ _Avoid_: 插件、模块、部分、子包
 **身份真源（identity source）**：
 凭据唯一的落脚处：插件自有 state（`~/.dsh/github-resident.json`，0600）。
 别处出现的 token 都是投影，不是真源。
+非凭据的身份字段（登录名、**提交邮箱**）同样以这份 state 为准 —— 邮箱由用户自己填
+（`gh_identity {action:"email"}`），没填过才退回由登录名生成的隐私邮箱形式；「提交邮箱从哪来」全仓只有一处口径
+（`commitEmail()`），读侧（子进程 git 组）与写侧（`wire`）都从它取。
 _Avoid_: 主 token、默认凭据、凭据本体
 
 **投影（projection）**：

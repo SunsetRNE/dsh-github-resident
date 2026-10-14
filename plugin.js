@@ -245,6 +245,38 @@ export function maskIdentity(resolved) {
   };
 }
 
+/**
+ * 提交邮箱的**唯一口径** —— 读侧（子进程 git 组）与写侧（`gh_identity {action:"wire"}` 的计划 / 台账 / 同意框）
+ * 都从这里派生，别处不许再算第二份（2026-10-14 实测踩过：写侧硬编码隐私邮箱、读侧查 state，
+ * 同一份 state 给出两个提交身份）。
+ *
+ * 顺序：state 里填过 `user_email` → 用它；没填过 → 由登录名生成 GitHub 的隐私邮箱形式；两者都没有 → null
+ *（null 表示这一项根本写不出来，回执要如实说为什么，而不是编一个值）。
+ * 「不填」不是一个值：它只是让这里走回退分支，state 里不会为此多出任何字段。
+ */
+export function commitEmail(state, login) {
+  const explicit = state && typeof state.user_email === 'string' ? state.user_email.trim() : '';
+  if (explicit) return explicit;
+  return login ? login + '@users.noreply.github.com' : null;
+}
+
+/**
+ * 「要不要填提交邮箱」这一问的**唯一文案**：登录成功后问一次，跳过就什么都不写。
+ * 回退值的写法从 commitEmail() 派生（对空 state 求值＝纯回退形式）—— 别在这里再写一遍那个地址，
+ * 否则「唯一口径」立刻变成两份（这正是本票修掉的那种分叉）。
+ */
+export function emailQuestion(login) {
+  const fallback = commitEmail({}, login);
+  return {
+    question: '要不要填一个 git 提交用的邮箱？不填就用 GitHub 的隐私邮箱 '
+      + (fallback || '（要先有登录名）')
+      + '。不填不影响任何流程，之后随时能改（gh_identity {action:"email", email:"…"}）。',
+    options: ['填一个邮箱（告诉我用哪个）', '就用隐私邮箱', '先不管'],
+    onAgree: 'gh_identity {action:"email", email:"<你要用的提交邮箱>"}',
+    onDecline: '一个字节都不写：这个环境下不会再问；想改随时 gh_identity {action:"email", email:"…"}',
+  };
+}
+
 function mask(token) {
   if (!token) return '(none)';
   if (token.length <= 8) return `(len=${token.length})`;
@@ -502,6 +534,8 @@ function identityLogin(state, resolved) {
  *     真源没有 token 时**空组** —— 宁可什么都不给，也不给一套看起来「配好了」的假环境。
  *   - `git` 组：`GIT_TERMINAL_PROMPT=0` + `GIT_CONFIG_*` 注入身份与凭据助手；**不含** `GH_TOKEN`
  *     （git 的环境「同屋共享」：commit hook、子模块、兄弟进程都读得到）。
+ *     提交邮箱走**唯一口径** `commitEmail()`（state 里填过就用它；没填过退回隐私邮箱形式）——
+ *     与 `wire` 写出去的全局 `user.email` 同一处取值，两个消费点不许各算一份。
  *     ⚠️ **空值重置必须排在助手之前**（实测，git 2.43）：git 的助手是「按配置出现顺序依次问、先答者胜」，
  *     而**文件的条目排在命令行（`GIT_CONFIG_*`）注入的条目之前** —— 宿主已有的 `credential.helper=store`
  *     （里头常压着过期凭据）或 gh 写的 host 作用域助手会先被问到并作答，工牌根本没被问到（实测拿到的是 `stale-user`）。
@@ -541,12 +575,13 @@ async function identityEnv({ groups = ['gh', 'git'], land = true } = {}) {
         out.degraded.push('git-helper');
       }
     }
-    if (login) {
-      const email = (typeof state.user_email === 'string' && state.user_email)
-        ? state.user_email : login + '@users.noreply.github.com';
-      keys.push('user.name'); values.push(login);
-      keys.push('user.email'); values.push(email);
-    }
+    // 全局身份两项**各按各的口径**给：`user.name` 要有登录名；`user.email` 只认**唯一口径** commitEmail()
+    //（state 里填过就用它；没填过退回隐私邮箱形式）—— 与 `wire` 写出去的全局 user.email 同源。
+    // 分开判是有意的：登录名解析不出来（env token 不带登录名）时，用户填过的邮箱照样戴得上，
+    // 于是「没 login」这一格两个消费点也给出同一个答案。
+    const email = commitEmail(state, login);
+    if (login) { keys.push('user.name'); values.push(login); }
+    if (email) { keys.push('user.email'); values.push(email); }
     if (keys.length) {
       out.git.GIT_CONFIG_COUNT = String(keys.length);
       keys.forEach((k, i) => { out.git['GIT_CONFIG_KEY_' + i] = k; out.git['GIT_CONFIG_VALUE_' + i] = values[i]; });
@@ -666,7 +701,7 @@ async function releaseLoadLease({ holder } = {}) {
 }
 
 /**
- * `gh_identity` 四个动作各自的回执视图 —— **一处声明**：工具目录那行、协议 identity 段、门禁都从这里派生。
+ * `gh_identity` 五个动作各自的回执视图 —— **一处声明**：工具目录那行、协议 identity 段、门禁都从这里派生。
  * 信封（`ok` / `protocol`）不算业务字段，不进这张表。改字段＝接口变更，先改这里。
  */
 /** `gh_load_lease` 三个动作各自的回执视图 —— 一处声明：工具目录那行与协议 `load` 段都从这里派生。 */
@@ -682,6 +717,10 @@ const GH_IDENTITY_VIEWS = {
   wire: ['action', 'consentRequired', 'wrote', 'plan', 'results', 'ledger', 'consent', 'ask'],
   verify: ['action', 'items', 'summary', 'disk', 'ledger', 'notes'],
   unwire: ['action', 'consentRequired', 'wrote', 'results', 'ledger', 'consent', 'ask'],
+  // 提交邮箱（唯一的填写入口）：`email` = state 里存着的值（null＝没填过）；`effective` = **现在接线会用到的**
+  // 那个值（填过就是它，没填过是隐私邮箱形式，两样都没有是 null）—— 让「填了到底生效没有」在同一份回执里闭环。
+  // （`error` 是失败回执的通用键、信封级，按惯例不进视图 —— 别的动作视图也不列它。）
+  email: ['action', 'email', 'effective', 'wrote', 'stateFile', 'note'],
 };
 const GH_IDENTITY_ACTIONS = Object.keys(GH_IDENTITY_VIEWS);
 const GH_IDENTITY_RETURNS = [...new Set(Object.values(GH_IDENTITY_VIEWS).flat())];
@@ -1325,7 +1364,7 @@ const SERVICE_KEY = 'githubResident';
 
 const TOOL_PROTOCOL = [
   { name: 'gh_resident_status', kind: 'read', required: [], optional: ['root', 'depth'], returns: ['token', 'identity', 'gitGlobal', 'gitCredentials', 'repoCount', 'dirtyRepos', 'repos'] },
-  { name: 'gh_resident_login', kind: 'write', required: ['token', 'user_login'], optional: ['user_name', 'user_email', 'repos_root'], returns: ['ok', 'identity', 'credentialHelper', 'gitUser'] },
+  { name: 'gh_resident_login', kind: 'write', required: ['token', 'user_login'], optional: ['user_name', 'user_email', 'repos_root'], returns: ['ok', 'identity', 'credentialHelper', 'gitUser', 'email', 'ask'] },
   { name: 'gh_repos', kind: 'read', required: [], optional: ['root', 'depth'], returns: ['root', 'count', 'repos'] },
   { name: 'gh_repo_registry', kind: 'write', required: [], optional: ['action', 'root', 'depth', 'consent', 'confirm', 'prune', 'path', 'slug', 'note', 'tags'], returns: ['ok', 'action', 'consentRequired', 'ask', 'dir', 'count', 'registered', 'added', 'refreshed', 'pruned', 'remoteBound', 'withoutRemote', 'drift', 'inSync', 'libraryExists'] },
   { name: 'gh_repo_registry_list', kind: 'read', required: [], optional: ['root', 'prefix', 'only_missing_remote', 'has_remote', 'host', 'tag'], returns: ['libraryExists', 'dir', 'count', 'libraryCount', 'remoteBound', 'withoutRemote', 'byHost', 'entries', 'malformed'] },
@@ -1345,8 +1384,8 @@ const TOOL_PROTOCOL = [
   { name: 'gh_cli_resolve', kind: 'read', required: [], optional: [], returns: ['resolved', 'system', 'pluginCache', 'dataDir', 'arch', 'autoLandOnNextUse', 'lastInstall'] },
   // 2026-10-14（票「gh_identity {wire|verify|unwire}：投影接线 + 对账 + 可撤」）：它从只读工具变成
   // 「默认只读 + 三个能写的动作」，所以 kind 从 read 变 write（并从 guarantees.readOnlyTools 里退出 —— 诚实）。
-  // 必填仍为空：不带 action 时就是体检，行为与从前逐字节一致。returns 是四个动作视图的并集（一处声明派生）。
-  { name: 'gh_identity', kind: 'write', required: [], optional: ['action', 'consent', 'targets'], returns: GH_IDENTITY_RETURNS },
+  // 必填仍为空：不带 action 时就是体检，行为与从前逐字节一致。returns 是五个动作视图的并集（一处声明派生）。
+  { name: 'gh_identity', kind: 'write', required: [], optional: ['action', 'consent', 'targets', 'email'], returns: GH_IDENTITY_RETURNS },
   // 重活租约（协议 `load` 段）：同一台机器上的全量门禁 / 矩阵一次只许一份 ——
   // 多会话并跑看不见彼此，这个工具是那只能看见全局的眼睛；runner 自己也取同一份锁。
   { name: 'gh_load_lease', kind: 'write', required: [], optional: ['action', 'holder', 'purpose', 'ttl_ms'], returns: LOAD_LEASE_RETURNS },
@@ -1491,10 +1530,18 @@ export function apply(ctx) {
       const token = String(args.token || '').trim();
       const login = String(args.user_login || '').trim();
       if (!token || !login) return { ok: false, error: 'token 与 user_login 均为必填' };
+      const before = await readState();
+      // 提交邮箱**只问一次**（票「登录后可选填提交邮箱（不填用隐私邮箱），wire 优先用它」）：
+      //   ① state 里已经有邮箱（不论谁写的、怎么来的）→ 不再问；
+      //   ② 已经问过（emailAskedAt）→ 不再问，否则每次登录都会再弹一次。
+      // 「问过」这笔在**发问的同一刻**记进去（跟 token 同一次写），不额外多写一次 state。
+      const hasOwnEmail = typeof before.user_email === 'string' && before.user_email.trim().length > 0;
+      const askEmail = !hasOwnEmail && !(typeof before.emailAskedAt === 'string' && before.emailAskedAt);
       const state = await writeState({
         token,
         login,
         ...(args.repos_root ? { reposRoot: args.repos_root } : {}),
+        ...(askEmail ? { emailAskedAt: new Date().toISOString() } : {}),
         updatedAt: new Date().toISOString(),
       });
       // 只替换 github.com 那一行：整文件覆写会把用户其它 host 的凭据一起冲掉（审计 L6）。
@@ -1522,6 +1569,9 @@ export function apply(ctx) {
         gitUser: setUser,
         reposRoot: state.reposRoot || DEFAULT_ROOT,
         token: mask(token),
+        // 提交邮箱：如实报「现在接线会用哪个」；`ask` 只在**还没填过、也没问过**时出现，跳过即什么都不写。
+        email: commitEmail(state, login),
+        ask: askEmail ? emailQuestion(login) : null,
         identity: me.ok ? { login: me.json.login, name: me.json.name ?? null } : { error: `HTTP ${me.status}`, message: me.json.message ?? null },
       };
     },
@@ -2981,9 +3031,11 @@ sys.stdout.flush()
       why: '指向插件自有助手（读插件 state 作答），不再依赖 gh 的绝对路径',
     });
 
-    // ---- 点 2：全局 git 身份（state 里没有 email → 用 GitHub 的 noreply 形式；没有 login 就写不了）----
+    // ---- 点 2：全局 git 身份（提交邮箱从**唯一口径** commitEmail() 取：state 填过就用它，没填过退回隐私邮箱形式）----
     const nameAfter = login || null;
-    const emailAfter = login ? login + '@users.noreply.github.com' : null;
+    const emailAfter = commitEmail(state, login);
+    // 「这个值是不是 state 给的」也问同一支口径（对 null 登录名求值：非空即来自 state），不另写一遍判断。
+    const emailFromState = Boolean(commitEmail(state, null));
     items.push({
       point: 'git-identity', key: 'user.name', scope: 'git global',
       before: await gitGlobalGet('user.name'), after: nameAfter, writable: Boolean(nameAfter),
@@ -2992,7 +3044,11 @@ sys.stdout.flush()
     items.push({
       point: 'git-identity', key: 'user.email', scope: 'git global',
       before: await gitGlobalGet('user.email'), after: emailAfter, writable: Boolean(emailAfter),
-      why: emailAfter ? 'state 里没有 email，用 GitHub 的 noreply 形式 <login>@users.noreply.github.com（要真邮箱就手动改，verify 会如实报「不是本插件写的」）' : '同上：先要有 login',
+      why: emailAfter
+        ? (emailFromState
+          ? 'state 里填过提交邮箱，就用它（要改：gh_identity {action:"email", email:"…"}）'
+          : 'state 里没填过邮箱 → 由登录名生成 GitHub 的隐私邮箱形式（要换成真邮箱：gh_identity {action:"email", email:"…"}）')
+        : '既解析不到 login、state 里也没填过邮箱 —— 填一个（gh_identity {action:"email", email:"…"}），或先 gh_resident_login / 让 gh CLI 登录后再接线',
     });
 
     // ---- 点 3：gh CLI（写不了：hosts.yml 只读不写，ADR 0001 的边界）----
@@ -3278,19 +3334,64 @@ sys.stdout.flush()
     };
   }
 
+  /**
+   * `action:"email"` —— 提交邮箱的**唯一填写入口**（票「登录后可选填提交邮箱（不填用隐私邮箱），wire 优先用它」）。
+   *
+   * 为什么它是独立的一个动作：填邮箱**不能要求用户重填 token**（`gh_resident_login` 的 `user_email` 参数挂在
+   * 一个 token 必填的工具上，当不了填写入口）。它只写插件自己的 state（跟 token 同一份文件、0600）——
+   * 不动宿主上任何东西，所以**不需要同意**；把值接到宿主（全局 `user.email`）仍然归 `wire`，那一步照样要同意。
+   *
+   * 两种用法：
+   *   - 带 `email` → 校验后写进 state（`email` 可回显：它不是凭据；token 依旧只出掩码）；
+   *   - 不带 `email` → 只读地报「现在存的是什么 / 现在接线会用哪个」，一个字节都不写。
+   *
+   * 「不填」不是一个值：不调它就行 —— state 里不会多出任何字段，`wire` 走回退（登录名生成的隐私邮箱形式）。
+   */
+  async function identityEmailAction(args) {
+    const state = await readState();
+    const resolved = await resolveIdentity(state);
+    const login = identityLogin(state, resolved);
+    const raw = typeof args.email === 'string' ? args.email.trim() : '';
+    const view = (extra) => ({
+      action: 'email', email: null, effective: null, wrote: false, stateFile: STATE_FILE, note: null, error: null, ...extra,
+    });
+
+    if (!raw) {
+      const current = typeof state.user_email === 'string' ? state.user_email.trim() : '';
+      return view({
+        ok: true, email: current || null, effective: commitEmail(state, login),
+        note: current
+          ? 'state 里现在存的就是它；要改就带 email 再调一次。接线是另一步：gh_identity {action:"wire"}（要同意）'
+          : 'state 里还没存过提交邮箱；现在接线会用登录名生成的隐私邮箱形式。要填就带 email 再调一次',
+      });
+    }
+    // 校验从严、拒绝得具体：邮箱不是凭据，但写进去的值会被拿去当 git 的 user.email，不能是换行/空白拼出来的串。
+    if (raw.length > 254 || /\s/.test(raw) || !/^[^@\s]+@[^@\s]+$/.test(raw)) {
+      return view({ ok: false, email: typeof state.user_email === 'string' ? state.user_email.trim() || null : null, effective: commitEmail(state, login), error: '不是有效的邮箱（不能有空白，形如 name@example.com，长度 ≤254）：' + raw.slice(0, 60) });
+    }
+
+    const next = await writeState({ user_email: raw });
+    return view({
+      ok: true, email: raw, effective: commitEmail(next, login), wrote: true,
+      note: '已写进插件 state（0600，与 token 同一份文件，不是第二份凭据存储）。'
+        + '要让 git 用它：跑 gh_identity {action:"wire"} —— 计划变了会重新问一次同意',
+    });
+  }
+
   // ---------- 身份体检（只读；票「新工具 gh_identity（只读体检 + 准确补救命令）」） ----------
   // 一次答完「我的身份是谁、四个消费点各接好没、缺什么、补的准确命令」。
   // 返回形状同时是《启动自述》与协议 identity 段的字段来源（一处定义、三处消费）—— 改字段属**接口变更**。
   // 只读且不联网：本地 git config 读取 + gh --version 探测；**不调 `gh auth status`**（那次会打网）。
-  // 2026-10-14：写动作（wire / verify / unwire）落在**同一个工具**上（action 分发）—— 不带 action 时
-  // 与从前逐字节一致；三个写动作的机制见上面那一大段。
+  // 2026-10-14：写动作（wire / verify / unwire / email）落在**同一个工具**上（action 分发）—— 不带 action 时
+  // 与从前逐字节一致；这些动作的机制见上面那一大段（email 只写插件自己的 state，不碰宿主，故不需要同意）。
   ctx.tools.register(textTool({
     toolName: 'gh_identity',
-    description: 'Identity audit and wiring in one tool. Default (no action) is a READ-ONLY audit: who the identity is, whether each of the four consumption points is wired, what is missing, and the exact command that fixes it. Points: git (credential-helper in BOTH scopes + global git identity) / gh CLI credentials / subprocess environment / PATH landing. action:"wire" projects the truth source onto the host (github.com credential helper pointing at this plugin\'s own helper, global user.name/user.email, bundled gh on PATH only when none is runnable) and writes nothing without consent:true; action:"verify" reconciles the host against the ledger (current value / what we wrote / when / whether it is not ours); action:"unwire" restores the pre-wire values item by item. It never writes gh\'s hosts.yml, never stores a second token, and makes no network calls.',
+    description: 'Identity audit and wiring in one tool. Default (no action) is a READ-ONLY audit: who the identity is, whether each of the four consumption points is wired, what is missing, and the exact command that fixes it. Points: git (credential-helper in BOTH scopes + global git identity) / gh CLI credentials / subprocess environment / PATH landing. action:"wire" projects the truth source onto the host (github.com credential helper pointing at this plugin\'s own helper, global user.name/user.email, bundled gh on PATH only when none is runnable) and writes nothing without consent:true; action:"verify" reconciles the host against the ledger (current value / what we wrote / when / whether it is not ours); action:"unwire" restores the pre-wire values item by item; action:"email" writes ONLY the git commit email into the plugin state (a non-credential value; no consent needed because it touches nothing on the host — the email reaches the host only through "wire", which keeps its consent gate). It never writes gh\'s hosts.yml, never stores a second token, and makes no network calls.',
     parameters: {
-      action: { type: 'string', enum: GH_IDENTITY_ACTIONS, description: 'audit (default, read-only) | wire (needs consent) | verify (read-only reconcile) | unwire (needs consent, restores pre-wire values).' },
+      action: { type: 'string', enum: GH_IDENTITY_ACTIONS, description: 'audit (default, read-only) | wire (needs consent) | verify (read-only reconcile) | unwire (needs consent, restores pre-wire values) | email (writes ONLY the commit email into the plugin state; no consent needed, it touches nothing on the host).' },
       consent: { type: 'boolean', description: 'Set true only after the user explicitly agreed to the plan returned by the previous call. Without it, wire/unwire write nothing and return {consentRequired:true, ask:{...}}.' },
       targets: { type: 'array', items: { type: 'string' }, description: 'Optional subset of points to act on: git-helper / git-identity / gh-cli / path-landing. Defaults to all.' },
+      email: { type: 'string', description: 'Only for action:"email": the git commit email to store in the plugin state (it replaces the login-derived GitHub privacy-email fallback that wire would otherwise write). Omit it to read back what is stored. It is not a credential and is echoed back; tokens stay masked.' },
     },
     readOnly: false,
     execute: async (args = {}) => {
@@ -3298,6 +3399,7 @@ sys.stdout.flush()
       if (!GH_IDENTITY_ACTIONS.includes(action)) {
         return { ok: false, error: 'action 只支持 ' + GH_IDENTITY_ACTIONS.join(' / ') + '（缺省＝audit）' };
       }
+      if (action === 'email') return await identityEmailAction(args);
       if (action !== 'audit') return await identityWireAction(action, args);
       const state = await readState();
       const identity = maskIdentity(await resolveIdentity(state));

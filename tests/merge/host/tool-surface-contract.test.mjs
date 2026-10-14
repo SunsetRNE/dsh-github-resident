@@ -218,12 +218,14 @@ try {
     const identity = await tool('gh_identity').execute({}, {})
     // 探针：**目标列表清空 + 小上界** —— 这条判据只取形状、不取结论，所以不起任何真实外网请求。
     const environment = await tool('gh_env_probe').execute({ network_targets: [], attempts: 1, timeout_ms: 500 }, {})
-    // gh_identity 是动作式工具（2026-10-14 起）：三个写/读动作也各取一份真回执 —— 形状判据要覆盖它们。
+    // gh_identity 是动作式工具（2026-10-14 起）：写/读动作也各取一份真回执 —— 形状判据要覆盖它们。
     // 动作都在**夹具的假 HOME** 里跑：wire 改的是假 gitconfig、写的是假数据目录，碰不到真宿主。
+    // email 取的是**不带 email 的只读那一档**（报现在存的是什么），因此在夹具里也一个字节都不写。
     const actions = {
       wire: await tool('gh_identity').execute({ action: 'wire', consent: true }, {}),
       verify: await tool('gh_identity').execute({ action: 'verify' }, {}),
       unwire: await tool('gh_identity').execute({ action: 'unwire', consent: true }, {}),
+      email: await tool('gh_identity').execute({ action: 'email' }, {}),
     }
     return { protocol, identity, environment, actions }
   })
@@ -291,18 +293,18 @@ if (surface) {
   check(JSON.stringify(sorted(segPoints)) === JSON.stringify(sorted(realPoints)),
     'identity 段的 points == gh_identity 真返回的 points[].point（' + JSON.stringify(segPoints) + '）')
 
-  // ---- 动作式工具的那一层：四个动作各自的字段清单，同样一处声明、同样钉到真回执上 ----
+  // ---- 动作式工具的那一层：每个动作各自的字段清单，同样一处声明、同样钉到真回执上 ----
   const views = (p.identity && p.identity.views) || {}
   const actionNames = (p.identity && p.identity.actions) || []
-  check(JSON.stringify(sorted(actionNames)) === JSON.stringify(['audit', 'unwire', 'verify', 'wire']),
-    'identity 段列出四个动作（' + JSON.stringify(actionNames) + '）')
+  check(JSON.stringify(sorted(actionNames)) === JSON.stringify(['audit', 'email', 'unwire', 'verify', 'wire']),
+    'identity 段列出五个动作（' + JSON.stringify(actionNames) + '）')
   const viewUnion = [...new Set(Object.values(views).flat())]
   check(JSON.stringify(sorted(viewUnion)) === JSON.stringify(sorted(rowOf('gh_identity'))),
-    '协议表 gh_identity 那行 == 四个动作视图的**并集**（同一处声明派生，不是手抄）')
+    '协议表 gh_identity 那行 == 五个动作视图的**并集**（同一处声明派生，不是手抄）')
   check(JSON.stringify(sorted(views.audit || [])) === JSON.stringify(sorted(businessKeys(identity))),
     'views.audit == 默认动作（体检）的真返回键')
 
-  for (const act of ['wire', 'verify', 'unwire']) {
+  for (const act of ['wire', 'verify', 'unwire', 'email']) {
     const receipt = actions[act]
     const actual = businessKeys(receipt)
     const declared = views[act] || []
@@ -315,7 +317,7 @@ if (surface) {
         : ''))
   }
 
-  note('本段只覆盖**能在合成环境里离线跑**的工具与动作（gh_protocol / gh_identity 四动作 / gh_env_probe）：')
+  note('本段只覆盖**能在合成环境里离线跑**的工具与动作（gh_protocol / gh_identity 五动作 / gh_env_probe）：')
   note('需要出网的工具跑不了离线，这条判据不覆盖它们 —— 不假装覆盖。')
   note('gh_pr 自《gh_pr 共用解析器 + 回落 gh pr create》起两条路都能离线实跑（REST 换掉 fetch、回落走 gh 桩），'
     + '它的「协议表那行 == 真回执键并集」由 tests/merge/host/pr-fallback.test.mjs 钉住，不在这里重复。')

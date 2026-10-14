@@ -147,7 +147,7 @@ bash tools/account-ui-check.sh
 | 工具 | 作用 | 只读 |
 |---|---|---|
 | `gh_resident_status` | 身份 / 凭据 / helper / 网络 / 仓库总览 | 是 |
-| `gh_resident_login` | 持久化 token（0600）+ 写 `~/.git-credentials` + 设 `credential.helper` + 设 git 身份 | 否 |
+| `gh_resident_login` | 持久化 token（0600）+ 写 `~/.git-credentials` + 设 `credential.helper` + 设 git 身份；成功后**问一次**提交邮箱（可跳过，跳过就什么都不写、之后不再问；填的入口是 `gh_identity {action:"email"}`） | 否 |
 | `gh_repos` | 枚举根目录下的 git 仓库及分支 / 脏文件 / ahead-behind | 是 |
 | `gh_repo_registry` | 建 / 刷 / 对账登记文件库（`status` `plan` `build` `rescan` `verify` `forget` `revoke` `purge`）；`build`/`rescan` 需用户同意 | 否 |
 | `gh_repo_registry_list` | 读登记文件库：有哪些仓库、是否绑远端、host/owner、ahead-behind | 是 |
@@ -162,7 +162,7 @@ bash tools/account-ui-check.sh
 | `gh_cli_status` | gh 版本 / 已认证账号 / 凭据助手 / `hosts.yml` 掩码 | 是 |
 | `gh_cli_setup_git` | `gh auth setup-git`，可选写 git 身份 | 否 |
 | `gh_cli_logout` | 凭据销毁（撤销 + 清副本 + 可选卸 gh） | 否 |
-| `gh_identity` | 身份体检（默认只读）：四个消费点接了没 + 缺什么补什么；`action:"wire"` 接线（指向插件**自有**的 git 凭据助手、写全局 git 身份、PATH 上没有能跑的 gh 时才落自带那份）、`"verify"` 按台账对账、`"unwire"` 逐项还原 | 默认是（`wire` / `unwire` 需用户同意） |
+| `gh_identity` | 身份体检（默认只读）：四个消费点接了没 + 缺什么补什么；`action:"wire"` 接线（指向插件**自有**的 git 凭据助手、写全局 git 身份、PATH 上没有能跑的 gh 时才落自带那份）、`"verify"` 按台账对账、`"unwire"` 逐项还原、`"email"` 只写提交邮箱（唯一填写入口：不用重填 token、不碰宿主；提交邮箱存在真源 state 里，接线时优先用它，没填过才退回隐私邮箱形式） | 默认是（`wire` / `unwire` 需用户同意；`email` 只写插件自己的 state，不需同意） |
 | `gh_env_probe` | 环境能力矩阵：gh / curl / node / 架构 / HOME 可写 + 三路网络可达性（fetch/curl 双通道、报成功率与落点） | 是 |
 | `gh_protocol` | 机器可读的协议文档 | 是 |
 
