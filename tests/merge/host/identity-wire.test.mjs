@@ -14,7 +14,9 @@
  *   ③ wire 有 consent：**host 作用域**的 helper 指到插件自有助手（不再依赖 gh 绝对路径）、全局身份写上、台账 0600、
  *      助手文件 0755 —— 且这些写入**只落在夹具的假 HOME 里**；
  *   ④ 幂等：连跑两次，第二次 `wrote:false`、台账不新增、两次 `plan` 一致；
- *   ⑤ verify：逐项给「现在的值 / 本插件写入的值 / 写入时间 / 这个值不是本插件写的」；手改一处后如实报 drift；
+ *   ⑤ verify：逐项给「现在的值 / 本插件写入的值 / 写入时间 / **还算不算我们写的**」—— 按**归属口径**
+ *      （票 41 已裁：与 unwire 同一支判定，只报不做）：`state` 四词 ours / not-ours / back-to-before / unknown，
+ *      首尾空白/引号不算差异且 `note` 点出，逐字值仍并排报出；台账态另在 `retired` 一列（已撤销的项也照判盘上那一问）；
  *   ⑥ unwire：无 consent 不写；有 consent 后逐项还原（原本为空的**删键**），被别人改过的那项**跳过**并说明；
  *   ⑦ PATH 落点：**只在 PATH 上没有能跑的 gh 时**才落软链；已有系统 gh 时什么都不做；
  *   ⑧ 不泄漏：token 原文不出现在任何回执、台账、助手文件、gitconfig 里；hosts.yml 全程逐字节未变。
@@ -22,6 +24,9 @@
  *     三种结果各有判据 —— 只差首尾空白/引号 → 撤（`revoked`）；归一化后确实不同 → 放手（`abandoned`）；
  *     判不出来（同一项被写成多行 / 已经回到接线前的样子）→ 跳过，且**一个字节都不写、台账也不下结论**。
  *     最狠的一条：同一项被写成多行、而**最后一行恰好等于我们写的值**时，老写法会 `--unset-all` 把别人的行一起抹掉。
+ *   ⑩ verify 的**读**（票 41 的四条验收判据）：只差首尾空白/引号 → `ours` ＋ note 点出；
+ *     同一项多行 → `unknown` ＋ `ours:null` ＋ `now` 放读到的全部行；git 读失败（退出码非 0/1）→ `unknown`（未知不当成没有）；
+ *     PATH 落点不是软链 → `unknown`；已撤销／已放手的项也照判盘上那一问（`retired` 与 `state` 两列各说一件事）。
  *
  * 隔离：全部在 `_env-harness` 的合成环境里跑（假 HOME + 夹具 bin），**不碰真 HOME、不起网络**。
  * 用法：node tests/merge/host/identity-wire.test.mjs
@@ -154,7 +159,7 @@ try {
 } finally { hB.cleanup() }
 
 // ===========================================================================
-section('三、verify：现在的值 / 本插件写入的值 / 写入时间 / 不是本插件改的')
+section('三、verify：现在的值 / 本插件写入的值 / 写入时间 / 还算不算我们写的（票 41 的归属词表）')
 // ===========================================================================
 const hC = fixture('wire-c')
 try {
@@ -170,18 +175,37 @@ try {
 
     await tool('gh_identity').execute({ action: 'wire', consent: true }, {})
     const v1 = await tool('gh_identity').execute({ action: 'verify' }, {})
-    check(v1.summary.match === 3 && v1.summary.drift === 0, '刚接完：三项都 match（' + JSON.stringify(v1.summary) + '）')
+    check(v1.summary.ours === 3 && v1.summary.notOurs === 0 && v1.summary.unknown === 0 && v1.summary.backToBefore === 0,
+      '刚接完：三项都算 ours（票 41 的四词表；' + JSON.stringify(v1.summary) + '）')
+    check(v1.items.every((i) => i.state === 'ours' && i.ours === true && i.retired === null),
+      '每项 state=ours、ours=true、retired=null（盘上归属与台账态分两列）')
 
     gitSet(hC.home, 'credential.https://github.com.helper', '!echo hand-edited')
     const v2 = await tool('gh_identity').execute({ action: 'verify' }, {})
-    const drifted = v2.items.filter((i) => i.state === 'drift')
-    check(v2.summary.drift === 1 && drifted.length === 1, '手改一处后：如实报一项 drift')
+    const drifted = v2.items.filter((i) => i.state === 'not-ours')
+    check(v2.summary.notOurs === 1 && drifted.length === 1,
+      '手改一处后：如实报一项 not-ours（' + JSON.stringify(v2.summary) + '）')
     const item = drifted[0]
     check(item.now === '!echo hand-edited', '报「现在是什么值」（' + item.now + '）')
     check(String(item.written).startsWith('!') && item.written !== item.now, '报「本插件写的是什么值」')
     check(typeof item.writtenAt === 'string' && item.writtenAt.length >= 20, '报「本插件什么时候写的」（' + item.writtenAt + '）')
     check(item.ours === false && String(item.note).includes('不是本插件写的'), '明确说「这个值不是本插件改的」（不猜是谁）')
     check(item.writer === 'gh_identity.wire', '报「写入者」（' + item.writer + '）')
+
+    // 已撤销的项**也照判盘上那一问**（票 41 已裁）：台账态进 `retired` 列，`state` 仍说盘上归属。
+    const u = await tool('gh_identity').execute({ action: 'unwire', consent: true }, {})
+    check(u.wrote === true, '前置：先撤一次（能撤的两项还原；上面手改过的那项判放手）')
+    const v3 = await tool('gh_identity').execute({ action: 'verify' }, {})
+    const retiredOf = (k) => (v3.items.find((i) => i.key === k) || {}).retired
+    check(retiredOf('user.name') === 'revoked' && retiredOf('user.email') === 'revoked'
+      && retiredOf('credential.https://github.com.helper') === 'abandoned',
+      'retired 列如实分开两种台账态（实得 ' + JSON.stringify([
+        retiredOf('user.name'), retiredOf('user.email'), retiredOf('credential.https://github.com.helper'),
+      ]) + '）')
+    check(v3.summary.backToBefore === 2 && v3.summary.notOurs === 1 && v3.summary.unknown === 0,
+      '已撤销的项照判盘上那一问：两项 back-to-before、一项仍是别人的值 not-ours（' + JSON.stringify(v3.summary) + '）')
+    check(v3.items.filter((i) => i.state === 'back-to-before').every((i) => i.ours === null && String(i.note).includes('接线前')),
+      'back-to-before 的项：ours=null，note 点出「已回到接线前的样子」')
   })
 } finally { hC.cleanup() }
 
@@ -241,7 +265,7 @@ try {
     check(existsSync(hE.bin + '/gh') && readlinkSync(hE.bin + '/gh').includes('.dsh/gh-cli/bin/gh'),
       '软链真的落了，指向插件自带的那份')
     const v = await tool('gh_identity').execute({ action: 'verify' }, {})
-    check(v.summary.match === 4, 'verify 把这一项也算进 match（四人项：' + JSON.stringify(v.summary) + '）')
+    check(v.summary.ours === 4, 'verify 把这一项也算进 ours（四人项：' + JSON.stringify(v.summary) + '）')
     const u = await tool('gh_identity').execute({ action: 'unwire', consent: true }, {})
     check(u.results.some((r) => r.point === 'path-landing' && r.ok === true) && !existsSync(hE.bin + '/gh'),
       'unwire 把软链删掉（宿主回到接线前）')
@@ -533,6 +557,107 @@ try {
     check(shaOrAbsent(hN.home + '/.dsh/github-resident/wire/consent.json') === before.consent, '已记录的授权也原样（计划没变）')
   })
 } finally { hN.cleanup() }
+
+// ===========================================================================
+section('九、verify 的读与归属词表：只差引号 / 多行 / git 读失败 / 落点不是软链 / 已放手（票 41 的验收判据）')
+// ===========================================================================
+
+// ---- ① 只差首尾空白/引号 → 仍算我们写的（老写法：drift ＋「不是本插件写的」）----
+const hT = fixture('verify-t')
+try {
+  await withPlugin(hT.home, { path: hT.path, dataDir: hT.home + '/.dsh/gh-cli' }, async ({ tool }) => {
+    await tool('gh_identity').execute({ action: 'wire', consent: true }, {})
+    gitSet(hT.home, 'user.name', '"  octocat  "') // 引号里还裹着首尾空白：归一化要反复剥才归得掉
+    const v = await tool('gh_identity').execute({ action: 'verify' }, {})
+    const r = v.items.find((i) => i.key === 'user.name')
+    check(r.state === 'ours' && r.ours === true && v.summary.ours === 3,
+      '只差首尾空白/引号 → state=ours、ours=true（实得 ' + JSON.stringify(r.state) + '）')
+    check(r.now === '"  octocat  "' && r.written === 'octocat',
+      '逐字值仍并排报出（now=' + JSON.stringify(r.now) + ' / written=' + JSON.stringify(r.written) + '）')
+    check(String(r.note).includes('只差首尾空白/引号'), 'note 如实点出「只差首尾空白/引号」（' + r.note + '）')
+  })
+} finally { hT.cleanup() }
+
+// ---- ② 同一项被写成多行 → 读不准：state=unknown ＋ ours=null ＋ now 放全部行（老写法：match 假绿）----
+const hU = fixture('verify-u')
+try {
+  await withPlugin(hU.home, { path: hU.path, dataDir: hU.home + '/.dsh/gh-cli' }, async ({ tool }) => {
+    await tool('gh_identity').execute({ action: 'wire', consent: true }, {})
+    gitSet(hU.home, 'user.name', 'somebody-else')
+    execFileSync('git', ['config', '--global', '--add', 'user.name', 'octocat'], { env: { ...process.env, HOME: hU.home } })
+    const v = await tool('gh_identity').execute({ action: 'verify' }, {})
+    const r = v.items.find((i) => i.key === 'user.name')
+    check(r.state === 'unknown' && r.ours === null && v.summary.unknown === 1,
+      '多行 → state=unknown、ours=null，不再说「都对」（实得 ' + JSON.stringify(r.state) + '）')
+    check(String(r.now).includes('somebody-else') && String(r.now).includes('octocat'),
+      'now 照实放读到的**全部行**（' + JSON.stringify(r.now) + '）')
+    check(String(r.note).includes('多行'), 'note 说清是哪一种读不准（' + r.note + '）')
+    check(v.summary.ours === 2, '另外两项照常算 ours（不整张回执一起降级）')
+  })
+} finally { hU.cleanup() }
+
+// ---- ③ git 读失败（退出码既非 0 也非 1）→ 未知 ≠ 没有：state=unknown，不折成「不是我们的」----
+// 台账里 `before` **非空**：否则「已经回到接线前」那条会先把结论吃掉，这条就测不到读失败那条路。
+const hV = fixture('verify-v', {
+  withGit: false,
+  files: {
+    '.dsh/github-resident/wire/ledger.json': JSON.stringify({
+      schema: 'dsh-github-resident/wire-ledger', schemaVersion: 1, updatedAt: '2026-10-14T00:00:00.000Z',
+      items: [{
+        point: 'git-identity', key: 'user.name', scope: 'git global',
+        before: 'old-name', after: 'octocat', at: '2026-10-14T00:00:00.000Z',
+        writer: 'gh_identity.wire', revokedAt: null,
+      }],
+    }),
+  },
+})
+try {
+  writeFileSync(hV.bin + '/git', '#!/bin/sh\nexit 2\n', { mode: 0o755 }) // git 在，但每次调用都失败
+  await withPlugin(hV.home, { path: hV.path, dataDir: hV.home + '/.dsh/gh-cli' }, async ({ tool }) => {
+    const v = await tool('gh_identity').execute({ action: 'verify' }, {})
+    const r = v.items[0]
+    check(r.state === 'unknown' && r.ours === null,
+      'git 读失败 → state=unknown、ours=null（不写成 not-ours；实得 ' + JSON.stringify(r.state) + '）')
+    check(String(r.note).includes('读不出来'), 'note 说清是「读不出来」，不是猜成被别人改过')
+  })
+} finally { hV.cleanup() }
+
+// ---- ④ PATH 落点不是软链（读不出归属）→ state=unknown（老写法折成「不是我们写的」）----
+// 真正的 `readlink` 失败（权限 / IO）与这里走的是**同一条** `readable:false` 路径；能在夹具里稳定造出来的
+// 是「那个位置不是软链」这一种，所以判据落在它上面。
+const hW = fixture('verify-w', { withGh: false })
+mkdirSync(hW.home + '/.dsh/gh-cli/bin', { recursive: true })
+writeFileSync(hW.home + '/.dsh/gh-cli/bin/gh', '#!/bin/sh\necho "gh version 9.9.9 (CACHE-STUB)"\n', { mode: 0o755 })
+try {
+  await withPlugin(hW.home, { path: hW.path, dataDir: hW.home + '/.dsh/gh-cli' }, async ({ tool }) => {
+    await tool('gh_identity').execute({ action: 'wire', consent: true }, {})
+    rmSync(hW.bin + '/gh')                                    // 用户把那个软链换成了自己的真实文件
+    writeFileSync(hW.bin + '/gh', '#!/bin/sh\necho mine\n', { mode: 0o755 })
+    const v = await tool('gh_identity').execute({ action: 'verify' }, {})
+    const r = v.items.find((i) => i.point === 'path-landing')
+    check(r.state === 'unknown' && r.ours === null,
+      '落点不是软链 → state=unknown、ours=null（实得 ' + JSON.stringify(r.state) + '）')
+    check(String(r.note).includes('不是软链'), 'note 说清它看到的是什么（不是笼统一句「读不准」）')
+  })
+} finally { hW.cleanup() }
+
+// ---- ⑤ 已放手（abandoned）的项：台账态与盘上归属**各说一件事** ----
+const hX = fixture('verify-x')
+try {
+  await withPlugin(hX.home, { path: hX.path, dataDir: hX.home + '/.dsh/gh-cli' }, async ({ tool }) => {
+    await tool('gh_identity').execute({ action: 'wire', consent: true }, {})
+    gitSet(hX.home, 'user.name', 'someone-else')
+    await tool('gh_identity').execute({ action: 'unwire', consent: true }, {}) // → 判 abandoned，记进台账
+    const v = await tool('gh_identity').execute({ action: 'verify' }, {})
+    const r = v.items.find((i) => i.key === 'user.name')
+    check(r.retired === 'abandoned' && r.state === 'not-ours' && r.ours === false,
+      '已放手的项：retired=abandoned、state=not-ours（两列各说一件事；实得 ' + JSON.stringify([r.retired, r.state]) + '）')
+    check(String(r.note).includes('已放手') && String(r.note).includes('不是本插件写的'),
+      'note 把「已放手」与「不是我们写的」都说出来（' + r.note + '）')
+    check(v.summary.notOurs === 1 && v.summary.backToBefore === 2,
+      '计数按盘上归属：1 项 not-ours ＋ 2 项 back-to-before（' + JSON.stringify(v.summary) + '）')
+  })
+} finally { hX.cleanup() }
 
 note('全流程都在合成环境的假 HOME 里跑：真宿主的 git 全局配置、gh hosts.yml、~/.dsh 一个字节都没碰。')
 note('闸门与真源的分工：本文件管行为（写没写 / 撤销对不对），tool-surface-contract 管形状（协议与回执同源）。')

@@ -3265,14 +3265,21 @@ sys.stdout.flush()
     return s;
   }
 
+  /** 回执里怎么显示一个值（`null` ＝ 这个键没有 / 读不到）—— 两处共用，别各写一遍。 */
+  const shownValue = (v) => (v === null ? '(未设置)' : JSON.stringify(v));
+
   /**
    * 读一项的**现况**，并回答「这一次读能不能用来做归属判定」—— 票 36 的「判不出来」第一类。
+   *
+   * 票 41 起这是**两处共用**的读（原名 `readUnwireCurrent`）：`verify` 与 `unwire` 都从这里取现况，
+   * 免得「怎么读一个 git 值」再长出第二种口径。
    *
    * 读不准有两种：**同一项被写成多行**（git 键有多行，或值本身跨行 —— 单值读法只看到其中一份，
    * 而撤是整键动作，会误伤别人那几行），以及 PATH 落点上「那个位置存在却不是软链」（读不出归属，
    * 更不能拿 readlink 的 null 去 `rm`）。两种都交给调用方**跳过**，不据此写任何东西。
+   * （`verify` 是只读的，无所谓「跳过写入」，但同样**不下结论**：报 `state:"unknown"`，不报「不是我们写的」。）
    */
-  async function readUnwireCurrent(entry) {
+  async function readEntryCurrent(entry) {
     if (entry.point !== 'path-landing') {
       const all = await gitGlobalGetAll(entry.key);
       if (all === null) {
@@ -3298,35 +3305,44 @@ sys.stdout.flush()
   }
 
   /**
-   * 撤销一项的判定 —— 票 36 的**三种结果**（顺序即优先级，「判不出来」优先，因为它只会**减少**写入）：
+   * 一项的**归属判定** —— 一处实现、两处读者（票 41 已裁的「真同源」）。
    *
-   * - `undecidable` **判不出来** → 跳过：读不准（同一项被写成多行），或值已经回到接线前的样子
-   *   （撤与不撤结果相同，而「是我们撤的」还是「别人改回来的」无从判断）→ **不写、也不在台账里下结论**；
-   * - `revoked` 归一化后仍是我们写的那个值 → 撤（`before` 为 null 就**删键**）；
-   * - `abandoned` 归一化后确实不是我们写的值 → 跳过并在台账记「放手」。
+   * 返回 `{ own, reason, current, why }`：`own` 是**中性事实**，不带动作含义 ——
+   *   - `true`  归一化后仍等于台账里的 `after` → `reason:'ours'`（`why` 只在「只差首尾空白/引号」时有话）；
+   *   - `false` 归一化后确实是别的值 → `reason:'not-ours'`；
+   *   - `null`  **判不出来** → `reason:'unreadable'`（读不准），或 `'back-to-before'`
+   *            （已经回到接线前的样子：撤与不撤结果相同，「是我们撤的」还是「别人改回来的」无从判断）。
    *
-   * 「先归一化再比对」是 2026-10-14 对票面第 3 条验收的裁决口径：值与台账只差一个首尾引号/空白时
-   * **不该**被当成「被别人改过」—— 那会把还能撤的项误判成放手（行为更保守，但不是裁决要的那个）。
+   * 顺序即优先级（票 36 已裁）：「判不出来」优先 —— 它只会**减少**写入。
+   * 「先归一化再比对」是同票的裁决口径：值与台账只差一个首尾引号/空白时**不该**被当成「被别人改过」
+   * （那会把还能撤的项误判成放手）。
+   *
+   * 两处说法都从这一支派生，不各写一遍：
+   *   - `unwire`（动作）译成票 36 的三种结果 `revoked` / `abandoned` / `undecidable`，**回执词与行为不变**；
+   *   - `verify`（只读）译成 `state` 的四个词 `ours` / `not-ours` / `back-to-before` / `unknown`
+   *     （后两个都来自 `own === null`，按 `reason` 分开 —— 一个成功撤销的项不该读成 `unknown`）。
    */
-  async function judgeUnwireEntry(entry) {
-    const read = await readUnwireCurrent(entry);
-    const shown = (v) => (v === null ? '(未设置)' : JSON.stringify(v));
-    if (!read.readable) return { verdict: 'undecidable', current: read.current, why: read.why };
+  async function judgeOwnership(entry) {
+    const read = await readEntryCurrent(entry);
+    if (!read.readable) return { own: null, reason: 'unreadable', current: read.current, why: read.why };
     if (normalizeForCompare(read.current) === normalizeForCompare(entry.before)) {
       return {
-        verdict: 'undecidable', current: read.current,
-        why: '现在的值已经和接线前一样（' + shown(entry.before) + '）—— 撤与不撤结果相同，是「我们撤的」还是「别人改回来的」无从判断',
+        own: null, reason: 'back-to-before', current: read.current,
+        why: '现在的值已经和接线前一样（' + shownValue(entry.before) + '）—— 撤与不撤结果相同，是「我们撤的」还是「别人改回来的」无从判断',
       };
     }
     if (normalizeForCompare(read.current) === normalizeForCompare(entry.after)) {
       // 归一化只影响这一次判断：真撤的时候写的仍是台账里记的 before 原文。
       if (read.current !== entry.after) {
-        return { verdict: 'revoked', current: read.current, why: '现在的值与台账只差首尾空白/引号（' + shown(read.current) + ' ≈ ' + shown(entry.after) + '），归一化后相同 → 仍算本插件写的' };
+        return {
+          own: true, reason: 'ours', current: read.current,
+          why: '现在的值与台账只差首尾空白/引号（' + shownValue(read.current) + ' ≈ ' + shownValue(entry.after) + '），归一化后相同 → 仍算本插件写的',
+        };
       }
-      return { verdict: 'revoked', current: read.current, why: null };
+      return { own: true, reason: 'ours', current: read.current, why: null };
     }
     return {
-      verdict: 'abandoned', current: read.current,
+      own: false, reason: 'not-ours', current: read.current,
       why: '现在的值不是本插件写的（被别人改过）—— 不动它，只记「放手」',
     };
   }
@@ -3334,37 +3350,48 @@ sys.stdout.flush()
   async function identityWireAction(action, args) {
     const ledger = await readWireLedger();
 
-    // ---- verify：只读对账，不需要同意。逐项回答「现在的值 / 本插件写入的值 / 写入时间 / 是不是不是我们改的」----
+    // ---- verify：只读对账，不需要同意。逐项回答「现在的值 / 本插件写入的值 / 写入时间 / 还算不算我们写的」----
+    // 归属那一问与 unwire **同一支判定**（票 41 已裁的「真同源」）：这里只报，不做。
     if (action === 'verify') {
       const items = [];
       for (const entry of ledger.items) {
-        const current = entry.point === 'path-landing'
-          ? await fs.readlink(entry.key).catch(() => null)
-          : await gitGlobalGet(entry.key);
-        const retired = entry.revokedAt || entry.abandonedAt;
-        const ours = !retired && current === entry.after;
+        const j = await judgeOwnership(entry);
+        // `own === null` 的两种情形按 `reason` 分开报：一个**成功撤销**的项不该读成 `unknown`。
+        const state = j.own === true ? 'ours'
+          : j.own === false ? 'not-ours'
+            : (j.reason === 'back-to-before' ? 'back-to-before' : 'unknown');
+        // 台账态与盘上归属**分两列**（票 41 已裁）：一列只说一件事；且已撤销／已放手的项也照判盘上那一问 ——
+        // 于是「撤了但没生效」「撤后又被改回来」第一次看得见（老写法台账态一到就短路，盘上什么都不看）。
+        const retired = entry.revokedAt ? 'revoked' : (entry.abandonedAt ? 'abandoned' : null);
+        const retiredNote = entry.revokedAt
+          ? '已撤销（' + (entry.revokedBy || 'unwire') + ' 于 ' + entry.revokedAt + '）'
+          : entry.abandonedAt
+            ? '已放手：值被别人改过，本插件不再管它（' + entry.abandonedAt + '），也不去覆盖'
+            : null;
+        const ownershipNote = state === 'ours'
+          ? j.why                                     // 只在「只差首尾空白/引号」时有话要说
+          : state === 'not-ours'
+            ? '现在的值不是本插件写的：本插件在 ' + entry.at + ' 写的是 written 那一列'
+            : state === 'back-to-before'
+              ? '盘上现在的值已经回到接线前的样子（' + shownValue(entry.before) + '）—— 是谁改回来的无从判断'
+              : '读不准，这一项这次不下结论：' + (j.why || '读不出来');
         items.push({
           point: entry.point, key: entry.key, scope: entry.scope,
-          now: current, written: entry.after, writtenAt: entry.at, writer: entry.writer,
-          state: entry.revokedAt ? 'revoked' : (entry.abandonedAt ? 'abandoned' : (ours ? 'match' : 'drift')),
-          ours,
-          note: entry.revokedAt
-            ? '已撤销（' + (entry.revokedBy || 'unwire') + ' 于 ' + entry.revokedAt + '）'
-            : entry.abandonedAt
-              ? '已放手：值被别人改过，本插件不再管它（' + entry.abandonedAt + '），也不去覆盖'
-              : ours ? null
-                : '现在的值不是本插件写的：本插件在 ' + entry.at + ' 写的是 written 那一列',
+          now: j.current, written: entry.after, writtenAt: entry.at, writer: entry.writer,
+          state, retired, ours: j.own,
+          note: [retiredNote, ownershipNote].filter(Boolean).join('；') || null,
         });
       }
       const helperExists = await fs.stat(WIRE_HELPER_FILE).then(() => true).catch(() => false);
       const credFileExists = await pathExists(CRED_FILE);
       return {
         ok: true, action, items,
+        // 计数按 `state` 的四个取值（票 41 已裁）：台账态的条数由 `ledger` 那块报，不在这里重复。
         summary: {
-          match: items.filter((i) => i.state === 'match').length,
-          drift: items.filter((i) => i.state === 'drift').length,
-          revoked: items.filter((i) => i.state === 'revoked').length,
-          abandoned: items.filter((i) => i.state === 'abandoned').length,
+          ours: items.filter((i) => i.state === 'ours').length,
+          notOurs: items.filter((i) => i.state === 'not-ours').length,
+          backToBefore: items.filter((i) => i.state === 'back-to-before').length,
+          unknown: items.filter((i) => i.state === 'unknown').length,
         },
         disk: {
           helperFile: WIRE_HELPER_FILE, helperExists,
@@ -3451,7 +3478,7 @@ sys.stdout.flush()
       };
     }
 
-    // ---- unwire：按台账逐项还原（只撤「归一化后仍等于我们写的值」的项；三种结果见 judgeUnwireEntry）----
+    // ---- unwire：按台账逐项还原（只撤「归一化后仍等于我们写的值」的项；判定见 judgeOwnership）----
     const active = ledger.items.filter((i) => !i.revokedAt && !i.abandonedAt);
     if (active.length > 0 && !grantedByCall) {
       return {
@@ -3475,8 +3502,8 @@ sys.stdout.flush()
     /** 三项回执共用的四个字段（哪一项 / 现在是什么值 / 我们写的是什么）—— 一处拼，别在三处手抄。 */
     const receiptBase = (entry, j) => ({ point: entry.point, key: entry.key, now: j.current, written: entry.after });
     for (const entry of active) {
-      const j = await judgeUnwireEntry(entry);
-      if (j.verdict === 'undecidable') {
+      const j = await judgeOwnership(entry);
+      if (j.own === null) {
         // 判不出来：一个字节都不写，台账里也不下结论（不猜是谁改的）—— 于是它仍是「未决」，
         // 下次 unwire 还会如实报出来。宁可反复报，也不替用户记一笔不实的账。
         restored.push({
@@ -3486,7 +3513,7 @@ sys.stdout.flush()
         });
         continue;
       }
-      if (j.verdict === 'abandoned') {
+      if (j.own === false) {
         // 值已经被别人改过：我们撤不回「我们的值」（它不在了），也**不该**拿接线前的旧值去盖别人的新值。
         // 所以就地「放手」并记进台账 —— 这样它不会再被反复问起，历史也留着。
         entry.abandonedAt = nowIso;
@@ -3602,7 +3629,7 @@ sys.stdout.flush()
   // 与从前逐字节一致；这些动作的机制见上面那一大段（email 只写插件自己的 state，不碰宿主，故不需要同意）。
   ctx.tools.register(textTool({
     toolName: 'gh_identity',
-    description: 'Identity audit and wiring in one tool. Default (no action) is a READ-ONLY audit: who the identity is, whether each of the four consumption points is wired, what is missing, and the exact command that fixes it. Points: git (credential-helper in BOTH scopes + global git identity) / gh CLI credentials / subprocess environment / PATH landing. action:"wire" projects the truth source onto the host (github.com credential helper pointing at this plugin\'s own helper, global user.name/user.email, bundled gh on PATH only when none is runnable) and writes nothing without consent:true; action:"verify" reconciles the host against the ledger (current value / what we wrote / when / whether it is not ours); action:"unwire" restores the pre-wire values item by item, judging each item AFTER normalizing (surrounding whitespace/quotes trimmed — a value that only differs by quoting is still reclaimed) and reporting one of three verdicts per item (revoked / abandoned / undecidable): items somebody else changed are let go, and items it cannot judge (written on several lines, or already back to the pre-wire value) are skipped and reported rather than force-restored; action:"email" writes ONLY the git commit email into the plugin state (a non-credential value; no consent needed because it touches nothing on the host — the email reaches the host only through "wire", which keeps its consent gate). It never writes gh\'s hosts.yml, never stores a second token, and makes no network calls.',
+    description: 'Identity audit and wiring in one tool. Default (no action) is a READ-ONLY audit: who the identity is, whether each of the four consumption points is wired, what is missing, and the exact command that fixes it. Points: git (credential-helper in BOTH scopes + global git identity) / gh CLI credentials / subprocess environment / PATH landing. action:"wire" projects the truth source onto the host (github.com credential helper pointing at this plugin\'s own helper, global user.name/user.email, bundled gh on PATH only when none is runnable) and writes nothing without consent:true; action:"verify" reconciles the host against the ledger BY OWNERSHIP — the same judgement unwire acts on, reported and never acted on: each item gets state ours / not-ours / back-to-before / unknown (a value that differs only by surrounding whitespace or quotes still counts as ours and the note says so; the verbatim value and what we wrote are reported side by side), an item whose read is ambiguous (key written on several lines, or unreadable) is reported unknown rather than guessed, and the ledger state (revoked / abandoned) rides in a separate `retired` column so a retired item is still judged against the disk; action:"unwire" restores the pre-wire values item by item, judging each item AFTER normalizing (surrounding whitespace/quotes trimmed — a value that only differs by quoting is still reclaimed) and reporting one of three verdicts per item (revoked / abandoned / undecidable): items somebody else changed are let go, and items it cannot judge (written on several lines, or already back to the pre-wire value) are skipped and reported rather than force-restored; action:"email" writes ONLY the git commit email into the plugin state (a non-credential value; no consent needed because it touches nothing on the host — the email reaches the host only through "wire", which keeps its consent gate). It never writes gh\'s hosts.yml, never stores a second token, and makes no network calls.',
     parameters: {
       action: { type: 'string', enum: GH_IDENTITY_ACTIONS, description: 'audit (default, read-only) | wire (needs consent) | verify (read-only reconcile) | unwire (needs consent, restores pre-wire values) | email (writes ONLY the commit email into the plugin state; no consent needed, it touches nothing on the host).' },
       consent: { type: 'boolean', description: 'Set true only after the user explicitly agreed to the plan returned by the previous call. Without it, wire/unwire write nothing and return {consentRequired:true, ask:{...}}.' },

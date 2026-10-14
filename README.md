@@ -162,7 +162,7 @@ bash tools/account-ui-check.sh
 | `gh_cli_status` | gh 版本 / 已认证账号 / 凭据助手 / `hosts.yml` 掩码 | 是 |
 | `gh_cli_setup_git` | `gh auth setup-git`，可选写 git 身份 | 否 |
 | `gh_cli_logout` | 凭据销毁（撤销 + 清副本 + 可选卸 gh） | 否 |
-| `gh_identity` | 身份体检（默认只读）：四个消费点接了没 + 缺什么补什么；`action:"wire"` 接线（指向插件**自有**的 git 凭据助手、写全局 git 身份、PATH 上没有能跑的 gh 时才落自带那份）、`"verify"` 按台账对账、`"unwire"` 逐项还原、`"email"` 只写提交邮箱（唯一填写入口：不用重填 token、不碰宿主；提交邮箱存在真源 state 里，接线时优先用它，没填过才退回隐私邮箱形式） | 默认是（`wire` / `unwire` 需用户同意；`email` 只写插件自己的 state，不需同意） |
+| `gh_identity` | 身份体检（默认只读）：四个消费点接了没 + 缺什么补什么；`action:"wire"` 接线（指向插件**自有**的 git 凭据助手、写全局 git 身份、PATH 上没有能跑的 gh 时才落自带那份）、`"verify"` 按台账对账（**归属口径**：与 `unwire` 同一支判定，只报不做 —— 每项 `state` 是 `ours` / `not-ours` / `back-to-before` / `unknown`，首尾空白/引号不算差异且 `note` 点出，逐字值并排报出；台账态另在 `retired` 一列）、`"unwire"` 逐项还原、`"email"` 只写提交邮箱（唯一填写入口：不用重填 token、不碰宿主；提交邮箱存在真源 state 里，接线时优先用它，没填过才退回隐私邮箱形式） | 默认是（`wire` / `unwire` 需用户同意；`email` 只写插件自己的 state，不需同意） |
 | `gh_env_probe` | 环境能力矩阵：gh / curl / node / 架构 / HOME 可写 + 三路网络可达性（fetch/curl 双通道、报成功率与落点） | 是 |
 | `gh_protocol` | 机器可读的协议文档 | 是 |
 
