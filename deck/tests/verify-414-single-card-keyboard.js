@@ -1,7 +1,7 @@
 /**
  * verify-414-single-card-keyboard —— #414 的**行为**判据（不是 grep 源码字形）。
  *
- * 为什么要有它（2026-10-14，票《deck 门禁红：#414 single-card 的四条判据》）：`verify-414-single-card.js`
+ * 为什么要有它（2026-10-14，票 #39《deck 门禁红：#414 single-card 的四条判据》）：`verify-414-single-card.js`
  * 那十条读的是源码**文本**（拼合后 includes）。它能证明「那几行字还在某个文件里」，**不能**证明
  * 「键盘真的能用、ARIA 真的报了选中态」—— 而 #414 当初要的正是后者（字形对不上行为时，形似判据是绿的）。
  * 这一条直接 import 渲染模块、用桩 `h` 建树、真调 `onKeyDown` / `onClick`，看值有没有落地。
@@ -15,6 +15,14 @@
  *   ⑥ 回归：multi 与文本框那两支不受影响（multi 的选项不带 role=radio）。
  *
  * 离线、不依赖浏览器与 jsdom：桩 h 返回普通对象树。
+ *
+ * **本件证明什么 / 不证明什么**（照 verify-671 的先例把替身的盲区写下来 —— LESSONS 坑 26：自己写的替身
+ * 「通过了」只证明替身写得对）：
+ *   - **证明**：渲染模块**产出的 props 与 handler 逻辑**对不对 —— 桩 `h` 建树之后真调 `onKeyDown` / `onClick`，
+ *     值有没有落到 `setVals` / `valuesByStep` 上是**真判据**（不是 grep 源码字形）；
+ *   - **不证明**：真浏览器里的行为 —— 真实焦点与 Tab 顺序、读屏实际念出什么、CSS 可见性。
+ *     那些要真浏览器（本机缺 Chromium headless shell，见 #42 的存量红分流），本件**不假装覆盖**。
+ *
  * 用法：node tests/verify-414-single-card-keyboard.js
  */
 import { modalFormFields } from '../src/client/kernel/modal-fields.js'
@@ -61,14 +69,16 @@ check(opts1.every((o) => typeof o.props.onClick === 'function' && typeof o.props
 // ---------------------------------------------------------------------------
 // ② 键盘可达：四个键名变体
 // ---------------------------------------------------------------------------
+const keyLabel = (k) => (k === ' ' ? '空格' : k)
 for (const key of [' ', 'Enter', 'Spacebar', 'Space']) {
   const r = render(SINGLE, { vals: { visibility: 'public' } })
   let prevented = false
   const target = radios(r.tree)[1]
   target.props.onKeyDown({ key, preventDefault: () => { prevented = true } })
   check(r.calls.length === 1 && r.calls[0].visibility === 'private',
-    '按「' + (key === ' ' ? '空格' : key) + '」提交到 private（写值恰好一次）')
-  check(prevented === true, '按「' + (key === ' ' ? '空格' : key) + '」时 preventDefault（空格不滚页面）')
+    '按「' + keyLabel(key) + '」提交到 private（写值恰好一次）')
+  check(prevented === true,
+    '按「' + keyLabel(key) + '」时 preventDefault（' + (key === ' ' || key === 'Spacebar' || key === 'Space' ? '空格不会滚页面' : '不让按键穿透默认行为') + '）')
 }
 // 鼠标那条路与键盘等价（同一处写入逻辑）
 const r2 = render(SINGLE, { vals: { visibility: 'public' } })
