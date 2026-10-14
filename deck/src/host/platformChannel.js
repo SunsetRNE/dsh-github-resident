@@ -14,7 +14,7 @@ export function selectSkillProbeNames(allNames, chainNames, scope) {
 }
 
 export function createPlatformChannel(deps) {
-  const { ctx, subprocess, timer, fs, DEFAULT_CWD, TIMEOUT_MS, getMattSkillProbeNames, getChainSkillNames, probeSkill, logCtx, gate, getGate, ghResolver } = deps
+  const { ctx, subprocess, timer, fs, DEFAULT_CWD, TIMEOUT_MS, getMattSkillProbeNames, getChainSkillNames, probeSkill, logCtx, gate, getGate, ghResolver, identityEnvFor } = deps
   // #494 O1：旧文本通道退役——backend.diagnostic 不再产生（残留 ctx.log.* 自动静默）。房内埋点只走 logEvent/isEnabled。
   // #927：闸可能晚一步就位（刷新接线要到插件起步才建好），所以每次报账现问一次（一次性快照会让先建好的那一路永远拿不到闸）。
   function gateOf() {
@@ -244,6 +244,10 @@ export function createPlatformChannel(deps) {
           cwd: c || DEFAULT_CWD,
           stdio: { stdin: 'ignore', stdout: { maxBytes: 4 * 1024 * 1024 }, stderr: { maxBytes: 256 * 1024 } },
           graceMs: 2000,
+          // 隧道出口（操作上下文的 exec：ghClient 的 gh、探测预检、后端谓词都走它）：按程序名与子命令查规则表。
+          // 「登录态」那格（preflight:ghAuth）也走这条路 —— 它从此**戴着工牌**跑，含义是「消费面给的身份能不能用」
+          // （Q7=(b) 的裁决）；「宿主 gh 自己登没登录」归体检工具，不在这条链上。
+          env: await identityEnvFor(cmdBase, args),
         })
       } catch (e) {
         if (deIsOutbound) { try { if (deRelease) deRelease() } catch {} }

@@ -31,7 +31,7 @@ export const GITHUB_CHECKS = Object.freeze([
   },
   {
     id: 'gh:authed',
-    label: '已登录 GitHub',
+    label: '插件身份可用',
     scope: 'backend',
     backends: ['github'],
     check: { kind: 'preflight', id: 'ghAuth' },

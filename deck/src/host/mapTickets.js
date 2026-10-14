@@ -85,6 +85,18 @@ export function createMapTickets(deps) {
     // 分层与统计由宿主算好一起带回去（与快照里 m.stats 同一套纯函数）；界面不自己算层级。
     let stats = { total: items.length, open: 0, closed: 0, frontier: 0, claimed: 0, blocked: 0, levels: [], levelOf: {} }
     try { if (typeof groupTickets === 'function') stats = groupTickets(items) } catch (e) {}
+    // 2026-10-14（票《地图漏斗「票全挤进第一层」…》）：**每一行也要带上自己的层号**。
+    //   层列表（stats.levels）对，不代表每行有层号 —— 界面是按**每票自己的** `t.level` 摆放的
+    //   （client/views/MapDetail.js 的 byLevel：`typeof t.level === 'number' ? t.level : 0`），
+    //   而这条电话过去只回 stats、不回每票的 level，于是实时那份一到，所有票都被当成第 0 层：
+    //   第 1 层挤满全部票、上面几层只剩空盒子（“三层被合成一层”）。
+    //   口径与快照那条路**逐字同源**（snapshotBuild.js：`tickets.forEach(t => t.level = lvInfo.byNumber[t.number])`）——
+    //   同一个形状的两条来路必须给同一个答案。`number` 缺失的行（非数字键的后端）不硬套：宁可它照旧没有层号，
+    //   也不凭空安一个错的层号上去。
+    try {
+      const levelOf = (stats && stats.levelOf) || {}
+      items.forEach(function (t) { if (t && t.number != null && levelOf[t.number] !== undefined) t.level = levelOf[t.number] })
+    } catch (eLvl) { /* 挂层号失败不许影响已经取回来的子票（界面兜底第 0 层，与从前一致） */ }
     return {
       ok: true,
       key: key,

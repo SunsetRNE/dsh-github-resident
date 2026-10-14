@@ -149,7 +149,10 @@ export async function composePlatform(ctx, osName, adapter, opts) {
     try { subprocess = ctx.get('subprocess') } catch { subprocess = null }
     if (!subprocess || typeof subprocess.spawn !== 'function') return { ok: false, error: '当前环境不支持调起' }
     try {
-      const handle = subprocess.spawn({ argv: argv, cwd: cwd, stdio: { stdin: 'ignore', stdout: { maxBytes: 64 * 1024 }, stderr: { maxBytes: 64 * 1024 } }, graceMs: 2000 })
+      // env 显式写 undefined：这一处是**打开目录/文件**的调起（xdg-open / open / cmd start），不是 gh / git，
+      //   所以不戴工牌。写成明文是为了让「Deck 的每个 subprocess.spawn 都必须显式声明 env」这条静态红灯判据
+      //   不需要例外名单（票《Deck 半边接消费面（执行环境由消费面供给）》，判据在 tests/merge/host/deck-child-identity.test.mjs）。
+      const handle = subprocess.spawn({ argv: argv, cwd: cwd, stdio: { stdin: 'ignore', stdout: { maxBytes: 64 * 1024 }, stderr: { maxBytes: 64 * 1024 } }, graceMs: 2000, env: undefined })
       if (handle && handle.done) handle.done.catch(function () {})
       return { ok: true }
     } catch (e) {

@@ -37,6 +37,9 @@ const GATES = {
   // 票「子进程环境：插件启动的 gh / git 子进程按需带上真源 token」：真源（state）与 gh 桩都是自造的，
   // 桩会记下**子进程 env 长什么样** —— 同样进矩阵，证明它不看跑门禁这台机器有什么。
   subprocessEnv: 'tests/merge/host/subprocess-env.test.mjs',
+  // 票「Deck 半边接消费面（执行环境由消费面供给）」：Deck 侧三个执行出口的戴与不戴、两组不混、探活不戴、
+  // 两半答案一致、真 git 端到端。真源（state）与 gh 桩同样是它自己造的 —— 进矩阵，证明它不看跑门禁这台机器。
+  deckChildIdentity: 'tests/merge/host/deck-child-identity.test.mjs',
 }
 
 /**
@@ -55,6 +58,7 @@ const TABLE = [
       { gate: 'pr', expect: 'pass' },
       { gate: 'probeBound', expect: 'pass', why: '挂死的 gh 桩是它自己造的：外层有没有 gh 都不该影响' },
       { gate: 'subprocessEnv', expect: 'pass', why: '真源与 gh 桩都是它自己造的，全离线' },
+      { gate: 'deckChildIdentity', expect: 'pass', why: '同上：Deck 那一侧的消费判据也自带真源与 gh 桩' },
     ],
   },
   {
@@ -79,6 +83,7 @@ const TABLE = [
       { gate: 'probe', expect: 'skip', why: '身份判据在 resolver/audit 两格；探针不读 hosts.yml，没有新信息' },
       { gate: 'pr', expect: 'pass', why: '本票的目标环境就是它（有 gh、三处无 token）' },
       { gate: 'subprocessEnv', expect: 'pass', why: '「宿主什么都没有」这一半正是它自己的环境之一（它另造真源）' },
+      { gate: 'deckChildIdentity', expect: 'pass', why: '同上：它的 gh 桩自造，外层没有 gh 也照样绿' },
     ],
   },
   {
@@ -92,6 +97,7 @@ const TABLE = [
     },
     gates: [
       { gate: 'subprocessEnv', expect: 'pass', why: '本票的目标环境（真源有身份、宿主什么都没有）' },
+      { gate: 'deckChildIdentity', expect: 'pass', why: '本票的目标环境：Deck 半边靠消费面供给，宿主什么都没有也照样干活' },
       { gate: 'audit', expect: 'pass', why: '体检在这种环境里也得如实：不假绿、也不假装没身份' },
       { gate: 'resolver', expect: 'pass' },
     ],

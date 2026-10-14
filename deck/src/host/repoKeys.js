@@ -12,7 +12,11 @@ import { timeoutForGhArgs, isWriteGhArgs } from '../shared/tracker/outbound-tier
 import { getGhLane } from '../shared/tracker/outbound-admission.js'
 import { getChainRide } from '../shared/refresh/chain-ride.js'
 export function createRepoKeys(deps) {
-  const { subprocess, timer, fs, DEFAULT_CWD, TIMEOUT_MS, repoKeys, repoRoots, getGhPath, setGhPath, getGhLastError, setGhLastError, getPlatform, getWorkspaceStore, setCache, clearWorkspaceStore, namingSweepSoon, getChainBackoff, parseGithubRepo, logCtx, gate, getGate } = deps
+  const { subprocess, timer, fs, DEFAULT_CWD, TIMEOUT_MS, repoKeys, repoRoots, getGhPath, setGhPath, getGhLastError, setGhLastError, getPlatform, getWorkspaceStore, setCache, clearWorkspaceStore, namingSweepSoon, getChainBackoff, parseGithubRepo, logCtx, gate, getGate, identityEnvFor } = deps
+  // 2026-10-14《Deck 半边接消费面（执行环境由消费面供给）》：`identityEnvFor` 是接线处给的**唯一**取值口
+  //   （规则表在 shared/child-identity.js：谁戴、两组怎么分、不缓存）。本文件只负责在起进程时把它要的那一份
+  //   交给 spawn —— 「gh 主干出口」与「通用出口」两处，别处不许再自己拼 env（门禁静态扫 spawn 点）。
+  //   合并在 DSH 侧进行：子进程服务把凭据形状的父环境擦掉，再把调用方显式给的 env 叠上去（实测语义）。
   // 共享状态归 index.js 单一持有：ghPath/ghLastError 经存取器（基本类型重赋值不能按引用共享）；repoKeys/repoRoots 按引用共享（只做属性读写与删除，从不整体重赋值）。
   // #491 房外埋点 helpers：hash8 只记散列不记原文；P1 事件外层先判开关再组装字段（字段函数只在守卫通过后求值）。
   function hash8(s) { try { const t = String(s || ''); let h = 5381; for (let i = 0; i < t.length; i++) h = (((h << 5) + h + t.charCodeAt(i)) >>> 0); return ('0000000' + h.toString(16)).slice(-8) } catch (e) { return '00000000' } }
@@ -55,7 +59,7 @@ export function createRepoKeys(deps) {
       try {
         // #723（T19）：这一条 `gh --version` 探测也是一笔真实出站（虽然不扣配额），照记一笔。
         reportOutbound(['--version'])
-        const probeHandle = subprocess.spawn({ argv: ['gh', '--version'], cwd: DEFAULT_CWD, stdio: { stdin: 'ignore', stdout: { maxBytes: 1024 }, stderr: { maxBytes: 1024 } }, graceMs: 1000 })
+        const probeHandle = subprocess.spawn({ argv: ['gh', '--version'], cwd: DEFAULT_CWD, stdio: { stdin: 'ignore', stdout: { maxBytes: 1024 }, stderr: { maxBytes: 1024 } }, graceMs: 1000, env: undefined })   // 探活**不戴工牌**（写明是故意的：`--version` 只回答程序跑不跑得起来，不是"我们是谁"；门禁静态扫这一处要看到 env 键）
         const probeOutcome = await Promise.race([probeHandle.done, timer.timeout(2000).then(function(){ try{ probeHandle.terminate(); }catch(e){} return { exitCode: -1 } })])
         const outProbe = (probeHandle.collected && probeHandle.collected.stdout) ? probeHandle.collected.stdout.readFrom(0) : { text: '' }
         if (probeOutcome && probeOutcome.exitCode === 0 && String(outProbe.text||'').includes('gh version')) { setGhPath('gh'); setGhLastError(null); return 'gh' }
@@ -85,6 +89,8 @@ export function createRepoKeys(deps) {
           cwd: cwd || DEFAULT_CWD,
           stdio: { stdin: 'ignore', stdout: { maxBytes: 4 * 1024 * 1024 }, stderr: { maxBytes: 256 * 1024 } },
           graceMs: 2000,
+          // gh 主干出口：这是「以插件身份做事」的那条路，戴上 gh 组（值每次现问消费面，不缓存）。
+          env: await identityEnvFor('gh', args),
         })
       } catch (e) {
         try { if (logCtx) logCtx.fire('info', 'gh.exec', { argv0: 'gh', cwdHash: hash8(cwd || DEFAULT_CWD), latencyMs: Date.now() - ghT0, kind: 'spawn', exitCode: -1 }) } catch (eL) {}
@@ -171,6 +177,10 @@ export function createRepoKeys(deps) {
           cwd: cwd || DEFAULT_CWD,
           stdio: { stdin: 'ignore', stdout: { maxBytes: 1024 * 1024 }, stderr: { maxBytes: 256 * 1024 } },
           graceMs: 2000,
+          // 通用出口（gh / glab / git 三条都从这里出去）：按程序名与子命令查规则表 —— gh 戴 gh 组；
+          // git 只在 commit / push / pull / fetch 戴 git 组（`git config --get …` 这类读数戴上会读成"插件是什么"）；
+          // glab 与其它命令不戴（不是我们的身份）。返回 undefined 就是"这条不需要工牌"。
+          env: await identityEnvFor(xpProg, xpArgs),
         })
       } catch (e) {
         if (xpIsOutbound) { try { if (xpRelease) xpRelease() } catch {} }

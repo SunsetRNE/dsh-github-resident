@@ -207,8 +207,11 @@ function sha256(file) { return crypto.createHash('sha256').update(fs.readFileSyn
   // #1012（2026-10-11 续）：单体 config-store.js 按文件粒度拆成 workspace / settings / labels 三个单元
   // （各 ≤350 行，见 verify-file-granularity），总数 77→79→80：2026-10-12 身份融合加了
   //   src/shared/plugin-identity.js（合并包宿主侧身份真源，见 tools/merge/merge-identity.ts）。
-  check(srcSharedFiles.length === 80, `src/shared 80 文件（实得 ${srcSharedFiles.length}）`)
-  check(pkgSharedFiles.length === 80, `package/shared 80 文件（实得 ${pkgSharedFiles.length}）`)
+  // 2026-10-14《Deck 半边接消费面（执行环境由消费面供给）》：新增 src/shared/child-identity.js
+  //   （「这个子进程要不要戴工牌、戴哪一组」的唯一规则表 —— 只问注入进来的服务位取值口，自己不读任何配置；
+  //   进 client 拼接，宿主三处执行出口共用），总数 80→81。
+  check(srcSharedFiles.length === 81, `src/shared 81 文件（实得 ${srcSharedFiles.length}）`)
+  check(pkgSharedFiles.length === 81, `package/shared 81 文件（实得 ${pkgSharedFiles.length}）`)
 }
 // 4c) import 卫生：显式 .js（相对 import 必须带 .js 扩展，避免 Node ESM 裸 specifier）
 {

@@ -75,7 +75,7 @@ export function hintFor(kind) {
 
 /** 造一个安全执行器；依赖全部由入口显式传入（runGit 就是那条共享的 git 进程出口）。 */
 export function createCredentialSafeGit(deps) {
-  const { runGit, getPlatform, getEnv, DEFAULT_CWD } = deps || {}
+  const { runGit, getPlatform, getEnv, DEFAULT_CWD, identityEnvFor } = deps || {}
 
   /** 非交互的 argv 前缀：helper 的非交互开关；clearHelpers 时再把一切助手摘掉。 */
   function nonInteractiveArgs(clearHelpers) {
@@ -196,7 +196,14 @@ export function createCredentialSafeGit(deps) {
     const budget = Math.max(MIN_BUDGET_MS, Math.min(perOp, total))
     const callBudget = (callOpts && callOpts.totalBudgetMs) || CALL_BUDGET_MS
     const argv = ['-C', cwd].concat(nonInteractiveArgs(clearHelpers), args)
-    const env = nonInteractiveEnv(callBudget)
+    // 非交互前缀是**底座**，工牌合在它上面（票《Deck 半边接消费面（执行环境由消费面供给）》）：
+    //   git 组（注入 user.name/email 与指向插件自有助手的 credential.helper）只在这一族命令上戴 ——
+    //   这一族就是「以插件身份动仓库」的写路径。底座里的墓碑（GIT_ASKPASS: undefined …）不许被覆盖；
+    //   助手落点与清场顺序由产出侧（identityEnv）负责，本文件不自己拼任何 GIT_CONFIG_*。
+    //   读数（`git config --get credential.helper` 那条 suspectOf）走的是不带 env 的 runGit —— 那条不戴。
+    const env = (typeof identityEnvFor === 'function')
+      ? await identityEnvFor('git', args, nonInteractiveEnv(callBudget))
+      : nonInteractiveEnv(callBudget)
     const res = await runGit(exe, cwd, argv, { timeoutMs: budget, stdoutLimit: req.stdoutLimit, env: env, stallMs: req.stallMs })
     const elapsedMs = Date.now() - started
     if (res && res.kind === 'ok') return { ok: true, kind: 'ok', exitCode: 0, stdout: res.stdout, truncated: res.truncated === true, elapsedMs: elapsedMs }

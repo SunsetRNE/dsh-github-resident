@@ -107,7 +107,9 @@
         'check.selection.pass': '已选择后端', 'check.selection.fail': '请选择后端',
         'check.gh:remote.pass': '已关联 GitHub 仓库', 'check.gh:remote.fail': '已关联 GitHub 仓库',
         'check.gh:installed.pass': 'GitHub 助手（gh cli）已安装', 'check.gh:installed.fail': 'GitHub 助手（gh cli）已安装',
-        'check.gh:authed.pass': '已登录 GitHub', 'check.gh:authed.fail': '已登录 GitHub',
+        // 2026-10-14《Deck 半边接消费面（执行环境由消费面供给）》Q7=(b)：这一格问的是「消费面给的身份能不能用」，
+        // 不再是「宿主 gh 自己登没登录」（后者归体检工具 gh_identity 的那个消费点）。
+        'check.gh:authed.pass': '插件身份可用', 'check.gh:authed.fail': '插件身份可用',
         'check.gh:repoAccess.pass': '仓库在 GitHub 上可访问', 'check.gh:repoAccess.fail': '仓库在 GitHub 上可访问',
         'check.gh:labels.pass': '标签已齐（10 核心标签）', 'check.gh:labels.fail': '标签已齐（10 核心标签）',
         'check.glab:installed.pass': 'GitLab CLI (glab) 已安装', 'check.glab:installed.fail': 'GitLab CLI (glab) 已安装',

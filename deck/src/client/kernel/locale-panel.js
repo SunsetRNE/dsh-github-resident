@@ -49,8 +49,8 @@
         // #698：布局那一问的四条键搬去 locale-pages.js（本文件贴着 350 行上限，照 #621 / #690 的做法自成一片；locale 合并器会把片段并成同一份词表）。
         'banner.ghcli': '数据源前置条件未就绪 —— 点右侧按当前后端引导处理', // #231 中性化（键名保留为内部标识）
         'banner.ghcliBtn': 'AI 引导安装',
-        'banner.ghauth': '登录态未就绪 —— 点右侧注入认证引导', // #231 中性化
-        'banner.ghauthBtn': '查看登录指南', 'banner.ghauthUnknown': '登录状态暂时确认不了 —— 点右侧重试', 'banner.ghauthUnknownBtn': '重新检查', 'banner.repo': '这个目录还没有关联远端仓库', 'banner.repoBtn': '创建并发布', // #663：末两个键是首开引导链新加的「还没有远端仓库」那一段（只在 GitHub 那条链上出现；判据复用检查页已有的「已关联 GitHub 仓库」那一项，按钮直接开那个两步建仓弹窗，不注入缺仓长文）；#916 在这行另加未知态那一对
+        'banner.ghauth': '插件身份未就绪 —— 点右侧注入认证引导', // #231 中性化；2026-10-14 票《Deck 半边接消费面》Q7=(b)：这一格是「插件身份可用」，不是「宿主登录态」
+        'banner.ghauthBtn': '查看登录指南', 'banner.ghauthUnknown': '插件身份暂时确认不了 —— 点右侧重试', 'banner.ghauthUnknownBtn': '重新检查', 'banner.repo': '这个目录还没有关联远端仓库', 'banner.repoBtn': '创建并发布', // #663：末两个键是首开引导链新加的「还没有远端仓库」那一段（只在 GitHub 那条链上出现；判据复用检查页已有的「已关联 GitHub 仓库」那一项，按钮直接开那个两步建仓弹窗，不注入缺仓长文）；#916 在这行另加未知态那一对
         'banner.foldDeck': '收起 GitHub 常驻',
         'banner.expandDeck': '展开 GitHub 常驻',
         'banner.foldShort': '收起',
@@ -206,8 +206,8 @@
         // #698: the layout radio group moved to locale-pages.js — this file is at its 350-line cap.
         'banner.ghcli': 'Data-source prerequisite missing — follow the guide for this backend',
         'banner.ghcliBtn': 'AI-guided install',
-        'banner.ghauth': 'Sign-in prerequisite missing — open guide to authenticate',
-        'banner.ghauthBtn': 'View sign-in guide', 'banner.ghauthUnknown': 'Sign-in status unknown — retry the check', 'banner.ghauthUnknownBtn': 'Re-check', 'banner.repo': 'This directory has no remote repository yet', 'banner.repoBtn': 'Create & publish', // #663: the last two keys are the guide chain's new "no remote repository yet" segment (GitHub chain only; its button opens the existing two-step create-repo dialog); #916 adds the unknown-state pair on this line
+        'banner.ghauth': 'Plugin identity not ready — open the guide to authenticate', // 2026-10-14 ticket "Deck half consumes the surface", Q7=(b): this row answers "plugin identity available", not the host's own login state
+        'banner.ghauthBtn': 'View sign-in guide', 'banner.ghauthUnknown': 'Plugin identity cannot be confirmed yet — retry the check', 'banner.ghauthUnknownBtn': 'Re-check', 'banner.repo': 'This directory has no remote repository yet', 'banner.repoBtn': 'Create & publish', // #663: the last two keys are the guide chain's new "no remote repository yet" segment (GitHub chain only; its button opens the existing two-step create-repo dialog); #916 adds the unknown-state pair on this line
         'banner.foldDeck': 'Collapse GitHub Resident',
         'banner.expandDeck': 'Expand GitHub Resident',
         'banner.foldShort': 'Collapse',

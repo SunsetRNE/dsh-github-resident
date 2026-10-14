@@ -17,6 +17,23 @@ export default {
     const ghResolver = function () {
       try { const svc = ctx.get('ghResolver'); return (svc && typeof svc.resolve === 'function') ? svc.resolve() : null } catch (eSvc) { return null }
     }
+    // 2026-10-14《Deck 半边接消费面（执行环境由消费面供给）》：「用谁的身份、带什么环境」也从**同一个**服务位取。
+    //   本文件是全仓唯一碰 `ghResolver.identityEnv` 的地方 —— 三个执行出口（repoKeys / platformChannel /
+    //   versionControl）拿到的是同一个取值口 `identityEnvFor`，「谁戴、两组怎么分、不缓存」的规则表在
+    //   shared/child-identity.js（那里不读任何配置；值只能经服务位来）。
+    //   晚绑定：合并宿主先跑 Deck 后跑 Resident，服务要等用到 gh 时才在（与 ghResolver 同一个理由）；
+    //   服务位缺席 / 那一组为空 → 如实回底座，**不回落第二套解析**（平台层对「gh 在哪」立的规矩，这里照抄）。
+    let _childIdentityP = null
+    function _childIdentity() {
+      if (!_childIdentityP) _childIdentityP = import('../shared/child-identity.js').then(function (m) {
+        return m.createChildIdentity({ getService: function () { try { return ctx.get('ghResolver') } catch (eSvc) { return null } } })
+      }).catch(function () { return null })
+      return _childIdentityP
+    }
+    /** 出口统一用的口子：`identityEnvFor(程序名, 参数, 底座 env)` → 能直接交给 spawn 的那份 env。 */
+    function identityEnvFor(program, args, base) {
+      return _childIdentity().then(function (ci) { return ci ? ci.envFor(program, args, base) : base })
+    }
     // 启动门（2026-09-26）：subprocess/timer 晚到时不再静默跳过——旧代码直接 return， wiring 与工具注册 hook 从没跑起来，deck 工具永不注册还查无对证。 先试一次；不齐就挂到框架依赖门上等人齐（官方 ctx.inject 写法，见 dsh-tool-pwsh）； 30 秒还没齐落一条 warn。 为何只能留在入口，见账本 §1。
     const bootBody = () => {
     const subprocess = ctx.get('subprocess')
@@ -67,9 +84,9 @@ export default {
     let _bootP = null
     function _boot() { if (!_bootP) _bootP = import('./bootstrap.js').then(function(m){ return m.createBootstrap({ ctx: ctx }) }); return _bootP }
     let _platP = null
-    function _plat() { if (!_platP) _platP = (async function(){ const boot = await _boot(); const mod = await import('./platformChannel.js'); return mod.createPlatformChannel({ ctx: ctx, subprocess: subprocess, timer: timer, fs: fs, DEFAULT_CWD: DEFAULT_CWD, TIMEOUT_MS: TIMEOUT_MS, ghResolver: ghResolver, getMattSkillProbeNames: function(){ return getMattSkillProbeNames.apply(null, arguments) }, getChainSkillNames: function(){ return getChainSkillNames.apply(null, arguments) }, probeSkill: function(){ return probeSkill.apply(null, arguments) }, getChoiceStore: function(){ return getChoiceStore.apply(null, arguments) }, logCtx: logCtx, getGate: function () { return refreshGate } }) })(); return _platP } // #927：闸要晚一步才建好，所以传一个活的取值口，不传一次性快照
+    function _plat() { if (!_platP) _platP = (async function(){ const boot = await _boot(); const mod = await import('./platformChannel.js'); return mod.createPlatformChannel({ ctx: ctx, subprocess: subprocess, timer: timer, fs: fs, DEFAULT_CWD: DEFAULT_CWD, TIMEOUT_MS: TIMEOUT_MS, ghResolver: ghResolver, identityEnvFor: identityEnvFor, getMattSkillProbeNames: function(){ return getMattSkillProbeNames.apply(null, arguments) }, getChainSkillNames: function(){ return getChainSkillNames.apply(null, arguments) }, probeSkill: function(){ return probeSkill.apply(null, arguments) }, getChoiceStore: function(){ return getChoiceStore.apply(null, arguments) }, logCtx: logCtx, getGate: function () { return refreshGate } }) })(); return _platP } // #927：闸要晚一步才建好，所以传一个活的取值口，不传一次性快照
     let _repoP = null
-    function _repo() { if (!_repoP) _repoP = (async function(){ const plat = await _plat(); const mod = await import('./repoKeys.js'); return mod.createRepoKeys({ subprocess: subprocess, timer: timer, fs: fs, DEFAULT_CWD: DEFAULT_CWD, TIMEOUT_MS: TIMEOUT_MS, repoKeys: repoKeys, repoRoots: repoRoots, getGhPath: function(){ return ghPath }, setGhPath: function(v){ ghPath = v }, getGhLastError: function(){ return ghLastError }, setGhLastError: function(v){ ghLastError = v }, getPlatform: function(){ return getPlatform.apply(null, arguments) }, getWorkspaceStore: function(){ return getWorkspaceStore.apply(null, arguments) }, setCache: setCache, clearWorkspaceStore: function(){ return plat.clearWorkspaceStore.apply(plat, arguments) }, namingSweepSoon: function(){ return namingSweepSoon.apply(null, arguments) }, getChainBackoff: getChainBackoff, parseGithubRepo: function(){ return parseGithubRepo.apply(null, arguments) }, logCtx: logCtx, getGate: function () { return refreshGate } }) })(); return _repoP } // #927：同上，取数层（runGh / 探测）报账时现问一次
+    function _repo() { if (!_repoP) _repoP = (async function(){ const plat = await _plat(); const mod = await import('./repoKeys.js'); return mod.createRepoKeys({ subprocess: subprocess, timer: timer, fs: fs, DEFAULT_CWD: DEFAULT_CWD, TIMEOUT_MS: TIMEOUT_MS, identityEnvFor: identityEnvFor, repoKeys: repoKeys, repoRoots: repoRoots, getGhPath: function(){ return ghPath }, setGhPath: function(v){ ghPath = v }, getGhLastError: function(){ return ghLastError }, setGhLastError: function(v){ ghLastError = v }, getPlatform: function(){ return getPlatform.apply(null, arguments) }, getWorkspaceStore: function(){ return getWorkspaceStore.apply(null, arguments) }, setCache: setCache, clearWorkspaceStore: function(){ return plat.clearWorkspaceStore.apply(plat, arguments) }, namingSweepSoon: function(){ return namingSweepSoon.apply(null, arguments) }, getChainBackoff: getChainBackoff, parseGithubRepo: function(){ return parseGithubRepo.apply(null, arguments) }, logCtx: logCtx, getGate: function () { return refreshGate } }) })(); return _repoP } // #927：同上，取数层（runGh / 探测）报账时现问一次
     async function getMattSkillProbeNames() { const h = await _boot(); return h.getMattSkillProbeNames.apply(h, arguments) } async function getChainSkillNames() { const h = await _boot(); return h.getChainSkillNames.apply(h, arguments) } // #968 后者经 _boot 取链目录三项
     async function getTrackerRegistry() { const h = await _plat(); return h.getTrackerRegistry.apply(h, arguments) }
     async function getPlatform() { const h = await _plat(); return h.getPlatform.apply(h, arguments) }
@@ -239,7 +256,7 @@ export default {
     function _deckExec() { if (!_deckExecP) _deckExecP = (async function(){ const mod = await import('./platform/deckExec.js'); return mod.createDeckExec({ getTable: function(){ return _refreshWiringP.then(function(w){ return (w && typeof w.deckToolsForHost === 'function') ? w.deckToolsForHost() : null }) }, logCtx: logCtx }) })(); return _deckExecP }
     harness.handle('wf.deckExec', async function (args) { const h = await _deckExec(); return h.handleDeckExec(args) })
     let _vcP = null // #817 版本管理页签：三条只读电话，git 命令都在 ./versionControl.js 里起，闸与日志口在这里接上。
-    function _vc() { if (!_vcP) _vcP = (async function(){ const w = _refreshWiringP ? await _refreshWiringP.catch(function(){ return null }) : null; const mod = await import('./versionControl.js'); return mod.createVersionControl({ subprocess: subprocess, timer: timer, fs: fs, getPlatform: function(){ return getPlatform.apply(null, arguments) }, DEFAULT_CWD: DEFAULT_CWD, TIMEOUT_MS: TIMEOUT_MS, gate: (w && w.gate) || null, logCtx: logCtx }) })(); return _vcP }
+    function _vc() { if (!_vcP) _vcP = (async function(){ const w = _refreshWiringP ? await _refreshWiringP.catch(function(){ return null }) : null; const mod = await import('./versionControl.js'); return mod.createVersionControl({ subprocess: subprocess, timer: timer, fs: fs, getPlatform: function(){ return getPlatform.apply(null, arguments) }, DEFAULT_CWD: DEFAULT_CWD, TIMEOUT_MS: TIMEOUT_MS, identityEnvFor: identityEnvFor, gate: (w && w.gate) || null, logCtx: logCtx }) })(); return _vcP }
     harness.handle('wf.gitStatus', async function (args) { const h = await _vc(); return h.handleGitStatus(args) })
     harness.handle('wf.gitDiff', async function (args) { const h = await _vc(); return h.handleGitDiff(args) })
     harness.handle('wf.gitLog', async function (args) { const h = await _vc(); return h.handleGitLog(args) })

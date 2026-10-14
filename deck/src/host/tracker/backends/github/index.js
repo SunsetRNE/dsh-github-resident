@@ -49,9 +49,13 @@ export const fixes = Object.freeze({
     ],
   },
   'gh:authed': {
+    // 2026-10-14《Deck 半边接消费面（执行环境由消费面供给）》Q7=(b)：这一格问的是「**插件身份**能不能用」
+    //   （戴工牌跑），不是「宿主 gh 自己登没登录」—— 后者归体检工具 gh_identity。所以补救文案不再说
+    //   「登录状态已失效」：身份取不到时，插件自己的登录是首选路径，宿主 gh 登录只是统一解析器的**兜底来源之一**
+    //   （解析优先级 env → state → hosts.yml 只读），保留这条指引是因为它仍然是一条能走通的路。
     hint: {
-      zh: 'GitHub 登录状态已失效，重新登录后即可继续。',
-      en: 'The GitHub login has expired — sign in again to continue.',
+      zh: '插件身份不可用（消费面取不到能用的身份）。插件自己的登录是首选路径；宿主 gh 自己登没登录只是兜底来源之一，那件事请看体检工具 gh_identity。',
+      en: 'Plugin identity unavailable (the consumer surface has no usable credential). Signing the plugin in is the primary path; whether the host gh itself is logged in is only one fallback source — see the gh_identity health check for that.',
     },
     actions: [
       { type: 'inject-prompt', prompt: 'ghAuthLogin', label: { zh: '登录指引', en: 'Login guide' } },
@@ -148,8 +152,8 @@ export const prompts = (function () {
     //   当前后端与仓库、以及读不通的原因一起回给 AI），提示词这里只留「按哪几步想」——建仓那一步走面板上的
     //   「创建并发布」向导，不再教人去敲建仓命令。
     repoAccessFix: {
-      zh: '当前仓库读不通（工具报「取不到这个仓库」）。顺序要求：若仓库尚未创建，先走「创建并发布」完成建仓推送，再重查；请按序排查：\n1. 仓库存在性：这个目录还没有远端仓库时，先点「创建并发布」（面板上那个两步向导会把仓库建好并推上去）；\n2. 登录与权限：看环境检查里「已登录 GitHub」那一行的状态；私有仓库需要当前登录的账号有权限（权限不足与「找不到」在服务端都可能是 404）；\n3. 网络与代理：看环境检查里网络那一类结果，按它的提示处理。\n排查修复后请用户点「重新检查」。',
-      en: 'The repository is not readable right now (the tools report that they cannot reach it). Ordering rule: if the repo does not exist yet, run "Create & publish" to create and push it, then re-check; investigate in order:\n1. Existence: when this directory has no remote repo yet, click "Create & publish" (the two-step wizard creates the repo and pushes it);\n2. Login and permissions: check the status of the "Signed in to GitHub" row; a private repo needs access for the signed-in account (no access and "not found" can both come back as 404);\n3. Network and proxy: check the network row in the environment check and follow what it says.\nAfter fixing, ask the user to re-check.',
+      zh: '当前仓库读不通（工具报「取不到这个仓库」）。顺序要求：若仓库尚未创建，先走「创建并发布」完成建仓推送，再重查；请按序排查：\n1. 仓库存在性：这个目录还没有远端仓库时，先点「创建并发布」（面板上那个两步向导会把仓库建好并推上去）；\n2. 身份与权限：看环境检查里「插件身份可用」那一行的状态；私有仓库需要那个身份有权限（权限不足与「找不到」在服务端都可能是 404）；\n3. 网络与代理：看环境检查里网络那一类结果，按它的提示处理。\n排查修复后请用户点「重新检查」。',
+      en: 'The repository is not readable right now (the tools report that they cannot reach it). Ordering rule: if the repo does not exist yet, run "Create & publish" to create and push it, then re-check; investigate in order:\n1. Existence: when this directory has no remote repo yet, click "Create & publish" (the two-step wizard creates the repo and pushes it);\n2. Identity and permissions: check the status of the "Plugin identity available" row; a private repo needs access for that identity (no access and "not found" can both come back as 404);\n3. Network and proxy: check the network row in the environment check and follow what it says.\nAfter fixing, ask the user to re-check.',
     },
     subIssue: {
       // #716：这一段原先写着一整套 gh api 直连命令（取数据库号 → 建原生子议题边 → 校验张数 → 建原生依赖边）。

@@ -154,17 +154,21 @@ export function createDetectChain(deps) {
         }) } catch (e) {}
         try { registry.register('preflight:ghAuth', async function (check, pctx) {
           try {
-            // 2026-08-29（审查 S1）：detail 双语——fail 说清「登录失效」，pending 如实区分网络与未知
+            // 2026-10-14《Deck 半边接消费面（执行环境由消费面供给）》Q7=(b)：这一格的含义从
+            //   「宿主 gh 自己登没登录」改成「**消费面给的身份能不能用**」。命令仍是 `gh auth status`，
+            //   但它从此**戴着工牌**跑（出口统一戴，判据在 shared/child-identity.js），所以它答的是插件自己的
+            //   身份，而不是宿主那本 hosts.yml。「宿主自己登没登录」不归这一格 —— 那是体检工具（gh_identity）的消费点。
+            //   2026-08-29（审查 S1）：detail 双语——fail 说清「身份不可用」，pending 如实区分网络与未知
             const zh = (pctx && pctx.lang) !== 'en'
             const r = await ghAsk('gh', ['auth', 'status'], ghOptsFor(cwd), 'ghAuth')
-            if (r.ok) { const first = (r.text || '').split(/\r?\n/).map(function (s) { return s.trim() }).filter(Boolean)[0]; return { status: 'pass', detail: first || (zh ? '已登录' : 'Logged in') } }
-            // 2026-08-28 实机修复：仅当明确「未登录」（kind=auth）才判 fail 并展示登录指引；
-            //   网络失败/其他异常归 pending（诚实未知），避免在 TLS 网络抖动时误导用户「未登录」。
+            if (r.ok) { const first = (r.text || '').split(/\r?\n/).map(function (s) { return s.trim() }).filter(Boolean)[0]; return { status: 'pass', detail: first || (zh ? '插件身份可用' : 'plugin identity available') } }
+            // 2026-08-28 实机修复：仅当明确「身份被拒 / 取不到」（kind=auth）才判 fail 并展示补救；
+            //   网络失败/其他异常归 pending（诚实未知），避免在 TLS 网络抖动时误导用户去重新登录。
             const kind = r.kind || 'exit'
             const errMsg = String(r.error || '').slice(0, 240)
-            if (kind === 'auth') return { status: 'fail', detail: zh ? 'GitHub 登录状态已失效（重新登录 gh auth login / refresh）' : 'gh credential invalid or not logged in: re-authenticate (gh auth refresh / gh auth login)' }
-            if (kind === 'network') return { status: 'pending', detail: zh ? '网络异常，暂时无法确认登录状态' : 'gh auth status network failure: ' + errMsg }
-            return { status: 'pending', detail: zh ? '暂时无法确认登录状态（' + kind + '）' : 'gh auth status failed (' + kind + '): ' + errMsg }
+            if (kind === 'auth') return { status: 'fail', detail: zh ? '插件身份不可用（消费面给出的身份取不到或被拒）；宿主 gh 自己登没登录请看体检工具 gh_identity' : 'plugin identity unavailable (the consumer surface has no usable credential); run the gh_identity health check for the host-side login state' }
+            if (kind === 'network') return { status: 'pending', detail: zh ? '网络异常，暂时无法确认插件身份' : 'cannot confirm plugin identity: network failure ' + errMsg }
+            return { status: 'pending', detail: zh ? '暂时无法确认插件身份（' + kind + '）' : 'cannot confirm plugin identity (' + kind + '): ' + errMsg }
           } catch (e) { return { status: 'pending', detail: String((e && e.message) || e) } }
         }) } catch (e) {}
         try { registry.register('backend:markdown:parseOk', async function (check, pctx) {

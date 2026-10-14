@@ -859,6 +859,15 @@
       "note": "index 动态加载技能原文直读模块（装配扇入，与 detectChain.js、skillProbe.js 同一条做法）"
     },
     {
+      "file": "src/host/index.js",
+      "spec": "./pluginIdentity.js",
+      "resolved": "src/host/pluginIdentity.js",
+      "layer": "host",
+      "count": 1,
+      "owner": "233cb1f 身份融合（补记遗留的装配扇入边）",
+      "note": "与 #690/#691 那两条同一情形：`wf.pluginIdentity` 的装配扇入边在 2026-10-12 身份融合（233cb1f）时没记进基线，门禁从那以后一直红着。2026-10-14 做《Deck 半边接消费面（执行环境由消费面供给）》时跑 verify:deck 撞见并补记 —— 本条**不是**该票引入的边（在 HEAD 上同样报），它与本清单里其余 30 条 index.js 条目同class：入口动态加载某个 host 模块。"
+    },
+    {
       "file": "src/host/platformChannel.js",
       "spec": "./tracker/detection/backendDecision.js",
       "resolved": "src/host/tracker/detection/backendDecision.js",
