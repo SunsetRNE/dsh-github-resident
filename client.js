@@ -360,7 +360,8 @@ window.__ModuleLoader__.load({
 
       const startAuth = () => {
         setBusy(true);
-        fetch(API + '/auth/start', { method: 'POST' })
+        // 票 47：客户端也要有上界 —— 宿主那条路任何一步卡住，busy 都必须能自己松开（否则按钮永远点不动）。
+        fetch(API + '/auth/start', { method: 'POST', signal: AbortSignal.timeout(45000) })
           .then((r) => r.json())
           .then((j) => { setFlow(j); setBusy(false); load({ refresh: true }); })
           .catch((e) => { setFlow({ ok: false, error: String((e && e.message) || e) }); setBusy(false); });
@@ -431,7 +432,7 @@ window.__ModuleLoader__.load({
             : h('div', { className: 'ghr-when', style: { marginTop: 12 } },
               svc.phase === 'down'
                 ? '插件接口不可达：确认插件已启用，然后刷新页面。'
-                : '点下面的按钮生成一次性码。'),
+                : (flow && flow.error ? '上次没成：' + flow.error : '点下面的按钮生成一次性码。')),
 
           h('div', { className: 'ghr-actions' },
             h(Btn, { onClick: startAuth, disabled: busy || svc.phase !== 'ok' },

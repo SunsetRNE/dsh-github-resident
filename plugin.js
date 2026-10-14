@@ -2316,7 +2316,8 @@ export function apply(ctx) {
       bridgeRefusal = !res.ok ? ('HTTP ' + res.status) : bridgeRefusalOf(body);
       if (!bridgeRefusal) return { via: 'device-bridge', status: res.status };
     } catch { /* 桥不在（非手机宿主），继续往下试 */ }
-    const xdg = await run('xdg-open', [url]);
+    // 票 47：这一步原先**没有上界** —— 它一挂，/auth/start 就永不返回，面板的 busy 于是永远卡住（按钮点不动）。
+    const xdg = await run('xdg-open', [url], { timeout: 5000, killSignal: 'SIGKILL' });
     if (xdg.code === 0) return { via: 'xdg-open' };
     return {
       via: 'none',
@@ -2392,9 +2393,11 @@ sys.stdout.flush()
       // **不在 try/catch 里**，所以它**可以抛**。这条链一旦抛成「未处理的拒绝」，Node 默认直接结束
       // **宿主进程**（面板随即白屏，取证见票 47）；而这里的失败本来只该让「这一次拿码」失败。
       // 所以链尾必须有 `.catch`：把拒绝**结算成一次失败回执**，绝不让它冒到进程级。
-      resolveGh().then((g) => {
+      // 票 47：这条路**只读、不落地**（与「读路径不落地」那条既有规矩一致）—— 生成码不该顺手把
+      // 一次 15MB 下载 ＋ 内存解包（39MB 二进制）塞进一次点击里；没 gh 就如实回，让人显式跑 gh_cli_install。
+      resolveGh({ install: false }).then((g) => {
         if (!g.ok) {
-          resolve({ code: null, output: '', error: 'gh 不可用且自带安装未成功', ensure: g.ensure || null });
+          resolve({ code: null, output: '', error: 'gh 不可用（这条路只读、不替你下载）：先跑 gh_cli_install', ensure: null });
           return;
         }
         let child;
@@ -2709,12 +2712,14 @@ sys.stdout.flush()
     },
     readOnly: false,
     execute: async (args) => {
-      const g = await resolveGh();
+      // 票 47：这条路**只读、不落地**（与「读路径不落地」那条既有规矩一致）—— 取码不该顺手把一次
+      // 15MB 下载 ＋ 内存解包（39MB 二进制）塞进一次点击里（没 gh 的手机上那一步会把容器带走）。
+      const g = await resolveGh({ install: false });
       if (!g.ok) {
         // 票 29：探测超时时「落地没成功」是假话 —— 我们**故意没去**下载（未知 ≠ 没有）。
         return g.timedOut
           ? { ok: false, timedOut: true, error: 'gh 探测超时（此刻未知）：稍后重试；本插件不会在超时时替你下载，确需一份自带副本请显式跑 gh_cli_install', ensure: null }
-          : { ok: false, error: 'gh 不可用，且自带落地没成功', ensure: g.ensure || null };
+          : { ok: false, error: 'gh 不可用（这条路只读、不替你下载）：先跑 gh_cli_install 落地一份自带副本，或装上系统 gh', ensure: null };
       }
       const version = g.version;
       const flow = await startDeviceFlowPty();
@@ -4550,8 +4555,8 @@ sys.stdout.flush()
         }
         if (url.pathname === '/auth/start' && req.method === 'POST') {
           if (originGate(res, req, 'auth-start')) return;
-          if (!(await ghVersion())) {
-            send(200, { ok: false, error: 'gh 不可用，且自带安装没成功；看 gh_cli_install 的 attempts 诊断' });
+          if (!(await ghVersion({ install: false }))) {
+            send(200, { ok: false, error: 'gh 不可用（这条路只读、不替你下载）：先跑 gh_cli_install；诊断见它的 attempts' });
             return;
           }
           const flow = await startDeviceFlowPty();

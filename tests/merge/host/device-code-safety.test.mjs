@@ -90,4 +90,28 @@ check(/\.catch\(/.test(goodSlice),
 note('行为那一半（真机上「安装分支抛 → 宿主是否活下来」）由票 47 的现场捕捉器覆盖：'
   + '/root/.dsh/forensics/watch.sh 每秒记宿主 pid / RSS / 内存 / 插件 API 可达性，换代时把上一份宿主日志尾巴存成 death-*.log')
 
+// ===========================================================================
+section('五、取码这条路：只读不落地 ＋ 处处有界（票 47 的手机现场）')
+// ===========================================================================
+/** 切出两个标记之间的片段（标记缺失回空串 —— 由自证判据报红，不静默空转）。 */
+function sliceBetween(src, from, to) {
+  const a = src.indexOf(from)
+  const b = to ? src.indexOf(to, a + 1) : src.length
+  return a < 0 || b < 0 || b <= a ? '' : src.slice(a, b)
+}
+const authTool = sliceBetween(src, "toolName: 'gh_cli_auth_web'", "toolName: 'gh_cli_setup_git'")
+check(authTool.length > 500, '切片自证：切到 gh_cli_auth_web 这个工具（' + authTool.length + ' 字符）')
+check(/resolveGh\(\{ install: false \}\)/.test(authTool) && !/resolveGh\(\)/.test(authTool),
+  '取码工具：resolveGh 只读（install:false）—— 取码不许顺手跑一次下载 ＋ 内存解包')
+const routeSeg = sliceBetween(src, "url.pathname === '/auth/start'", "url.pathname === '/identity/email'")
+check(routeSeg.length > 200 && /ghVersion\(\{ install: false \}\)/.test(routeSeg),
+  'POST /auth/start：探测也只读（切片 ' + routeSeg.length + ' 字符）')
+check(/resolveGh\(\{ install: false \}\)/.test(flow), 'startDeviceFlowPty 里的 resolveGh 也只读')
+check(/timeout: 5000/.test(sliceFn(src, 'openUrl')), 'openUrl 的 xdg-open 有上界（5s）—— 它一挂，请求就永不返回')
+const clientSrc = readText('client.js')
+check(/fetch\(API \+ '\/auth\/start', \{ method: 'POST', signal: AbortSignal\.timeout\(/.test(clientSrc),
+  '面板的 /auth/start 请求带上界：busy 一定会松开（按钮不会永远点不动）')
+check(/flow && flow\.error \?/.test(clientSrc), '失败原因会渲染出来（原先 flow.error 没人用）')
+
+
 summary()
