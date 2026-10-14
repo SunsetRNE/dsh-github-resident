@@ -407,7 +407,8 @@ section('八、面板源码侧：接的是新字段与新路由（tripwire；渲
 // ===========================================================================
 {
   const src = readText('client.js')
-  check(src.includes("API + '/identity/email?email="), '面板打的是这条新路由（tripwire）')
+  // 票 51 第 2 步：面板改走宿主 RPC 端点 —— tripwire **等价换**（仍钉「接的是哪根线」）：端点名 ＋ email 查询参数。
+  check(/call\('ghr\.identity\.email', \{ query: 'email='/.test(src), '面板打的是这条新端点（tripwire · 票 51 第 2 步等价换）')
   check(src.includes('email.offer'), '面板的显示条件读快照给的 offer（不自己重算那三条）')
   check(src.includes("className: 'ghr-input'") && src.includes('saveEmail'), '面板里有输入框与保存处理（tripwire）')
   check(!/user_email/.test(src), '面板不认 state 的字段名（两半之间只走快照字段，不共享存储细节）')
