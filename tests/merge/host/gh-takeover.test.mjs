@@ -22,6 +22,10 @@ import { check, note, section, summary } from './_check.mjs'
 import { makeHome, withPlugin } from './_env-harness.mjs'
 
 process.env.DSH_GH_NET_TIMEOUT_MS = '150'   // 唯一的网络出口压到毫秒级：这一件断言的是决策，不是下载
+// 运行器（tests/merge/run.mjs 的隔离约定）会把「启动即落地」这些开关关掉 —— 本件要驱动的**正是**启动路径，
+// 所以在自己进程里显式打开（本机直跑与 CI 走运行器，两条路必须同一个行为：这一条是 CI 抓出来的）。
+delete process.env.DSH_GH_NO_BOOTSTRAP
+delete process.env.DSH_GH_NO_STATE_CHECK
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 const statePath = (home) => home + '/.dsh/gh-cli/install.json'
 const readState = (home) => { try { return JSON.parse(readFileSync(statePath(home), 'utf8')) } catch { return null } }
@@ -45,11 +49,14 @@ section('一、没装、没记录 → 落地一次；失败不算熔断（下次
 const hA = makeHome('takeover-a', { withGh: false, withGit: true })
 try {
   const r = await bootAndRead(hA.home, 'a')
-  check(r.takeover && r.takeover.action === 'failed',
-    '没 gh、离线 → 这次落地失败（action=' + (r.takeover && r.takeover.action) + '）')
+  // 这一格只钉**决策**，不钉网络结果：本机没网 → failed；CI 有真网络 → installed。两条都算「落地了一次」。
+  check(r.takeover && (r.takeover.action === 'installed' || r.takeover.action === 'failed'),
+    '没 gh、没记录 → 落地一次并得出结论（action=' + (r.takeover && r.takeover.action) + '）')
+  check(r.takeover && r.takeover.attempts > 0, '这次落地真去试了（attempts=' + (r.takeover && r.takeover.attempts) + '）')
   const st = readState(hA.home)
-  check(Boolean(st) && st.pending === null, '失败后 pending 被清掉（' + JSON.stringify(st && st.pending) + '）')
-  check(Boolean(st && st.lastFailed), '失败如实记进 lastFailed（不是静默）')
+  check(Boolean(st) && st.pending === null, 'pending 被清掉（不留半截状态：' + JSON.stringify(st && st.pending) + '）')
+  check(r.takeover.action === 'installed' ? Boolean(st && st.takeover && st.takeover.ok) : Boolean(st && st.lastFailed),
+    '结论与记录一致（installed → 有接管记录；failed → 有 lastFailed）')
   check(!(st && st.takeover && st.takeover.ok), '没写成的东西**不许**记成「已接管」')
 } finally { hA.cleanup() }
 
