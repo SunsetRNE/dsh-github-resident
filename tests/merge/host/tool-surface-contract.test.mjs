@@ -194,7 +194,15 @@ check(rowImports.length === files.length,
 // ---------------------------------------------------------------------------
 section('四、identity / environment 两段 ↔ 工具真返回（合成环境里离线跑）')
 
-const EXPECT_SPEC = 'dsh-github-resident/7'
+// 判据变更要写明理由（票「协议号 bump：新增 `load` 段后 `dsh-github-resident/7 → /8`（票 30 已裁未做）」）：
+// 本仓的协议增量规矩是「给已有段加字段＝兼容（不动 version），**新增段才 bump**」（同一句写在
+// `guarantees.protocolIncrements` 里）。票「重活租约：同一台机器上的全量门禁一次只许一份（协议 + 工具 +
+// runner 自锁）」给协议**新增了 `load` 段**，按这条规矩协议号就该从 `/7` 涨到 `/8` —— 上一步漏了，
+// 本行跟着 `plugin.js` 的 `PROTOCOL_VERSION` 一起补上。
+// 说清这条字面量**管什么、不管什么**：它管的是**两份副本彼此一致**（`plugin.js` 的号 ↔ 这里钉的号），
+// 只改一处会红；它**抓不到**「加了段忘了 bump」—— 那次两份副本一起停在 `/7`，这条判据照样绿，正是本票的来由。
+// 后一种判据另有其人：《协议「新增段忘了 bump」要有一条机器判据（本轮靠人肉才发现）》，不在本票边界内。
+const EXPECT_SPEC = 'dsh-github-resident/8'
 
 /** 双向漂移：declaredOnly = 协议写了但工具没有；actualOnly = 工具有了协议没写。 */
 const drift = (declared, actual) => ({

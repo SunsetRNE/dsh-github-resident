@@ -1402,7 +1402,15 @@ const PROTOCOL_ID = 'dsh-github-resident';
 // 6 → 7（2026-10-14，票「协议新增 identity / environment 两段 + 收口断言」）：新增 `identity` / `environment` 两段。
 // 增量规矩：**给已有段加字段算兼容（不动 version），新增段才 bump version** —— 消费方可以只按 `spec`
 // 判断「这份协议里有没有这两段」，不必先探测一遍（老版本按 `/6` 判断的代码不会被静默改写语义）。
-const PROTOCOL_VERSION = 7;
+// 7 → 8（2026-10-14，票「重活租约：同一台机器上的全量门禁一次只许一份（协议 + 工具 + runner 自锁）」新增了
+// `load` 段；票「协议号 bump：新增 `load` 段后 `dsh-github-resident/7 → /8`（票 30 已裁未做）」补上漏掉的这一步）：
+// 新增 `load` 段。这一行原来是**漏掉的那一步** —— 段加了、号没涨；门禁里那条字面量期望当时也停在 `/7`，
+// 而它管的是「两份副本彼此一致」，不是「号配不配得上段清单」，所以那次它照样绿（补后一种判据的事不在本票边界内，
+// 另开了《协议「新增段忘了 bump」要有一条机器判据（本轮靠人肉才发现）》）。
+// 后果不是「哪一处当场炸」，而是**号不再能当形状的键**：同一个 `/7` 在一段时间里对应过两种协议文档
+//（有 `load` 段之前 / 之后），按 `spec` 判断「这份协议里有没有某段」的消费方、以及按号定位的文档与快照，
+// 拿到的答案取决于它读的是哪一刻 —— 号只涨不跌，防的是这个。
+const PROTOCOL_VERSION = 8;
 const PROTOCOL_SPEC = PROTOCOL_ID + '/' + PROTOCOL_VERSION;
 const SERVICE_KEY = 'githubResident';
 
