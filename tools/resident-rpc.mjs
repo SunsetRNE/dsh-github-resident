@@ -16,7 +16,7 @@ const NEXT = '可在当前宿主会话调用 gh_protocol / gh_cli_status；在�
 const ENDPOINTS = [
   'ghr.state', 'ghr.version', 'ghr.update', 'ghr.protocol', 'ghr.registry',
   'ghr.registry.list', 'ghr.registry.plan', 'ghr.registry.build', 'ghr.registry.verify',
-  'ghr.registry.revoke', 'ghr.registry.purge', 'ghr.authStart', 'ghr.logout', 'ghr.identity.email',
+  'ghr.registry.revoke', 'ghr.registry.purge', 'ghr.authStart', 'ghr.ensureGh', 'ghr.logout', 'ghr.identity.email',
 ].sort()
 const object = (value) => value !== null && typeof value === 'object' && !Array.isArray(value)
 const fail = (code, message) => { throw Object.assign(new Error(message), { diagnosticCode: code }) }
@@ -40,7 +40,8 @@ export function validateProtocol(protocol) {
       || !Array.isArray(http.endpoints)
       || http.endpoints.some((entry) => !object(entry) || entry.method !== 'POST')
       || JSON.stringify(http.endpoints.map((entry) => entry.path).sort()) !== JSON.stringify(ENDPOINTS)) {
-    fail('PROTOCOL_TRANSPORT', '协议未声明 /api/dsws 宿主通道及全部 14 个 POST ghr.* 端点。')
+    // 数量从 ENDPOINTS 派生：写死字面量在加端点时必然漂移（这次就是）。
+    fail('PROTOCOL_TRANSPORT', '协议未声明 /api/dsws 宿主通道及全部 ' + ENDPOINTS.length + ' 个 POST ghr.* 端点。')
   }
   return protocol
 }

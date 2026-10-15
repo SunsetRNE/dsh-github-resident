@@ -58,7 +58,11 @@ await withPlugin(h.home, { path: h.path, env: {
     check(changedMethod.value?.ok === false && /E_RPC_ARGS/.test(changedMethod.value.error), '入参不能覆盖端点方法')
     const proto = await call('ghr.protocol')
     check(proto.value.spec === 'dsh-github-resident/8', '协议号不变')
-    check(proto.value.http.endpoints.length === 14 && proto.value.http.endpoints.every(e => handlers.has(e.path)), '协议列全十四项能力（含后来加入的邮箱）且全部已注册')
+    // 数量不再写死字面量（加端点时它必然漂移）：判据是「协议里每一个都真的注册着」，外加新端点必须在。
+    check(proto.value.http.endpoints.every(e => handlers.has(e.path))
+      && proto.value.http.endpoints.some(e => e.path === 'ghr.ensureGh')
+      && proto.value.http.endpoints.length >= 15,
+      '协议里的每个 ghr.* 端点都真的注册着（含备好 gh 的 ghr.ensureGh；实得 ' + proto.value.http.endpoints.length + ' 项）')
     check(proto.value.http.base === '/api/dsws', '协议只指向宿主路由')
     const expected = await tools.get('gh_cli_status').execute({}, {})
     const rpc = await call('ghr.state', { query: 'cached=1' })

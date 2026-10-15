@@ -233,7 +233,7 @@ check('客户端按 probe 阶段显示（进行中 / 未启动 / 失败）', cli
 check('客户端确实用了多条 registry 端点', registryNames.length >= 5, registryNames);
 const missing = clientNames.filter(n => !hostNames.has(n) || !endpoints.has(n));
 check('客户端每个端点都在协议且实际注册', missing.length === 0, { clientNames, missing });
-const requiredWrites = ['ghr.registry.build', 'ghr.registry.purge', 'ghr.authStart', 'ghr.identity.email'];
+const requiredWrites = ['ghr.registry.build', 'ghr.registry.purge', 'ghr.authStart', 'ghr.ensureGh', 'ghr.identity.email'];
 check('客户端用到的写类端点一条不少', requiredWrites.every(n => clientNames.includes(n)), requiredWrites);
 const hostSrc = await fs.readFile(new URL('./plugin.js', import.meta.url), 'utf8');
 check('Resident 源码没有监听或端口配置', !/server\.listen\s*\(|DSH_GH_API_PORT|lastServerError/.test(hostSrc));

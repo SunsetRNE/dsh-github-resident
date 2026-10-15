@@ -3110,7 +3110,7 @@ sys.stdout.flush()
     ['registry.build', '建库或刷新（consent=1 / rescan=1 / root / depth / prune）'],
     ['logout', '凭据拆除勘察（不执行拆除）'],
     ['ensureGh', '把 gh 备好（幂等、单飞；回执带 attempts / 系统层接管结果）'],
-    ['authStart', '备好 gh → 一次性码 + 授权页（phase: gh | code）'],
+    ['authStart', '一次性码 + 授权页（只读；缺 gh 先跑 ghr.ensureGh）'],
     ['identity.email', '保存提交邮箱（email；空值只读）'],
   ];
   const PROTOCOL = {
@@ -4739,7 +4739,8 @@ sys.stdout.flush()
     const depth = Number.isInteger(d) && d > 0 ? d : undefined;
     const writeCodes = {
       update: 'E_ORIGIN', 'registry.revoke': 'E_REGISTRY_ORIGIN',
-      authStart: 'E_ORIGIN', logout: 'E_ORIGIN', 'identity.email': 'E_IDENTITY_EMAIL_ORIGIN',
+      // ensureGh 会真的下载/落盘 gh（39MB 级），与 authStart 同类：只许真实同源页面发起。
+      authStart: 'E_ORIGIN', ensureGh: 'E_ORIGIN', logout: 'E_ORIGIN', 'identity.email': 'E_IDENTITY_EMAIL_ORIGIN',
     };
     if (writeCodes[name]) {
       const denied = originError(request, name, writeCodes[name]);
@@ -4812,17 +4813,17 @@ sys.stdout.flush()
   }
 
   async function authStart() {
-    // 点一下就把 gh 备好 —— 这一步以前只读，缺 gh 时直接回「先跑 gh_cli_install」，
-    //   等于把一次本来能自动做完的准备工作甩给用户（2026-10-15 本机现场）。
-    const gh = await prepareGh();
-    if (!gh.ok) {
-      return { ok: false, phase: 'gh', gh,
-        error: 'gh 没备好（' + (gh.timedOut ? '探测/落地超时，结果未知' : '落地未成功') + '）：诊断见 gh.attempts' };
+    // 这一条**只读**（票 47）：取码不许顺手跑一次下载＋内存解包。
+    //   缺 gh 时的准备工作由面板先调 ghr.ensureGh 那一支完成 —— 一条端点一件事，
+    //   所以这里的判据仍然是 ghVersion({ install: false })。
+    if (!(await ghVersion({ install: false }))) {
+      return { ok: false, phase: 'gh',
+        error: 'gh 此刻不可用：面板会先走 ghr.ensureGh 把 gh 备好；也可以直接跑 gh_cli_install（诊断见它的 attempts）' };
     }
     const flow = await startDeviceFlowPty();
     const opened = flow.code ? await openUrl(GH_DEVICE_URL) : null;
     lastFlow = { user_code: flow.code, at: new Date().toISOString(), opened };
-    return { ok: Boolean(flow.code), phase: flow.code ? 'code' : 'gh', gh,
+    return { ok: Boolean(flow.code), phase: flow.code ? 'code' : 'gh',
       user_code: flow.code, verification_uri: GH_DEVICE_URL, opened,
       ...(flow.error ? { error: flow.error } : {}) };
   }

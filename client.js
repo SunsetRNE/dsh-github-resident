@@ -378,20 +378,30 @@ window.__ModuleLoader__.load({
       //   等于把一次能自动做完的准备工作甩给用户去猜。现在点一下就做完，失败也带 attempts 诊断。
       const startAuth = () => {
         setBusy(true);
-        setPrep({ phase: 'gh', note: '正在确认 gh…' });
+        // 快照说 gh 已经就绪就别多打一次 RPC（准备那一步只在真的缺/旧时才有意义）；
+        //   快照可能是缓存，真到取码时宿主仍会如实回「不可用」—— 那时准备那一步会在错误里说明。
+        const ghReady = Boolean(d && d.gh && d.gh.version);
+        setPrep(ghReady
+          ? { phase: 'gh', done: true, note: 'gh 已就绪：' + (d.gh.version || '') + '（' + (d.gh.layer || '?') + '）' }
+          : { phase: 'gh', note: '正在确认 gh…' });
+        const prepared = ghReady ? Promise.resolve({ ok: true, skipped: true }) : call('ghr.ensureGh', {});
         // 票 47：客户端也要有上界 —— 宿主那条路任何一步卡住，busy 都必须能自己松开（否则按钮永远点不动）。
-        call('ghr.ensureGh', {})
+        prepared
           .then((g) => {
-            const ok = Boolean(g && g.ok);
-            setPrep({
-              phase: 'gh', done: ok, gh: g,
-              note: ok
-                ? ('gh 就绪：' + (g.version || '?') + '（' + (g.layer || '?') + '）')
-                : (g && g.timedOut ? 'gh 这一步超时（未知），稍后可重试' : 'gh 没备好'),
-            });
+            if (!ghReady) {
+              const ok = Boolean(g && g.ok);
+              setPrep({
+                phase: 'gh', done: ok, gh: g,
+                note: ok
+                  ? ('gh 就绪：' + (g.version || '?') + '（' + (g.layer || '?') + '）')
+                  : (g && g.timedOut ? 'gh 这一步超时（未知），稍后可重试' : 'gh 没备好'),
+              });
+              if (!ok) { setBusy(false); return null; }   // 没备好就不去取码：取码那条路是只读的
+            }
             return call('ghr.authStart', {});
           })
           .then((j) => {
+            if (!j) return;
             setFlow(j);
             setPrep((p) => ({ ...(p || {}), phase: 'code', done: Boolean(j && j.ok), note: j && j.ok ? '一次性码已生成' : '取码失败，见下方' }));
             setBusy(false);
