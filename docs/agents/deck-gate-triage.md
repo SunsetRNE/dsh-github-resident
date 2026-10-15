@@ -408,25 +408,35 @@
 
 环境类 27 道**没有开票**：它们是「跑门禁这台机器缺什么」，归属是 feeder 侧的显式前置/跳过（上面「环境类怎么补 / 怎么跳过」一节），不是源码欠账 —— 开了票也没人接。
 
-## 复测（2026-10-15 第二轮：清 #56 / #57 / #58 第 1 步）
+## 复测（2026-10-15，共四轮）
 
-同一个名单、同一台机器、同一个逐道跑法再量一遍（跑之前先取重活租约，跑完放）：
+同一个名单、同一台机器、同一个逐道跑法，逐轮清票之后各量一遍（每轮跑之前先取重活租约，跑完放）：
 
-| 项 | 首测 | 复测 |
-| --- | --- | --- |
-| 绿 | 221 | **237** |
-| 红 | 90 | **74** |
-| 红→绿 | — | **16 道**（#56 的 13 道 + `verify-927-gate-injection` / `verify-log-exec-606` + `verify-963-log-order`） |
-| 绿→红（回归） | — | **0** |
+| 轮次 | 绿 | 红 | 清掉了什么 |
+| --- | --- | --- | --- |
+| 首测 | 221 | 90 | —（只做分流） |
+| 第二轮 | 237 | 74 | [#56](https://github.com/SunsetRNE/dsh-github-resident/issues/56) 13 道 + [#57](https://github.com/SunsetRNE/dsh-github-resident/issues/57) 2 道 + [#62](https://github.com/SunsetRNE/dsh-github-resident/issues/62)（963 的另一半） |
+| 第三轮 | 239 | 72 | #58 的取件方式（detail-fog / detail-levels 转绿） |
+| **第四轮（终）** | **240** | **71** | [#63](https://github.com/SunsetRNE/dsh-github-resident/issues/63) + #58 收尾的 gh 前置检查 + `verify-panel` 同款前置 |
 
-未如期转绿的两道是 [#58](https://github.com/SunsetRNE/dsh-github-resident/issues/58) 名下的 `verify-detail-fog` / `verify-detail-levels`：取件方式改好之后它们**在门禁链的环境里**（PATH 上没有可跑的 `gh`）仍然红 —— 这属于**环境依赖**（要真 `gh`，或给夹具一个明确的前置/跳过），不是端口漂移；`verify-panel` 另剩 2 条与端口无关的判据漂移，开在 [#63](https://github.com/SunsetRNE/dsh-github-resident/issues/63)（#58 `blockedBy` 它）。
+四轮合起来看：
 
-第二轮之后新开的票：
+- **红→绿 19 道**：`verify-784-effortId` / `790-parent-edge` / `829-parent-reread` / `895-bulk-deadline` / `898-block-merge` / `927-gate-injection` / `929-batch-cycle` / `963-log-order` / `971-markdown-parent` / `992-readonly-labels` / `deck-no-hang` / `deck-parallel` / `deck-thin-reads` / `deck-tools-matrix` / `deck-tools` / `log-exec-606` / `detail-fog` / `detail-levels` / `panel`；
+- **绿→红（回归）0 道**；
+- **四轮里飘的 2 道**：
+  - `verify-artifact-freshness` `[绿,绿,红,绿]` —— **门禁之间的相互作用**，不是产品漂移：有门禁运行时会刷新 `deck/src/**` 与 `deck/client.js` 的 mtime 而**不重建 `dist`**，于是它那条「dist 不比 deck/src 旧」就红。按它自己的提示跑一次 `npm run build` 即绿（本轮已跑，终轮实测绿）。
+  - `verify-bundled-discovery` `[红,红,绿,红]` —— 同样的输入三次红一次绿，属**不确定**（它就是 [#71](https://github.com/SunsetRNE/dsh-github-resident/issues/71) 那三道待定之一）。
+- **两道离 65s 上限只剩几秒**（`verify-895-bulk-deadline` 63.9s、`verify-898-block-merge` 60.5s）—— 它们是 #56 刚修绿的，**再慢一点就会被 timeout 杀掉**，是下一轮该看的隐患（属 [#64](https://github.com/SunsetRNE/dsh-github-resident/issues/64) 那类「产物/切片」之外的独立观察）。
+
+⚠️ **复测的跑法**是用逐道 runner（每条 `cd deck && timeout 65 node tests/<file>`）跑的，**不是** `deck/scripts/verify-chain.js`；两边的 PATH 都是原样，所以数字可比。
+
+⚠️ **终轮那 240 个绿里有 3 个是「前置缺失的出声 SKIP」**（`verify-panel` / `verify-detail-fog` / `verify-detail-levels`：这条机器 PATH 上没有可跑的 `gh`）—— 它们**不是真跑绿**。把 `gh` 放进 PATH 后三道都实测真绿（15/15、2/2、11/11）。
+
+复测期间新开的票：
 
 | 票 | 覆盖面 |
 | --- | --- |
-| [#62](https://github.com/SunsetRNE/dsh-github-resident/issues/62) | `verify-963-log-order` 的 S4 分档判据停在 1.7.8 之前（probe 样例用了 `auth status`）—— 已修，复测绿 |
-| [#63](https://github.com/SunsetRNE/dsh-github-resident/issues/63) | `verify-panel` 的两条残留漂移：票级 `blocks` 字段 / 已关闭地图的现场比对 |
-| [#61](https://github.com/SunsetRNE/dsh-github-resident/issues/61) | 重活租约扩到 `verify:deck` / `verify:resident`（半重活并跑今天没有护栏）—— 已落地 |
-
-⚠️ **复测的跑法**是用逐道 runner（每条 `cd deck && timeout 65 node tests/<file>`）跑的，**不是** `deck/scripts/verify-chain.js`；两边的 PATH 都是原样，所以数字可比。
+| [#61](https://github.com/SunsetRNE/dsh-github-resident/issues/61) | 重活租约扩到 `verify:deck` / `verify:resident` —— 已落地 |
+| [#62](https://github.com/SunsetRNE/dsh-github-resident/issues/62) | `verify-963-log-order` 的 S4 分档判据停在 1.7.8 之前 —— 已修 |
+| [#63](https://github.com/SunsetRNE/dsh-github-resident/issues/63) | `verify-panel` 的两条残留漂移（票级 `blocks` / 已关闭地图的现场比对）—— 已判已修 |
+| [#64](https://github.com/SunsetRNE/dsh-github-resident/issues/64) – [#71](https://github.com/SunsetRNE/dsh-github-resident/issues/71) | [#59](https://github.com/SunsetRNE/dsh-github-resident/issues/59) 拆出来的 8 张根因族子票（产物/切片 · 门禁自身缺陷 · 发布链 · 结构红线 · 语义不变式 · 日志埋点 · 宿主行为 · 待定 3） |
