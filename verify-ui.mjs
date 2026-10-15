@@ -94,6 +94,8 @@ const request = async (path, headers = {}) => {
 };
 const post = request, get = request;
 check('测试实例真起 effect 后 RPC 服务位可用', endpoints.has('ghr.state') && endpoints.has('ghr.registry'));
+// 面板那颗「生成一次性码」的第一阶段就落在 ghr.ensureGh 上：端点必须真的注册着（不是只在协议文档里写着）。
+check('面板授权链的两个端点都在（ensureGh / authStart）', endpoints.has('ghr.ensureGh') && endpoints.has('ghr.authStart'));
 await new Promise(r => setTimeout(r, 20));
 check('真 effect 没有监听端口', listens === 0, listens);
 

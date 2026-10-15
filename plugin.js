@@ -3109,7 +3109,8 @@ sys.stdout.flush()
     ['registry.purge', '清库（confirm=1，真实页面来源）'],
     ['registry.build', '建库或刷新（consent=1 / rescan=1 / root / depth / prune）'],
     ['logout', '凭据拆除勘察（不执行拆除）'],
-    ['authStart', '一次性码 + 授权页'],
+    ['ensureGh', '把 gh 备好（幂等、单飞；回执带 attempts / 系统层接管结果）'],
+    ['authStart', '备好 gh → 一次性码 + 授权页（phase: gh | code）'],
     ['identity.email', '保存提交邮箱（email；空值只读）'],
   ];
   const PROTOCOL = {
@@ -4775,20 +4776,54 @@ sys.stdout.flush()
           via: consent ? 'ui:registry-panel' : undefined, prune: query.get('prune') === '1' });
       }
       case 'logout': return await teardown({ confirm: false });
+      case 'ensureGh': return await prepareGh();
       case 'authStart': return await authStart();
       case 'identity.email': return { action: 'email', stateFile: STATE_FILE, ...(await applyCommitEmail(query.get('email') || '')) };
       default: return { ok: false, error: 'unknown endpoint: ghr.' + name };
     }
   }
 
+  /**
+   * 「把 gh 备好」——面板那颗按钮的第一阶段。幂等：已经就绪就秒过；缺就落地；旧就按期望升级。
+   * 回执如实带 attempts（试了哪几条腿、哪条是超时），面板照着渲染，不再只回一句"先跑 gh_cli_install"。
+   */
+  async function prepareGh() {
+    const before = await resolveGh({ install: false });
+    let ensure = null;
+    if (!before.ok) {
+      const landed = await resolveGh({});
+      ensure = landed.ensure || null;
+    }
+    const after = await resolveGh({ install: false, force: true });
+    return {
+      ok: Boolean(after.ok),
+      layer: after.ok ? after.layer : null,
+      path: after.path || null,
+      version: after.version || null,
+      requirement: GH_MIN_VERSION,
+      systemPolicy: GH_SYSTEM_POLICY,
+      dataDir: GH_DATA_DIR,
+      ...(after.ok ? {} : { note: after.note || (before.note || null) }),
+      ...(after.timedOut || before.timedOut ? { timedOut: true } : {}),
+      ...(after.systemOutdated ? { systemOutdated: true, note: after.note } : {}),
+      ...(after.systemUpgrade ? { systemUpgrade: after.systemUpgrade } : {}),
+      attempts: (ensure && Array.isArray(ensure.attempts)) ? ensure.attempts : [],
+    };
+  }
+
   async function authStart() {
-    if (!(await ghVersion({ install: false }))) {
-      return { ok: false, error: 'gh 不可用（这条路只读、不替你下载）：先跑 gh_cli_install；诊断见它的 attempts' };
+    // 点一下就把 gh 备好 —— 这一步以前只读，缺 gh 时直接回「先跑 gh_cli_install」，
+    //   等于把一次本来能自动做完的准备工作甩给用户（2026-10-15 本机现场）。
+    const gh = await prepareGh();
+    if (!gh.ok) {
+      return { ok: false, phase: 'gh', gh,
+        error: 'gh 没备好（' + (gh.timedOut ? '探测/落地超时，结果未知' : '落地未成功') + '）：诊断见 gh.attempts' };
     }
     const flow = await startDeviceFlowPty();
     const opened = flow.code ? await openUrl(GH_DEVICE_URL) : null;
     lastFlow = { user_code: flow.code, at: new Date().toISOString(), opened };
-    return { ok: Boolean(flow.code), user_code: flow.code, verification_uri: GH_DEVICE_URL, opened,
+    return { ok: Boolean(flow.code), phase: flow.code ? 'code' : 'gh', gh,
+      user_code: flow.code, verification_uri: GH_DEVICE_URL, opened,
       ...(flow.error ? { error: flow.error } : {}) };
   }
 

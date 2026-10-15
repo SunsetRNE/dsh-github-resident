@@ -40,12 +40,12 @@ window.__ModuleLoader__.load({
     };
     const DEVICE_URL = 'https://github.com/login/device';
     const STEPS = [
-      ['1', '生成码', '点下面的「生成一次性码」——插件在后台起 gh 的设备码流程并拉起浏览器'],
+      ['1', '生成码', '点下面的「生成一次性码」——插件先把 gh 备好（缺就落地、旧就升级），再起设备码流程并拉起浏览器'],
       ['2', '填码', '把页面上出现的那 8 位码填进 GitHub 授权页，确认授权'],
       ['3', '核验', '授权后本页状态会变成「已授权」并显示账号名；再回会话跑一次 gh_cli_setup_git'],
     ];
     const COMMANDS = [
-      ['gh_cli_install', '复用系统 gh；缺则自带落地（抽官方 tar.gz 单文件，退回 .deb）'],
+      ['gh_cli_install', '接管 gh：系统层满足要求就复用；否则自带落地；系统层低于要求需一次同意（system:"manage"）后才升级'],
       ['gh_cli_auth_web', '取一次性码 + 拉起浏览器（等价于本页按钮）'],
       ['gh_cli_status', '核验账号、凭据助手、hosts.yml'],
       ['gh_cli_setup_git', '让 git push 走 gh 的 credential helper'],
@@ -336,6 +336,8 @@ window.__ModuleLoader__.load({
       const svcRef = React.useRef(svc);
       svcRef.current = svc;
       const [flow, setFlow] = React.useState(null);
+      // 分阶段回执（准备 gh → 取码）：面板不猜「是不是在装」，只渲染宿主如实回的那几段。
+      const [prep, setPrep] = React.useState(null);
       const [busy, setBusy] = React.useState(false);
       const [copied, setCopied] = React.useState(null);
       const [emailDraft, setEmailDraft] = React.useState('');
@@ -371,12 +373,36 @@ window.__ModuleLoader__.load({
         };
       }, [load]);
 
+      // 分两步、两个阶段如实报到界面上：① 把 gh 备好（幂等；已就绪秒过）② 取一次性码。
+      //   为什么不再是一条 authStart：以前 gh 没就绪时这一条直接回「先跑 gh_cli_install」，
+      //   等于把一次能自动做完的准备工作甩给用户去猜。现在点一下就做完，失败也带 attempts 诊断。
       const startAuth = () => {
         setBusy(true);
+        setPrep({ phase: 'gh', note: '正在确认 gh…' });
         // 票 47：客户端也要有上界 —— 宿主那条路任何一步卡住，busy 都必须能自己松开（否则按钮永远点不动）。
-        call('ghr.authStart', {})
-          .then((j) => { setFlow(j); setBusy(false); load({ refresh: true }); })
-          .catch((e) => { setFlow({ ok: false, error: String((e && e.message) || e) }); setBusy(false); });
+        call('ghr.ensureGh', {})
+          .then((g) => {
+            const ok = Boolean(g && g.ok);
+            setPrep({
+              phase: 'gh', done: ok, gh: g,
+              note: ok
+                ? ('gh 就绪：' + (g.version || '?') + '（' + (g.layer || '?') + '）')
+                : (g && g.timedOut ? 'gh 这一步超时（未知），稍后可重试' : 'gh 没备好'),
+            });
+            return call('ghr.authStart', {});
+          })
+          .then((j) => {
+            setFlow(j);
+            setPrep((p) => ({ ...(p || {}), phase: 'code', done: Boolean(j && j.ok), note: j && j.ok ? '一次性码已生成' : '取码失败，见下方' }));
+            setBusy(false);
+            load({ refresh: true });
+          })
+          .catch((e) => {
+            const msg = String((e && e.message) || e);
+            setFlow({ ok: false, error: msg });
+            setPrep((p) => ({ ...(p || {}), phase: 'error', done: false, note: '失败：' + msg }));
+            setBusy(false);
+          });
       };
 
       // 面板填写通过 RPC 调宿主唯一写入口，页面来源由宿主核验；成功后重读快照，
@@ -444,6 +470,21 @@ window.__ModuleLoader__.load({
               svc.phase === 'down'
                 ? '暂时无法读取账号状态，错误详情见下方。'
                 : (flow && flow.error ? '上次没成：' + flow.error : '点下面的按钮生成一次性码。')),
+
+          // 分阶段回执：正在做什么、做完了没、落地试了哪几条腿、系统层有没有动 —— 都由宿主如实回。
+          prep
+            ? h('div', { className: 'ghr-when', style: { marginTop: 10 } },
+              h('div', null, (prep.done ? '✓ ' : '… ') + (prep.note || '')),
+              prep.gh && Array.isArray(prep.gh.attempts) && prep.gh.attempts.length
+                ? h('div', null, '落地尝试：' + prep.gh.attempts.map((a) => a.step + (a.ok === true ? ' ✓' : (a.timedOut ? ' 超时' : ' ✗'))).join(' → '))
+                : null,
+              prep.gh && prep.gh.systemOutdated
+                ? h('div', null, '系统层 gh 低于要求 ' + (prep.gh.requirement || '') + (prep.gh.systemUpgrade ? '（' + (prep.gh.systemUpgrade.reason || '未动') + '）' : ''))
+                : null,
+              prep.gh && prep.gh.systemUpgrade && prep.gh.systemUpgrade.ok
+                ? h('div', null, '系统层 gh 已升级：' + (prep.gh.systemUpgrade.command || ''))
+                : null)
+            : null,
 
           h('div', { className: 'ghr-actions' },
             h(Btn, { onClick: startAuth, disabled: busy || svc.phase !== 'ok' },

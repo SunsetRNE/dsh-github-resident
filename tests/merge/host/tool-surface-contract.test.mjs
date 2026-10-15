@@ -133,10 +133,11 @@ if (resident) {
   const expectedEndpoints = [
     'ghr.state', 'ghr.version', 'ghr.update', 'ghr.protocol', 'ghr.registry', 'ghr.registry.list',
     'ghr.registry.plan', 'ghr.registry.build', 'ghr.registry.verify', 'ghr.registry.revoke',
-    'ghr.registry.purge', 'ghr.authStart', 'ghr.logout', 'ghr.identity.email',
+    'ghr.registry.purge', 'ghr.authStart', 'ghr.ensureGh', 'ghr.logout', 'ghr.identity.email',
   ].sort()
   check(JSON.stringify(endpoints.map((e) => e.path).sort()) === JSON.stringify(expectedEndpoints),
-    'http.endpoints 完整声明 14 个 ghr.* 端点，无缺项或重复')
+    // 数量从上面那张表**派生**：写死"14"这种字面量在加端点时必然漂移（这次就是）。
+    'http.endpoints 完整声明 ' + expectedEndpoints.length + ' 个 ghr.* 端点，无缺项或重复')
   check(endpoints.length > 0 && endpoints.every((e) => e.method === 'POST'),
     'http.endpoints 的每项均经 POST 宿主 RPC 调用')
 
