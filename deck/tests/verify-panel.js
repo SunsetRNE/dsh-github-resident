@@ -99,6 +99,16 @@ function computeGroups(snapshot) {
 }
 
 async function main() {
+  // 前置（#58 收尾 / #63 同批）：这条门禁**要真 gh** —— 整份快照（地图、子票、分组、现场比对）都是从
+  // 真 GitHub 读回来的；没有 gh 就没有数据可核（宿主探活 spawn gh --version 直接 ENOENT，还会以
+  // 未捕获的 'error' 事件炸掉整个进程）。处置按环境类那一档：**出声跳过、不计红**；有 gh 时必须真绿。
+  let ghResolvable = true
+  try { await subprocess.resolveExecutable('gh') } catch (e) { ghResolvable = false }
+  if (!ghResolvable) {
+    console.log('SKIP 前置缺失：PATH 上没有可跑的 gh（这条门禁要真 gh 才能读回整份快照）')
+    console.log('     要真跑：把 gh 放进 PATH（本机自带那份在 ~/.dsh/gh-cli/bin/gh），或先跑 gh_cli_install')
+    process.exit(0)
+  }
   const checks = []
   const expect = (name, cond, extra) => {
     checks.push({ name, pass: !!cond, extra: extra || '' })
