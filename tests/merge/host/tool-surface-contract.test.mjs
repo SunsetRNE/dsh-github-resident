@@ -336,6 +336,84 @@ if (surface) {
         : ''))
   }
 
+  // -------------------------------------------------------------------------
+  // 协议增量：「段 → 它进入协议时的版本号」登记表（票 55 / #40）
+  // -------------------------------------------------------------------------
+  // 规矩早写在 guarantees.protocolIncrements 里：「给已有段加字段＝兼容（不动 version）；
+  // **新增段才 bump**」—— 但它只是一句话，没有任何红灯。后果实测过：加 load 段时忘了 bump，
+  // plugin.js 的 PROTOCOL_VERSION 与上面那条字面量期望**一起停在 /7**，两份副本互相印证着错，
+  // 谁都看不见。上面那条 EXPECT_SPEC 只管「两份副本彼此一致」，管不了「加了段忘了涨号」。
+  //
+  // 这一格就是那条红灯。登记表是**本判据自己的副本**，地位写明（否则它成了第二份真源）：
+  //   · 每一行 = 那个协议版本下的**完整段集合**（累计），所以「文档里每个段都在表里」与
+  //     「当前那一行 == 真文档」是同一条链的两面；
+  //   · 只对**当前协议版本那一行**做与真文档的双向比对；历史行是记录，不参与比对；
+  //   · 推进方式：**新增段 = 加一行更高版本号 + 同步 bump plugin.js 的 PROTOCOL_VERSION**。
+  //     只加行不涨号 → 下面「版本 ≥ 登记最高版本」红；只涨号不加行 → 当前行双向比对红。
+  //   · 「段」的判定**不做形状嗅探**（fieldsFrom / readers / what 有没有都不是判据 —— 不带这些键的
+  //     新段会静默漏掉）。判据是显式的：段 = 协议顶层键 − 骨架键 − 信封键。
+  // 历史（本判据建立时从 git 里核出来的，不是记忆）：identity / environment 随 /6 → /7 一起进
+  //（389cb0f）；load 在 b157883 时进、号忘了涨，e1a004b 补成 /8；mutations 随 8e3cfc7 进、号停在 /8
+  //（又是一次「加了段没涨号」，本票边界不许改协议内容，所以如实记进 8 那一行，交维护者裁决）。
+  const SEGMENT_REGISTRY = [
+    { version: 7, segments: ['environment', 'identity'] },
+    { version: 8, segments: ['environment', 'identity', 'load', 'mutations'] },
+  ]
+  // 骨架键：协议里**不是段**的那些顶层键（结构 / 契约本身）。清单显式写下，下面自证它没写错。
+  const PROTOCOL_SKELETON_KEYS = [
+    'id', 'version', 'spec', 'service', 'http', 'envelope', 'tools', 'errors', 'registry', 'guarantees',
+  ]
+  const segSort = (a) => a.slice().sort()
+  const segSame = (a, b) => JSON.stringify(segSort(a)) === JSON.stringify(segSort(b))
+  /** 段 = 顶层键 − 骨架键 − 信封键（信封那两个键是工具外面加的，不属于协议文档）。 */
+  const segmentsOf = (doc) => Object.keys(doc || {})
+    .filter((k) => !PROTOCOL_SKELETON_KEYS.includes(k) && !ENVELOPE_KEYS.includes(k))
+  const maxRegistryVersion = (registry) => (registry || []).reduce((m, r) => Math.max(m, r.version), 0)
+  const registeredSegments = (registry) => [...new Set((registry || []).flatMap((r) => r.segments || []))]
+  const unregisteredSegments = (segments, registry) => {
+    const known = new Set(registeredSegments(registry))
+    return segments.filter((s) => !known.has(s))
+  }
+  const rowFor = (registry, version) => (registry || []).find((r) => r.version === version) || null
+
+  const missingSkeleton = PROTOCOL_SKELETON_KEYS.filter((k) => !(k in (p || {})))
+  check(missingSkeleton.length === 0,
+    '骨架键清单里每一项都真的在协议文档里（清单自己不许写错/写漏，缺 ' + JSON.stringify(missingSkeleton) + '）')
+
+  const realSegments = segmentsOf(p)
+  const unregistered = unregisteredSegments(realSegments, SEGMENT_REGISTRY)
+  check(unregistered.length === 0,
+    '协议文档里出现的每个「段」都在登记表里（未登记 ' + JSON.stringify(unregistered) + '；实得段 ' + JSON.stringify(segSort(realSegments)) + '）')
+
+  const currentRow = rowFor(SEGMENT_REGISTRY, p.version)
+  check(!!currentRow, '登记表里有当前协议版本（' + p.version + '）那一行')
+  check(!!currentRow && segSame(realSegments, currentRow.segments),
+    '当前版本那一行 == 真文档的段集合（**双向**：文档多了 / 表里多了都红）'
+    + (currentRow && !segSame(realSegments, currentRow.segments)
+      ? '（文档独有 ' + JSON.stringify(segSort(realSegments).filter((s) => !currentRow.segments.includes(s)))
+        + '，表独有 ' + JSON.stringify(segSort(currentRow.segments).filter((s) => !realSegments.includes(s))) + '）'
+      : ''))
+
+  const highestRegistered = maxRegistryVersion(SEGMENT_REGISTRY)
+  check(p.version >= highestRegistered,
+    '协议自报版本 ≥ 登记表最高版本（登记表里有了更高版本号的段，协议号就必须跟上；' + p.version + ' vs ' + highestRegistered + '）')
+
+  // 判据自证：同一支判定对**纯合成样本**也必须在两个方向各自报红（不带真数据 —— 真数据漂了的时候，
+  // 这几条不该跟着红，否则会淹掉真正的信号）。
+  const SAMPLE_DOC = { id: 'x', version: 8, spec: 'x/8', identity: {}, environment: {}, load: {}, mutations: {}, brand_new: {} }
+  check(unregisteredSegments(segmentsOf(SAMPLE_DOC), SEGMENT_REGISTRY).join() === 'brand_new',
+    '判据自证①：文档里多了一个未登记的段 → 抓得到（实得 ' + JSON.stringify(unregisteredSegments(segmentsOf(SAMPLE_DOC), SEGMENT_REGISTRY)) + '）')
+  const SAMPLE_AHEAD = SEGMENT_REGISTRY.concat([{ version: 9, segments: [] }])
+  check(maxRegistryVersion(SAMPLE_AHEAD) > SAMPLE_DOC.version,
+    '判据自证②：登记表里有了更高版本号，而协议号没涨 → 抓得到')
+  check(!segSame(segmentsOf(SAMPLE_DOC).filter((s) => s !== 'brand_new'), ['environment', 'identity', 'load']),
+    '判据自证③：当前那一行与真文档的段集合不等 → 双向比对抓得到')
+  check(segSame(['environment', 'identity', 'load', 'mutations'], ['identity', 'environment', 'mutations', 'load']),
+    '判据自证④：比对本身不看顺序（否则每次重排段序都会假红）')
+
+  note('段登记表只对**当前版本那一行**与真文档做双向比对；历史行是记录、不参与比对 —— 它是判据自己的副本，不是第二份真源。')
+  note('「段」按显式骨架键清单判定（不做形状嗅探）：不带 fieldsFrom / readers 的新段照样会被抓出来。')
+
   note('本段只覆盖**能在合成环境里离线跑**的工具与动作（gh_protocol / gh_identity 五动作 / gh_env_probe）：')
   note('需要出网的工具跑不了离线，这条判据不覆盖它们 —— 不假装覆盖。')
   note('gh_pr 自《gh_pr 共用解析器 + 回落 gh pr create》起两条路都能离线实跑（REST 换掉 fetch、回落走 gh 桩），'
