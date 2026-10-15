@@ -16,6 +16,14 @@ import path from 'node:path';
 import zlib from 'node:zlib';
 import { promises as fs } from 'node:fs';
 import { execFile } from 'node:child_process';
+import { holdLoadLease } from './tests/merge/_load-lease.mjs';
+
+// 重活租约（票 61）：resident 这一族与 verify:merge / verify:deck 共用**同一把锁**（引同一支
+// tests/merge/_load-lease.mjs，不抄第二份）；拿不到就 exit 2 + BLOCKED-LOAD-LEASE，本件一条判据都不跑。
+holdLoadLease({
+  holder: 'verify:resident/verify-real-artifact.mjs@' + (process.env.DSH_SESSION_ID || ('pid' + process.pid)),
+  purpose: 'verify:resident（verify-real-artifact.mjs）',
+})
 
 // 默认严格。原来默认宽松（`=== '1'` 才算严格），而它被挂在 verify:resident 尾部、
 // 又从来没人设过 DSH_GH_STRICT —— 于是「断网 → SKIP → exit 0」被当成了通过，

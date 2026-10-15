@@ -10,6 +10,14 @@ import os from 'node:os';
 import path from 'node:path';
 import { promises as fs } from 'node:fs';
 import { execFile } from 'node:child_process';
+import { holdLoadLease } from './tests/merge/_load-lease.mjs';
+
+// 重活租约（票 61）：resident 这一族与 verify:merge / verify:deck 共用**同一把锁**（引同一支
+// tests/merge/_load-lease.mjs，不抄第二份）；拿不到就 exit 2 + BLOCKED-LOAD-LEASE，本件一条判据都不跑。
+holdLoadLease({
+  holder: 'verify:resident/verify-logout.mjs@' + (process.env.DSH_SESSION_ID || ('pid' + process.pid)),
+  purpose: 'verify:resident（verify-logout.mjs）',
+})
 
 const REAL_HOME = os.homedir();
 // 真 HOME「未被触碰」的判据要在**改动任何环境之前**取快照：真 HOME 本来可能就有

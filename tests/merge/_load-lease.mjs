@@ -6,8 +6,14 @@
  * 签名都是「外部杀」（`repair-builtin.log` 多一行启动、无异常栈、日志无异常），凶手未定位；
  * 而相关性明确：**重活并跑 / 连着跑**。多个对话各跑一遍全量门禁，正是这个形状。
  *
- * 所以「锁」不能只写在文档里 —— runner 与矩阵**自己取**：拿不到就**如实拒绝**
+ * 所以「锁」不能只写在文档里 —— 重活入口**自己取**：拿不到就**如实拒绝**
  * （退出码 2 + `BLOCKED-LOAD-LEASE` 行，一个门禁子进程都不起），不静默跳过、不假装绿。
+ *
+ * 取锁的人（票 61 扩展「半重」那一族，全部**引这一支**，没有第二份实现、没有第二把锁）：
+ *   · `tests/merge/run.mjs`（verify:merge）与 `tests/merge/host/env-matrix.test.mjs`（合成环境矩阵）；
+ *   · `deck/scripts/verify-chain.js`（verify:deck，约 10 分钟 / 几百个子进程）—— 直接相对引用本文件；
+ *   · resident 那一族 `verify-bundle.sh` / `verify-*.mjs`（verify:resident）—— `.mjs` 直接引用，
+ *     bash 那半边引不了 JS，由 `tests/merge/_load-lease-cli.mjs` 这个命令壳替它取（同一把锁）。
  *
  * 三处约定（改一处就得改另两处，`tests/merge/host/load-lease.test.mjs` 会静态比对）：
  *   ① 落点：`~/.dsh/github-resident/load-lease.json`（`DSH_GH_LOAD_LEASE` 可覆盖路径）；
@@ -107,4 +113,22 @@ export function requireLoadLease({ holder, purpose }) {
   console.log('重活租约：已取得 —— ' + JSON.stringify(leaseView(got.lease)))
   process.env[LEASE_HELD_ENV] = String(process.pid)
   return got.lease.holder
+}
+
+/**
+ * 重活入口的**最短用法**：取锁 + **退出时自己放掉**（所有退出路径都覆盖 —— 包括
+ * `process.exit()`，那不走 finally）。deck 门禁链与 resident 那一族用它；
+ * `run.mjs` / 矩阵那种要在汇总之后再放、还自己管退出码的入口仍用上面那对
+ * `requireLoadLease` / `releaseLease` 手工配。
+ *
+ * 返回持有者名字（自己取到的那份）；祖先进程已持有时返回 null —— 那是它的锁，不替它放。
+ */
+export function holdLoadLease(opts = {}) {
+  const mine = requireLoadLease(opts)
+  if (!mine) return null
+  process.on('exit', () => {
+    const rel = releaseLease(mine)
+    console.log(rel && rel.released ? '重活租约：已释放' : '重活租约：释放时如实回报 —— ' + JSON.stringify(rel))
+  })
+  return mine
 }

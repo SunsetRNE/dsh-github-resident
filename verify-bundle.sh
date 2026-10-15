@@ -34,6 +34,15 @@ done
 [ -n "${ARGS[0]:-}" ] && BUNDLE_DIR="${ARGS[0]}"
 [ -n "${ARGS[1]:-}" ] && PROFILE_DIR="${ARGS[1]}"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+
+# 重活租约（票 61「重活租约扩到半重那一族」）：本脚本是 bash，引不了 JS 模块 —— 未持有记号时
+# re-exec 到同一把锁的命令壳（tests/merge/_load-lease.mjs 那支）。壳取锁 → 带
+# DSH_GH_LOAD_LEASE_HELD 跑本脚本（本脚本与它的孙进程见到记号就不再取）→ 退出时放锁、
+# 透传退出码。拿不到锁就 exit 2 + BLOCKED-LOAD-LEASE，一条体检都不跑；**没有第二把锁**。
+if [ -z "${DSH_GH_LOAD_LEASE_HELD:-}" ]; then
+  exec node "$SCRIPT_DIR/tests/merge/_load-lease-cli.mjs" -- bash "$SCRIPT_DIR/verify-bundle.sh" "$@"
+fi
+
 BUNDLE_DIR="$(cd -- "${BUNDLE_DIR:-$SCRIPT_DIR}" && pwd -P)" || exit 1
 RPC_HELPER="$SCRIPT_DIR/tools/resident-rpc.mjs"
 

@@ -624,12 +624,13 @@ const RUNTIME_DIR = process.env.DSH_GH_RUNTIME_DIR || path.join(STATE_DIR, 'gith
 const RUNTIME_HELPER_FILE = path.join(RUNTIME_DIR, 'git-credential-helper');
 
 // 重活租约的落点（协议 `load` 段 / 工具 `gh_load_lease`）。
-// 「重活」＝全量门禁 / 合成环境矩阵这类会同时起一堆子进程的活。同一台机器上**一次只许一份**：
+// 「重活」＝全量门禁 / 合成环境矩阵 / deck 门禁链（约 10 分钟、几百个子进程）/ resident 体检那族
+// —— 这类会同时起一堆子进程的活，同一台机器上**一次只许一份**：
 // 本机实测宿主进程被系统杀过 6 次（00:35 / 00:51 / 01:07 / 01:17 / 02:16 / 02:18），签名都是「外部杀」，
 // 而相关性明确 —— 重活并跑 / 连着跑；多会话并跑时各自的 agent 看不见别人，所以规矩要写进协议、锁要自己上。
 const LOAD_LEASE_FILE = process.env.DSH_GH_LOAD_LEASE || path.join(STATE_DIR, 'github-resident', 'load-lease.json');
 const LOAD_LEASE_DEFAULT_TTL_MS = 30 * 60 * 1000;
-const LOAD_LEASE_HELD_ENV = 'DSH_GH_LOAD_LEASE_HELD';   // 祖先进程已持有时传给子进程的记号（runner 与门禁共用）
+const LOAD_LEASE_HELD_ENV = 'DSH_GH_LOAD_LEASE_HELD';   // 祖先进程已持有时传给子进程的记号（重活入口们共用：runner / 矩阵 / deck 链 / resident 那族）
 
 // 并发账的落点与形状（协议 `work` 段 / 工具 `gh_work_ledger`，票 55 / #31）—— **只做可见，不做互斥**。
 // 与上面那把租约的分工写死在这里，免得两件事被混成一件事：
@@ -3711,7 +3712,7 @@ sys.stdout.flush()
     //（00:35 / 00:51 / 01:07 / 01:17 / 02:16 / 02:18），签名都是「外部杀」（无异常栈、无日志异常）。
     // 多会话并跑时各自的 agent 看不见别人，所以这条规矩写进协议，锁由 runner 自己上。
     load: {
-      what: '重活租约：同一台机器上的**重活**（全量门禁 npm run verify:merge、合成环境矩阵）一次只许一份。',
+      what: '重活租约：同一台机器上的**重活**（全量门禁 npm run verify:merge、合成环境矩阵、deck 门禁链 npm run verify:deck、resident 体检 npm run verify:resident）一次只许一份。',
       why: '重活会同时起一堆子进程；并跑 / 连着跑会把宿主压垮（本机实测被杀 6 次，凶手未定位但相关性明确）。',
       leaseFile: LOAD_LEASE_FILE,
       defaultTtlMs: LOAD_LEASE_DEFAULT_TTL_MS,
@@ -3721,7 +3722,7 @@ sys.stdout.flush()
       },
       rule: [
         '跑重活前先 acquire；**拿不到就换时间**，不硬跑、不并跑、不静默跳过',
-        'runner 自己也会取：tests/merge/run.mjs 与合成环境矩阵拿不到就 exit 2 + BLOCKED-LOAD-LEASE（如实拒绝，不假装绿）',
+        '入口自己会取：tests/merge/run.mjs、合成环境矩阵、deck/scripts/verify-chain.js、verify-bundle.sh 与 verify-*.mjs 拿不到就 exit 2 + BLOCKED-LOAD-LEASE（如实拒绝，不假装绿）',
         '持有者死了（pid 查不到）或过期 → 后来者可回收，**回收这件事在回执里看得见**（不悄悄抢）',
         'release 只认持有者：不替别人放（那会把正在跑的那一位解锁）',
         '它不属于「接线」：租约是运行期的事，不落宿主配置、不需要同意、不需要对账',
@@ -3731,7 +3732,7 @@ sys.stdout.flush()
       fieldsFrom: 'gh_load_lease',
       readers: {
         '任何要跑重活的 agent': '先 gh_load_lease {action:"status"}；有主就等（或换别的活），没主再 acquire，跑完 release',
-        'runner / 门禁': '自己取同一份锁（tests/merge/_load-lease.mjs）：拿不到就如实拒绝，退出码 2 + BLOCKED-LOAD-LEASE 行',
+        '重活入口（runner / 矩阵 / deck 链 / resident 那族）': '自己取同一份锁（tests/merge/_load-lease.mjs；bash 那半边走 _load-lease-cli.mjs 命令壳）：拿不到就如实拒绝，退出码 2 + BLOCKED-LOAD-LEASE 行',
       },
     },
 
@@ -4564,12 +4565,13 @@ sys.stdout.flush()
    * 重活租约（协议 `load` 段）：同一台机器上的全量门禁 / 合成环境矩阵一次只许一份。
    *
    * 为什么是个**工具**而不是只写一条文档：多会话并跑时，各自的 agent 看不见别人在跑重活 ——
-   * 这个工具是那只能看见全局的眼睛；而 runner（`tests/merge/_load-lease.mjs`）自己也取同一份锁，
+   * 这个工具是那只能看见全局的眼睛；而重活入口们（runner / 矩阵 / deck 链 / resident 那族，
+   * 共用 `tests/merge/_load-lease.mjs` 一支）自己也取同一份锁，
    * 所以「忘了问」也跑不成双份（拿不到就是 exit 2 + BLOCKED-LOAD-LEASE，不静默跳过）。
    */
   ctx.tools.register(textTool({
     toolName: 'gh_load_lease',
-    description: 'Heavy-work lease for this machine. Heavy work — the full merge gate (npm run verify:merge) and the synthetic-environment matrix — must never run twice at once: concurrent heavy runs are what got the DSH host killed six times on this device. action:"status" (default, read-only) reports who holds the lease, for what, since when, when it expires and whether that pid is still alive; action:"acquire" succeeds only when nobody holds it, or the holder expired or died (a reclaim is reported, never silent); action:"release" only releases your own lease. When you cannot acquire it, the correct move is to come back later — not to run the heavy work anyway. The lease lives in the plugin own directory (0600, DSH_GH_LOAD_LEASE overrides the path); no host config, no network, no consent needed.',
+    description: 'Heavy-work lease for this machine. Heavy work — the full merge gate (npm run verify:merge), the synthetic-environment matrix, the deck gate chain (npm run verify:deck) and the resident verification suite (npm run verify:resident) — must never run at once: concurrent heavy runs are what got the DSH host killed six times on this device. action:"status" (default, read-only) reports who holds the lease, for what, since when, when it expires and whether that pid is still alive; action:"acquire" succeeds only when nobody holds it, or the holder expired or died (a reclaim is reported, never silent); action:"release" only releases your own lease. When you cannot acquire it, the correct move is to come back later — not to run the heavy work anyway. The lease lives in the plugin own directory (0600, DSH_GH_LOAD_LEASE overrides the path); no host config, no network, no consent needed.',
     parameters: {
       action: { type: 'string', enum: ['status', 'acquire', 'release'], description: 'status (default, read-only) | acquire | release.' },
       holder: { type: 'string', description: 'Who is asking (free text, e.g. "verify:merge@session-b5c43c0f"). Defaults to "pid <n>"; release only accepts the matching holder.' },

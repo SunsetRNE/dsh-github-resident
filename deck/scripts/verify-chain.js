@@ -21,12 +21,19 @@
  *   node scripts/verify-chain.js --list        # 只列名单（不执行）
  *   node scripts/verify-chain.js --only <子串>  # 按子串抽查
  *   node scripts/verify-chain.js --from 40      # 从第 40 条开始（前面确认过的可跳过）
+ *
+ * 重活租约（票 61）：真跑之前**自己取**那把机器级的锁（tests/merge/_load-lease.mjs，与
+ * verify:merge / verify:resident 同一份落点）；拿不到就 exit 2 + `BLOCKED-LOAD-LEASE`，
+ * 一道门禁都不起。`--list` 是只读名单，不占锁。
  */
 import { spawnSync } from 'node:child_process'
 import { readFileSync, writeFileSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { planFor } from './ensure-deck-manifest.mjs'
+// 重活租约（票 61）：deck 门禁链与 verify:merge / verify:resident **共用同一把锁**。
+// 直接相对引用那一支（tests/merge/_load-lease.mjs）—— 不抄第二份实现、不开第二把锁。
+import { holdLoadLease } from '../../tests/merge/_load-lease.mjs'
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -90,6 +97,17 @@ const onlyIdx = argv.indexOf('--only')
 const only = onlyIdx >= 0 && argv[onlyIdx + 1] ? argv[onlyIdx + 1] : ''
 const fromIdx = argv.indexOf('--from')
 const from = fromIdx >= 0 ? Math.max(1, Number(argv[fromIdx + 1]) || 1) : 1
+
+// 开跑前自己取锁（**一道门禁都不起**就说清楚）：本链约 10 分钟、几百个子进程，正是
+// 「重活并跑会把宿主压垮」那一族。拿不到就 exit 2 + BLOCKED-LOAD-LEASE —— 拒绝语义由
+// tests/merge/_load-lease.mjs 一处产出，这里不自己拼文案、不自己写第二把锁。
+// `--list` 是只读名单，不占锁（重活跑着的时候它也读得动）。
+if (!listMode) {
+  holdLoadLease({
+    holder: 'verify:deck@' + (process.env.DSH_SESSION_ID || ('pid' + process.pid)),
+    purpose: 'verify:deck（deck 门禁链，由 deck/scripts/verify-chain.js 执行）',
+  })
+}
 
 const { chain, gates } = ensureChain()
 const all = splitChain(chain)
