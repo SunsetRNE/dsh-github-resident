@@ -109,8 +109,11 @@ export async function composePlatform(ctx, osName, adapter, opts) {
   //   PATH 解析失败（返回 null / 抛错）时，读取 env.DSH_GH_PATH + fs.lstat 校验存在才返回；三个 OS 底座行为由此一致。
   //   各 OS 适配器不重复实现（linux 原自带兜底 2026-08-29 移除，见 linux/index.js）；host resolveGh / ghClient 均经本包装获益。
   // 2026-10-12 gh 解析点归一（合并宿主注入）：合并装配层把 **Resident 那一份**的 gh 解析器经
-  //   `opts.ghResolver` 注入进来。它在时，`gh` 这一个名字**只认它**的答案（系统 gh → 插件自带缓存
-  //   → 自动落地），本层不再自己猜；它认不到时返回 null，交给调用方诚实报告"没找到 gh"。
+  //   `opts.ghResolver` 注入进来。它在时，`gh` 这一个名字**只认它**的答案（系统 gh → 插件自带缓存），
+  //   本层不再自己猜；它认不到时返回 null，交给调用方诚实报告"没找到 gh"。
+  //   2026-10-15 更正：这里原写"→ 自动落地"是**错的**（Resident 的 resolve() 是 install:false，只报现状）。
+  //   "落地"那一支由注入方的 bootstrap() 承担，并且在装配层 index.js 的取值口里接好了 —— 但**解析本身
+  //   不在这一层等下载**，所以这里仍可能拿到 null（那一次如实报告，下一次再取就有）。
   //   为什么不让它继续退回 PATH：Resident 自带的那份 gh 不在 PATH 上（本机实测），退回 PATH 只会
   //   让"两半各自认一个 gh"的老毛病换个地方复发 —— 一个插件只有一个"gh 在哪"的答案。
   //   没注入时（单独运行 Deck 半边、源码态、门禁夹具）行为与从前逐字一致：PATH → DSH_GH_PATH。

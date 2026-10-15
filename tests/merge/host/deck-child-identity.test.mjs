@@ -384,12 +384,27 @@ await withPlugin(h.home, { path: h.pathWithReal, dataDir: join(h.home, '.dsh', '
 section('4) 两半答案一致：同一份答案，且没有第二套解析')
 
 check(!!svcResolve, 'Resident 半边给出了「gh 在哪」（' + String(svcResolve) + '）')
+let svcAnswer = svcResolve    // 可切换：用来演「解析落空」那一路
+let bootstrapped = 0
 const hostCtx = {
-  get: (k) => (k === 'ghResolver' ? { resolve: async () => svcResolve, identityEnv: async (o) => ({ gh: svcGhEnv, git: svcGitEnv, ...o && {} }) } : undefined),
+  get: (k) => (k === 'ghResolver' ? {
+    resolve: async () => svcAnswer,
+    bootstrap: () => { bootstrapped += 1; return { started: true } },
+    identityEnv: async (o) => ({ gh: svcGhEnv, git: svcGitEnv, ...o && {} }),
+  } : undefined),
 }
-// 与 deck/src/host/index.js 里那张「晚绑定取值口」逐字同形。
-const deckResolver = function () {
-  try { const svc = hostCtx.get('ghResolver'); return (svc && typeof svc.resolve === 'function') ? svc.resolve() : null } catch (eSvc) { return null }
+// 与 deck/src/host/index.js 里那张「晚绑定取值口」同形。2026-10-15 起它还差一件事：
+//   解析落空**不是终局** —— 顺手催一次消费面的 bootstrap（非阻塞），这一次仍如实回 null。
+//   本机现场就是缺这一支：加载期落地失败 → Deck 永久判死 → 面板只回"先跑 gh_cli_install"。
+const deckResolver = async function () {
+  let svc = null
+  try { svc = hostCtx.get('ghResolver') } catch (eSvc) { svc = null }
+  if (!svc || typeof svc.resolve !== 'function') return null
+  let hit = null
+  try { hit = await svc.resolve() } catch (eR) { hit = null }
+  if (hit) return hit
+  try { if (typeof svc.bootstrap === 'function') svc.bootstrap() } catch (eB) {}
+  return null
 }
 const platMod = await importRel('deck/src/host/platform/index.js')
 const plat = await platMod.composePlatform({ get: () => undefined }, 'linux', () => ({
@@ -398,6 +413,15 @@ const plat = await platMod.composePlatform({ get: () => undefined }, 'linux', ()
 }), { ghResolver: deckResolver })
 const deckSays = await plat.resolveExecutable('gh')
 check(deckSays === svcResolve, '两半对「gh 在哪」给同一个答案（Resident ' + String(svcResolve) + ' / Deck ' + String(deckSays) + '）')
+
+// 解析落空那一路：催一次 bootstrap、**不阻塞**、这一次仍如实回 null；催过之后拿得到就回路径。
+svcAnswer = null
+const miss1 = await deckResolver()
+check(miss1 === null, '解析落空时这一次如实回 null（不等下载）', miss1)
+check(bootstrapped === 1, '解析落空时恰好催了一次消费面 bootstrap（实得 ' + bootstrapped + '）')
+svcAnswer = svcResolve
+const back = await deckResolver()
+check(back === svcResolve && bootstrapped === 1, '催过之后下一次解析直接拿到路径，不再催（实得 ' + bootstrapped + '）', back)
 
 const deckEnvFor = ciMod.createChildIdentity({ getService: () => hostCtx.get('ghResolver') })
 const deckGh = await deckEnvFor.envFor('gh', ['api', 'user'])

@@ -71,6 +71,7 @@ const tarGz = zlib.gzipSync(Buffer.concat([
 ]));
 
 let apiFails = false;
+let dlFails = false;          // 下载腿单独可挂：证明「两条腿都断」与「只断 API」是两回事
 const server = http.createServer((req, res) => {
   if (req.url.startsWith('/repos/')) {
     if (apiFails) { res.writeHead(500); res.end('{"message":"boom"}'); return; }
@@ -84,7 +85,7 @@ const server = http.createServer((req, res) => {
     }).replace(/DL_PLACEHOLDER/g, DL));
     return;
   }
-  if (req.url.startsWith('/dl/')) { res.writeHead(200); res.end(tarGz); return; }
+  if (req.url.startsWith('/dl/')) { if (dlFails) { res.writeHead(503); res.end('down'); return; } res.writeHead(200); res.end(tarGz); return; }
   if (req.url === '/dl/gh.deb') { res.writeHead(200); res.end(Buffer.from('not-a-real-deb')); return; }
   res.writeHead(404); res.end('nope');
 });
@@ -149,13 +150,28 @@ check('C 第二次不再重写二进制', binStat1.mtimeMs === binStat2.mtimeMs,
 const stampAfter = JSON.parse(await fs.readFile(path.join(DATA_DIR, 'install.json'), 'utf8'));
 check('C 落地留痕未被刷新（无二次下载）', stampAfter.installedAt === stamp.installedAt, { first: stamp.installedAt, second: stampAfter.installedAt });
 
-// ---- D. 端点挂掉：失败要带诊断，不抛异常 ----
+// ---- D. release API 挂掉**不等于**「装不了」（2026-10-15 现场）：先退固定版本号，两条腿都断才如实失败 ----
 apiFails = true;
 await fs.rm(DATA_DIR, { recursive: true, force: true });
+const fallback = await installTool.execute({ force: true }, {});
+check('D1 API 挂掉仍落地成功（固定版本号兜底）', fallback.installed === true, fallback.attempts);
+check('D1 诊断里两条都在：release-api 失败 ＋ pinned-fallback',
+  (fallback.attempts || []).some((a) => a.step === 'release-api') && (fallback.attempts || []).some((a) => a.step === 'pinned-fallback'),
+  fallback.attempts);
+const fbEntry = (fallback.attempts || []).find((a) => a.step === 'pinned-fallback') || {};
+check('D1 兜底用的是固定版本号，且下载地址里带的就是它',
+  Boolean(fbEntry.tag) && (fallback.attempts || []).some((a) => a.step === 'tarball' && String(a.url || '').includes(String(fbEntry.tag))),
+  { tag: fbEntry.tag, attempts: fallback.attempts });
+
+// D2：API 与下载两条腿都断 → 如实失败、带齐诊断、不抛
+dlFails = true;
+await fs.rm(DATA_DIR, { recursive: true, force: true });
 const failed = await installTool.execute({ force: true }, {});
-check('D 端点失败时不抛、返回 ok=false', failed.installed === false, failed.installed);
-check('D 诊断里有 release-api 失败项', (failed.attempts || []).some((a) => a.step === 'release-api'), failed.attempts);
+check('D2 两条腿都断时返回 ok=false', failed.installed === false, failed.installed);
+check('D2 诊断里有 release-api 失败项', (failed.attempts || []).some((a) => a.step === 'release-api'), failed.attempts);
+check('D2 诊断里有 pinned-fallback 项（说明确实试过兜底）', (failed.attempts || []).some((a) => a.step === 'pinned-fallback'), failed.attempts);
 apiFails = false;
+dlFails = false;
 
 // ---- E. 状态面把分层暴露给调用方 ----
 await installTool.execute({}, {});

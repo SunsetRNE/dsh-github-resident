@@ -3,7 +3,7 @@
   "version": "1.9.8",
   "type": "module",
   "main": "./dist/host.js",
-  "description": "常驻 GitHub 身份与多仓库提交/推送/PR 工具（含自带 gh 落地与需用户同意的仓库登记文件库），并内置 Matt Skills Deck 的 issue / map 管理工具、随包 27 个技能、右侧栏面板与合并后的设置页。",
+  "description": "常驻 GitHub 身份与多仓库提交/推送/PR 工具；**接管 gh CLI 的完整生命周期**（检查 / 安装 / 更新 / 修改，含系统级 gh —— 升级系统层走系统包管理器，需一次显式同意，带台账与可撤），含需用户同意的仓库登记文件库，并内置 Matt Skills Deck 的 issue / map 管理工具、随包 27 个技能、右侧栏面板与合并后的设置页。装之前请看 README 的「本插件会动 gh 的什么」。",
   "exports": {
     ".": "./dist/host.js",
     "./client": "./dist/client.js",
@@ -45,7 +45,7 @@
     "build:entries": "node tools/merge/build-merge-entries.ts",
     "check:entries": "node tools/merge/build-merge-entries.ts --check",
     "verify": "npm run check:entries && npm run verify:merge && npm run verify:resident && npm run verify:deck",
-    "verify:resident": "bash verify-bundle.sh && node verify-logout.mjs && node verify-registry.mjs && node verify-ui.mjs && node verify-gh-bootstrap.mjs && node verify-gh-system-layer.mjs && node verify-update-gc.mjs && node verify-real-artifact.mjs",
+    "verify:resident": "bash verify-bundle.sh && node verify-logout.mjs && node verify-registry.mjs && node verify-ui.mjs && node verify-gh-bootstrap.mjs && node verify-gh-system-layer.mjs && node verify-gh-system-takeover.mjs && node verify-update-gc.mjs && node verify-real-artifact.mjs",
     "verify:deck": "node deck/scripts/verify-chain.js",
     "verify:merge": "node tests/merge/run.mjs",
     "verify:deck:smoke": "cd deck && node tests/smoke-client.test.js && node tests/smoke-host.test.js && node tests/smoke-host-dispatch.test.js && node tests/smoke-render.test.js && node tests/smoke-naming-persistence.test.js && node tests/smoke-comment-passthrough.test.js",
@@ -55,6 +55,7 @@
     "verify:ui": "node verify-ui.mjs",
     "verify:gh": "node verify-gh-bootstrap.mjs",
     "verify:gh:system": "node verify-gh-system-layer.mjs",
+    "verify:gh:takeover": "node verify-gh-system-takeover.mjs",
     "verify:artifact": "node verify-real-artifact.mjs",
     "verify:update": "node verify-update-gc.mjs"
   },
@@ -79,7 +80,7 @@
   },
   "meta": {
     "title": "GitHub Resident + Skills Deck",
-    "description": "Resident GitHub credentials with multi-repository commit, push and PR tools, a consent-gated Git repository registry file library, self-contained gh provisioning, full credential teardown — plus the Matt Skills Deck issue/map toolkit, 27 bundled skills and the right-side panel."
+    "description": "Resident GitHub credentials with multi-repository commit, push and PR tools; takes over the full gh CLI lifecycle (check / install / upgrade / modify, including a system-level gh — upgrading it goes through the system package manager and needs one explicit consent, with a reversible ledger); a consent-gated Git repository registry file library; full credential teardown — plus the Matt Skills Deck issue/map toolkit, 27 bundled skills and the right-side panel."
   },
   "repository": {
     "type": "git",

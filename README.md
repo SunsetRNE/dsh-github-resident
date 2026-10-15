@@ -23,15 +23,43 @@
 | 3 自动落地 | 官方 `tar.gz` 抽单文件；失败退回 `dpkg --force-not-root --extract` 抽 `.deb` | 同上 | 不用 |
 
 - 任何 `gh_*` 工具调用都会经 `resolveGh()`：三层都没有就当场落地一份，调用不被打断。
-- 插件**加载期**也会预置：只先探本地（毫秒级、不出网），确认缺 gh 才在后台落地，不阻塞加载。
-- 落地的是用户级副本，**不进系统包库**；系统层 gh 永远不被修改。
+- **release API 只用来「追新」，不是「能不能装」的判据**（2026-10-15 本机现场修正）：它超时 / 5xx 会
+  重试一次，仍不行就退**固定版本号**（`DSH_GH_PINNED_TAG`，默认 `v2.102.0`）直接拼官方下载地址
+  —— api.github.com 与 github.com 是两条健康度不同的腿，断一条不该让整条链停摆。
+- 落地链自己的三态也如实回：`attempts` 里 `release-api` 带不带 `timedOut`、
+  `pinned-fallback` 有没有出现，都能看出这次是「超时（未知）」还是「两条腿都试过、确实没有」。
+- 插件**加载期**也会预置：只先探本地（毫秒级、不出网），确认缺 gh 才在后台落地，不阻塞加载；
+  失败按 1min / 5min / 15min 退避**再试有限次**（有 `pending` 的熔断态不重试，那是刻意的闸门）。
+- 落地的是用户级副本，**不进系统包库**（这条讲的是**自带层**）；**系统层 gh 归本插件管辖**：低于插件要求的版本（默认 `2.40.0`）就按台账升级它，
+  走系统包管理器，要一次显式同意（见下面的「本插件会动 gh 的什么」）。
 - **宿主后装的 gh 会被自动接管**：想装系统级就把官方源加上 `apt-get install gh`（[cli.github.com](https://cli.github.com/)），
   插件下一轮读路径（≤`DSH_GH_SYS_LAYER_TTL_MS`）就改判 `system`，无需重载插件；
   同 ctx 的 Deck 半边经 `ghResolver` 服务拿到的是**同一个结论**，不会出现「Resident 说装了、Deck 说没装」。
   卸掉系统 gh 也会同样自动退回自带层。
+- **Deck 半边解析落空时不是终局**：它会催一次消费面的 `bootstrap()`（后台落地，单飞 + 10 分钟冷却），
+  这一次仍如实回「没找到」，下一次就拿到。这条缝有三支：`resolve()` 只读不落地（快照 / 点击路径安全）、
+  `ensure()` 幂等落地（想等它好的调用方用）、`bootstrap()` 立即返回的后台落地（想催一下的调用方用）。
 - 落地是**内部实现细节**，不写进 `PATH`：只跑 `gh_*` / `deck_*` 工具时它够用，
   但你若要在终端里直接敲 `gh`、或让别的插件/脚本用它，就得装系统层那份（见上一条）。
 - 下载优先 `curl`，宿主没有 `curl` 就用 Node 内建 `fetch`（`attempts[].method` 写明走的哪条）。
+
+#### 本插件会动 gh 的什么（范围声明）
+
+**这个插件的定位就是接管 gh 的图形化工作流，所以它必然会动 gh** —— 内置、检查、更新、安装、修改都是设计的一部分，
+不是藏在启动路径里的副作用。**不接受这一点的人，正确的做法是删掉这个插件**，而不是让插件偷偷做。
+机器读的那份同款声明在 `gh_protocol` 的 `mutations` 段（同一处承诺，两个读者）。
+
+| 动作 | 对象 | 默认 | 写盘？ | 怎么退 |
+|---|---|---|---|---|
+| 探测 / 读版本 | 系统层 + 自带层 | 开 | 否 | —— |
+| 落地（安装） | `~/.dsh/gh-cli/bin/gh`（**插件自有**） | 开 | 是 | 删 `~/.dsh/gh-cli` |
+| 升级 / 替换 | 同上 | 开 | 是 | 同上（替换前先写 `pending`，替换后记 sha256+size 台账） |
+| 垃圾回收 | `~/.dsh/gh-cli/` 的下载残留与旧版本 | 开 | 是 | 只删自己目录里的东西 |
+| **升级系统层 gh** | `PATH` 上的 gh（通常是 `/usr/bin/gh` 的 apt 包） | **是**（接管：低于期望就升级） | 是（走系统包管理器） | **要一次显式同意**：`gh_cli_install {system:"manage"}`；不要就 `{system:"read-only"}`（或 `DSH_GH_SYSTEM_POLICY=read-only`） |
+| 卸载 | `~/.dsh/gh-cli/` | —— | 是 | 删插件目录即随包消失；对**宿主**做过的接线（git 凭据助手 / 全局身份）由 `gh_cli_logout` 与 `gh_identity{unwire}` 逐项还原 |
+
+不想让它自动动手时的开关：`DSH_GH_NO_BOOTSTRAP=1`（关加载期自动落地，仍可显式跑 `gh_cli_install`）、
+`DSH_GH_NO_UPDATE=1`（关加载期自更新）、`DSH_GH_DATA_DIR`（换落盘目录）。
 
 ### 2. 凭据：只回掩码，可一键拆干净
 
@@ -249,7 +277,9 @@ node verify-real-artifact.mjs  # 拿官方 release 真包验抽取器（断网�
 | `DSH_GH_SYS_LAYER_TTL_MS` | 系统层（L1）结论的保鲜期：期内复用、过期重探（宿主 apt 装卸 gh 都能及时反映） | `10000` |
 | `DSH_GH_RELEASE_API` / `DSH_GH_DOWNLOAD_BASE` | release 元数据 / 下载基址（夹具与私有镜像用） | 官方 |
 | `DSH_GH_OAUTH_CLIENT_ID` | 撤销 token 用的 OAuth client id | 占位常量 |
-| `DSH_GH_NET_TIMEOUT_MS` | 对 GitHub 的 REST 动作的上界（`api()` / release 元数据 / 撤销 token 三处；超时按「超时 / 未知」回，**不重试**）。钳 100ms–120s | `20000` |
+| `DSH_GH_NET_TIMEOUT_MS` | 对 GitHub 的 REST 动作的上界（`api()` / release 元数据 / 撤销 token 三处；超时按「超时 / 未知」回）。钳 100ms–120s | `20000` |
+| `DSH_GH_PINNED_TAG` | release API 答不上来时用来拼下载地址的兜底版本号 | `v2.102.0` |
+| `DSH_GH_BOOTSTRAP_COOLDOWN_MS` | Deck 半边催 `bootstrap()` 的冷却窗（真没网时不至于每次刷新都来一次） | `600000`（10min） |
 | `DSH_GH_REGISTRY_DIR` | 登记文件库的数据根（含 `registry/consent.json`、`index.json`、`repos/`） | `~/.dsh/github-resident` |
 
 ## 目录

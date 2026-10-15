@@ -101,6 +101,8 @@ export function createPlatformChannel(deps) {
         if (injected && typeof injected.getHome === 'function' && injected.path) {
           // 2026-10-12 gh 解析点归一：注入的平台对象也要认合并宿主的 gh 解析器，否则"有没有 ctx.platform
           //   服务"会决定 Deck 走哪套 gh 解析（症状是换个宿主就时好时坏）。只包 gh 一个名字，其余逐字透传。
+          //   解析落空时由 index.js 那个取值口顺手催一次后台落地（ghResolver.bootstrap，单飞 + 冷却），
+          //   本层只负责如实回 null —— 不在这一层等一次 15MB 下载。
           if (typeof ghResolver === 'function' && typeof injected.resolveExecutable === 'function') {
             try {
               return Object.freeze(Object.assign({}, injected, { resolveExecutable: async function (name) {

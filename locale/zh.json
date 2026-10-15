@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "GitHub 常驻身份 + Skills Deck",
-    "description": "合并 GitHub 身份、多仓库提交/推送/PR、仓库登记库与 Skills Deck 的 issue/map 工具、27 个技能和右侧面板。升级前请先停用独立的 Skills Deck 插件。"
+    "description": "合并 GitHub 身份、多仓库提交/推送/PR 与仓库登记库；接管 gh CLI 的完整生命周期（检查/安装/更新/修改，含系统级 gh，升级系统层需一次显式同意）；外加 Skills Deck 的 issue/map 工具、27 个技能和右侧面板。升级前请先停用独立的 Skills Deck 插件。"
   }
 }

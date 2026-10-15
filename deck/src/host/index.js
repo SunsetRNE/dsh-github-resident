@@ -10,12 +10,23 @@ export default {
   name: '@sunsetrne/dsh-github-resident-v2', // connection + llm + sessionQuery：webServer 仍不加（#596）；llm 给首轮摘要调模型用，sessionQuery 给读首轮两段用（读而不激活），缺任何一个对应功能静默降级（#746）。
   inject: ['connection', 'llm', 'sessionQuery'],
   apply(ctx) {
-    // 2026-10-12 gh 解析点归一：Resident 半边把**它那份唯一的 gh 解析器**以服务 `ghResolver` 借给本半边
-    //（系统 gh → 插件自带缓存 → 自动落地），Deck 从此不再自己认 PATH / DSH_GH_PATH —— 一个插件只有一个
-    //"gh 在哪"的答案。写成晚绑定取值口（合并宿主先跑 Deck 后跑 Resident，服务要等用到 gh 时才在）；
-    //  没有那个服务时（单独运行 / 源码态 / 门禁夹具）回 null，平台层行为与从前逐字一致。
-    const ghResolver = function () {
-      try { const svc = ctx.get('ghResolver'); return (svc && typeof svc.resolve === 'function') ? svc.resolve() : null } catch (eSvc) { return null }
+    // 2026-10-12 gh 解析点归一：Resident 半边把**它那份唯一的 gh 解析器**以服务 `ghResolver` 借给本半边，
+    // Deck 从此不再自己认 PATH / DSH_GH_PATH —— 一个插件只有一个"gh 在哪"的答案。写成晚绑定取值口
+    //（合并宿主先跑 Deck 后跑 Resident，服务要等用到 gh 时才在）；没有那个服务时（单独运行 / 源码态 /
+    // 门禁夹具）回 null，平台层行为与从前逐字一致。
+    // 2026-10-15 修正：原文那句"→ 自动落地"与实现相反 —— Resident 的 resolve() 是 install:false，
+    // **只报现状、绝不下手**。于是加载期那一次落地一失败，Deck 半边（真正需要 gh 的那半边）就永久判死，
+    // 面板只回"先跑 gh_cli_install"。现在解析落空时补一次**不阻塞**的后台落地（消费面 bootstrap：
+    // 单飞 + 冷却）；这一次仍如实回"没找到"，下一次（面板会自动刷新）就拿到了。
+    const ghResolver = async function () {
+      let svc = null
+      try { svc = ctx.get('ghResolver') } catch (eSvc) { svc = null }
+      if (!svc || typeof svc.resolve !== 'function') return null
+      let hit = null
+      try { hit = await svc.resolve() } catch (eR) { hit = null }
+      if (hit) return hit
+      try { if (typeof svc.bootstrap === 'function') svc.bootstrap() } catch (eB) {}
+      return null
     }
     // 2026-10-14《Deck 半边接消费面（执行环境由消费面供给）》：「用谁的身份、带什么环境」也从**同一个**服务位取。
     //   本文件是全仓唯一碰 `ghResolver.identityEnv` 的地方 —— 三个执行出口（repoKeys / platformChannel /

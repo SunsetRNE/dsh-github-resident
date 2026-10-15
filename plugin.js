@@ -1455,12 +1455,12 @@ const TOOL_PROTOCOL = [
   // （逐路记 `{ path, ok, reason }`：两条路都没成时，两边的**原始原因**都在，不吞成一句泛化错误）。
   // 这一行从此也有门禁钉着（tests/merge/host/pr-fallback.test.mjs）——两条路都能离线实跑，不必再手抄。
   { name: 'gh_pr', kind: 'write', required: ['repo', 'title'], optional: ['head', 'base', 'body', 'draft'], returns: ['ok', 'number', 'url', 'base', 'status', 'authSource', 'authPath', 'message', 'errors', 'attempts'] },
-  { name: 'gh_cli_install', kind: 'write', required: [], optional: ['force', 'prefer'], returns: ['installed', 'layer', 'path', 'version', 'attempts'] },
+  { name: 'gh_cli_install', kind: 'write', required: [], optional: ['force', 'prefer', 'system'], returns: ['installed', 'layer', 'path', 'version', 'attempts', 'requirement', 'systemPolicy', 'systemGh', 'systemUpgrade', 'systemOutdated', 'note', 'authStatus'] },
   { name: 'gh_cli_auth_web', kind: 'write', required: [], optional: ['open_browser'], returns: ['ok', 'version', 'ghLayer', 'ghPath', 'user_code', 'verification_uri', 'opened', 'note', 'logTail'] },
   { name: 'gh_cli_status', kind: 'read', required: [], optional: [], returns: ['version', 'authenticated', 'activeAccount', 'gitCredentialHelper', 'hosts'] },
   { name: 'gh_cli_setup_git', kind: 'write', required: [], optional: ['set_identity'], returns: ['exitCode', 'credentialHelper', 'gitUserName', 'gitUserEmail', 'identityEnv'] },
   { name: 'gh_cli_logout', kind: 'write', required: [], optional: ['hostname', 'confirm', 'revoke', 'purge_git', 'reset_state', 'uninstall_gh', 'remove_gh_cache', 'remove_gh_config', 'dry_run'], returns: ['ok', 'dryRun', 'hostname', 'tokenMasked', 'steps', 'verify', 'leftover'] },
-  { name: 'gh_cli_resolve', kind: 'read', required: [], optional: [], returns: ['resolved', 'system', 'pluginCache', 'dataDir', 'arch', 'autoLandOnNextUse', 'lastInstall', 'takeover'] },
+  { name: 'gh_cli_resolve', kind: 'read', required: [], optional: [], returns: ['resolved', 'system', 'pluginCache', 'dataDir', 'arch', 'autoLandOnNextUse', 'lastInstall', 'takeover', 'lastEnsure', 'timedOut', 'requirement', 'systemPolicy', 'systemOutdated', 'systemGh'] },
   // 2026-10-14（票「gh_identity {wire|verify|unwire}：投影接线 + 对账 + 可撤」）：它从只读工具变成
   // 「默认只读 + 三个能写的动作」，所以 kind 从 read 变 write（并从 guarantees.readOnlyTools 里退出 —— 诚实）。
   // 必填仍为空：不带 action 时就是体检，行为与从前逐字节一致。returns 是五个动作视图的并集（一处声明派生）。
@@ -1471,7 +1471,7 @@ const TOOL_PROTOCOL = [
   { name: 'gh_env_probe', kind: 'read', required: [], optional: ['network_targets', 'attempts', 'timeout_ms'], returns: ['capabilities', 'network', 'proxy', 'dirs', 'summary', 'bounds', 'notes'] },
   { name: 'gh_cli_version', kind: 'write', required: [], optional: ['update', 'force'], returns: ['current', 'latest', 'layer', 'updateAvailable', 'checkedAt', 'updated', 'reason', 'lastUpdate'] },
   { name: 'gh_cache_gc', kind: 'write', required: [], optional: ['dry_run', 'keep_versions'], returns: ['dir', 'removed', 'removedCount', 'freedBytes', 'kept', 'keptVersions'] },
-  { name: 'gh_protocol', kind: 'read', required: [], optional: [], returns: ['id', 'version', 'spec', 'service', 'http', 'envelope', 'tools', 'errors', 'registry', 'identity', 'environment', 'load', 'guarantees'] },
+  { name: 'gh_protocol', kind: 'read', required: [], optional: [], returns: ['id', 'version', 'spec', 'service', 'http', 'envelope', 'tools', 'errors', 'registry', 'identity', 'environment', 'mutations', 'load', 'guarantees'] },
 ];
 
 /**
@@ -1956,6 +1956,107 @@ export function apply(ctx) {
     || 'https://api.github.com/repos/' + DEFAULT_REPO + '/releases/latest';
   const RELEASE_DL = process.env.DSH_GH_DOWNLOAD_BASE
     || 'https://github.com/' + DEFAULT_REPO + '/releases/download';
+  // 兜底版本号：release API 只负责「最新是哪个版本」，**不负责「能不能装」**。
+  //   它答不上来时用这个固定 tag 直接拼官方下载地址（资产名里含版本号，没有 tag 就拼不出来）。
+  //   换这里 = 换兜底版本，不影响 API 正常时的「追新」语义。
+  const PINNED_GH_TAG = process.env.DSH_GH_PINNED_TAG || 'v2.102.0';
+  // API 没答上时最多试几次。本机实测 api.github.com 与 github.com 是两条健康度不同的腿
+  //（DNS 5.15s / 总 6.12s 对 0.12s / 0.50s），一次抖动不该等于「这份插件装不了」。
+  const RELEASE_API_ATTEMPTS = 2;
+
+  // ---------- gh 的期望态 + 系统层接管（2026-10-15） ----------
+  // 作者意图：**这个插件就是要接管 gh**（含系统级），不去猜"用户也许不想我动"。
+  //   安全不靠"默认不动"，靠三件事：① 声明（protocol.mutations / README / 包描述）；
+  //   ② 动系统包管理器要一次显式同意；③ 台账 + 可撤（从哪个版本到哪个版本、什么命令、失败原因，都落盘）。
+  const GH_MIN_VERSION = process.env.DSH_GH_MIN_VERSION || '2.40.0';
+  // 系统层策略：manage = 低于期望就按台账升级它（默认，作者意图）；read-only = 只读，不碰系统层。
+  const GH_SYSTEM_POLICY = process.env.DSH_GH_SYSTEM_POLICY === 'read-only' ? 'read-only' : 'manage';
+  const SYSTEM_UPGRADE_TIMEOUT_MS = Number(process.env.DSH_GH_SYSTEM_TIMEOUT_MS || 180 * 1000);
+
+  /**
+   * 现状是否满足期望。**认不出版本 = 不满足**：「能跑」不等于「是我们要的那个版本」。
+   * 版本解析复用本文件下半段版本自更新那支的 `parseGhVersion`（返回 {raw, parts}，函数声明会提升）——
+   * 一件事只有一份实现：2026-10-15 我自己先写了一份同名的，和它撞了，靠改名躲开不算修好。
+   */
+  function ghSatisfies(versionLine, minLine) {
+    const v = parseGhVersion(versionLine);
+    if (!v) return false;
+    const m = parseGhVersion(minLine);
+    if (!m) return true;
+    for (let i = 0; i < 3; i += 1) {
+      if (v.parts[i] > m.parts[i]) return true;
+      if (v.parts[i] < m.parts[i]) return false;
+    }
+    return true;   // 相等也算满足
+  }
+
+  /** 系统层那份 gh 是谁装的 —— 决定「怎么升级」；认不出来源就只报告，不乱动。 */
+  async function systemGhSource(absPath) {
+    const dpkg = await run('dpkg', ['-S', absPath], { timeout: 8000 });
+    if (dpkg.code === 0) return { kind: 'apt', detail: firstLine(dpkg.stdout, 160) };
+    const brew = await run('brew', ['list', '--versions', 'gh'], { timeout: 8000 });
+    if (brew.code === 0 && /(^|\s)gh\s/.test(brew.stdout)) return { kind: 'brew', detail: firstLine(brew.stdout, 160) };
+    return { kind: 'unknown', detail: '' };
+  }
+
+  /** 「动系统层」的同意：一次同意长期有效，可被 gh_cli_install {system:"read-only"} 撤销。 */
+  async function readSystemConsent() {
+    const st = await readState();
+    const rec = st.systemGh || null;
+    return rec && rec.consent ? rec : null;
+  }
+
+  /**
+   * 升级系统层那份 gh。**绝不绕过权限**：没同意 → 不动；没权限 / 认不出来源 / 包管理器失败 → 如实回。
+   * 台账写进插件 state（systemGh.last），成功失败都写 —— 失败原因本身就是要留痕的东西。
+   */
+  async function upgradeSystemGhOnce({ absPath, version }) {
+    const source = await systemGhSource(absPath);
+    const consent = await readSystemConsent();
+    const base = { at: new Date().toISOString(), path: absPath, from: version || null, requirement: GH_MIN_VERSION, source };
+    if (GH_SYSTEM_POLICY === 'read-only') return { ok: false, reason: 'policy-read-only', ...base };
+    if (!consent) {
+      return { ok: false, reason: 'consent-required', ...base,
+        ask: '要动系统层 gh（' + absPath + '，' + source.kind + '）先显式同意一次：gh_cli_install {system:"manage"}；'
+          + '不想让它动系统层就 gh_cli_install {system:"read-only"}' };
+    }
+    let argv = null;
+    if (source.kind === 'apt') argv = ['apt-get', 'install', '-y', '--only-upgrade', 'gh'];
+    else if (source.kind === 'brew') argv = ['brew', 'upgrade', 'gh'];
+    if (!argv) {
+      return { ok: false, reason: 'unknown-source', ...base,
+        note: '认不出系统层那份 gh 是谁装的（不是 dpkg 也不是 brew），不乱动它；请按 gh 官方文档升级' };
+    }
+    if (source.kind === 'apt') {
+      const who = await run('id', ['-u'], { timeout: 5000 });
+      const isRoot = who.code === 0 && who.stdout.trim() === '0';
+      if (!isRoot) {
+        const sudo = await run('sudo', ['-n', 'true'], { timeout: 8000 });
+        if (sudo.code !== 0) {
+          return { ok: false, reason: 'no-permission', ...base, command: argv.join(' '),
+            note: '当前身份不是 root，sudo -n 也拿不到（非交互）—— 不绕过；要升级请以管理员身份跑上面那条命令' };
+        }
+        argv = ['sudo', '-n'].concat(argv);
+      }
+    }
+    const r = await run(argv[0], argv.slice(1), { timeout: SYSTEM_UPGRADE_TIMEOUT_MS, killSignal: 'SIGKILL' });
+    const ok = r.code === 0;
+    return { ok, reason: ok ? 'upgraded' : 'package-manager-failed', command: argv.join(' '), code: r.code,
+      stderr: firstLine(r.stderr || r.stdout, 240), ...base };
+  }
+
+  /**
+   * 接管系统层的入口：**每次尝试都留痕**（成功、失败、没同意、没权限、认不出来源，全写台账）。
+   * 声明里承诺了台账，就不能只在成功那一条路上写。
+   */
+  async function upgradeSystemGh({ absPath, version }) {
+    const receipt = await upgradeSystemGhOnce({ absPath, version });
+    try {
+      const prev = await readState();
+      await writeState({ systemGh: { ...(prev.systemGh || {}), last: receipt } });
+    } catch { /* 台账写不进去不改变结论 */ }
+    return receipt;
+  }
 
   // gh 官方资产名用的是 apt 风格架构串，不是 node 的 arch。
   const GH_ARCH = ({ x64: 'amd64', arm64: 'arm64', arm: 'armv6', ia32: '386' })[process.arch] || process.arch;
@@ -2062,13 +2163,30 @@ export function apply(ctx) {
     throw new Error('tar.gz 里没有 bin/gh');
   }
 
-  /** 拿到 release 元数据；测试可用 DSH_GH_RELEASE_API 指向本地夹具。**带上界**（超时的错说得清是超时）。 */
+  /** 拿到 release 元数据；测试可用 DSH_GH_RELEASE_API 指向本地夹具。**带上界**（超时的错说得清是超时）。
+   *  最多试 RELEASE_API_ATTEMPTS 次：超时 / 传输层报错 / 5xx 值得重试一次（可达性随机）；
+   *  4xx 不重试（同一个请求再发一次不会变），如实抛出去。 */
   async function releaseMeta() {
-    const res = await fetchBounded(RELEASE_API, {
-      headers: { 'user-agent': 'dsh-github-resident', accept: 'application/vnd.github+json' },
-    });
-    if (!res.ok) throw new Error('release API HTTP ' + res.status);
-    return res.json();
+    let last = null;
+    for (let i = 0; i < RELEASE_API_ATTEMPTS; i += 1) {
+      try {
+        const res = await fetchBounded(RELEASE_API, {
+          headers: { 'user-agent': 'dsh-github-resident', accept: 'application/vnd.github+json' },
+        });
+        if (!res.ok) {
+          const err = new Error('release API HTTP ' + res.status);
+          err.httpStatus = res.status;
+          err.retryable = res.status >= 500;
+          throw err;
+        }
+        return await res.json();
+      } catch (e) {
+        last = e;
+        const retryable = Boolean(e && (e.timedOut || e.retryable || e.name === 'TypeError'));
+        if (!retryable) break;
+      }
+    }
+    throw last;
   }
 
   function assetNamesFor(meta, arch) {
@@ -2178,7 +2296,18 @@ export function apply(ctx) {
     try {
       meta = await releaseMeta();
     } catch (e) {
-      attempts.push({ step: 'release-api', error: String(e) });
+      // 票 29 的同一条规矩，这次用在**落地链**上：超时是「未知」，不是「没有」。
+      //   未知不该被翻译成「装不了」，更不该把用户赶去手跑 gh_cli_install。
+      attempts.push({ step: 'release-api', error: String(e), ...(e && e.timedOut ? { timedOut: true } : {}) });
+      // 兜底：API 答不上来就用固定 tag 拼官方下载地址（assetUrl 在 assets 里找不到就按官方命名规则拼）。
+      //   这一条改变的语义是「API 只用来追新」，而不是「API 挂了就没有 gh」——本机现场正是后者：
+      //   api.github.com 超时，而 github.com 的 tar.gz 0.5s 就下来了，却因为 meta=null 一步都没试。
+      meta = { tag_name: PINNED_GH_TAG, assets: [], pinned: true };
+      attempts.push({
+        step: 'pinned-fallback',
+        tag: PINNED_GH_TAG,
+        note: 'release API 未答，改用固定版本号 ' + PINNED_GH_TAG + ' 拼官方下载地址（不追新，但照样能装）',
+      });
     }
     if (meta) {
       const order = prefer === 'deb' ? ['deb', 'tarball'] : ['tarball', 'deb'];
@@ -2193,6 +2322,7 @@ export function apply(ctx) {
     const probe = (distrustCache && !attempts.some((a) => a.ok))
       ? { ok: false, bin: GH_BIN, version: null, timedOut: false, skipped: '可疑副本不执行（票 47）' }
       : await probeGh(GH_BIN);
+    const timedOut = attempts.some((a) => a && a.timedOut === true);
     const result = {
       ok: probe.ok,
       layer: probe.ok ? 'plugin-cache' : 'none',
@@ -2202,6 +2332,9 @@ export function apply(ctx) {
       arch: GH_ARCH,
       dataDir: GH_DATA_DIR,
       attempts,
+      // 「超时（未知）」与「试过、确实没有」必须能分开 —— 落地链同样守票 29 的这条。
+      ...(timedOut ? { timedOut: true } : {}),
+      ...(meta && meta.pinned ? { pinnedTag: meta.tag_name } : {}),
     };
     if (probe.ok) {
       await fs.mkdir(GH_DATA_DIR, { recursive: true });
@@ -2274,13 +2407,37 @@ export function apply(ctx) {
     }
     const probeMs = ghProbeTimeoutMs();
     const sys = await probeGh('gh', { timeoutMs: probeMs });
+    let sysNote = null;
+    let sysUpgrade = null;
     if (sys.ok) {
       // 报告真实路径：下游（buildSnapshot / gh_cli_status / teardown）都是拿这个路径去执行（N5）。
       const abs = sys.bin === 'gh' ? ((await whichCmd('gh', probeMs)) || '/usr/bin/gh') : sys.bin;
-      ghMemo = { ok: true, layer: 'system', path: abs, version: sys.version };
-      sysMemoPending = false;
-      sysProbedAt = Date.now();
-      return ghMemo;
+      if (ghSatisfies(sys.version, GH_MIN_VERSION)) {
+        ghMemo = { ok: true, layer: 'system', path: abs, version: sys.version, requirement: GH_MIN_VERSION, systemPolicy: GH_SYSTEM_POLICY };
+        sysMemoPending = false;
+        sysProbedAt = Date.now();
+        return ghMemo;
+      }
+      // 能跑但低于期望：按作者意图**接管**它 —— 升级系统层（要一次显式同意，绝不绕过权限）。
+      //   升不动（没同意 / 没权限 / 认不出来源 / 包管理器失败）就如实记着，改用自带副本，绝不硬来。
+      if (GH_SYSTEM_POLICY === 'manage') {
+        sysUpgrade = await upgradeSystemGh({ absPath: abs, version: sys.version });
+        if (sysUpgrade.ok) {
+          const re = await probeGh('gh', { fresh: true, timeoutMs: probeMs });
+          if (re.ok && ghSatisfies(re.version, GH_MIN_VERSION)) {
+            ghMemo = { ok: true, layer: 'system', path: abs, version: re.version, requirement: GH_MIN_VERSION,
+              systemPolicy: GH_SYSTEM_POLICY, systemUpgrade: sysUpgrade };
+            sysMemoPending = false;
+            sysProbedAt = Date.now();
+            return ghMemo;
+          }
+        }
+      }
+      sysNote = '系统层 gh ' + (sys.version || '版本未知') + ' 低于期望 ' + GH_MIN_VERSION + '：'
+        + (sysUpgrade
+          ? (sysUpgrade.ok ? '已按台账升级，但重新探测仍不满足' : '这次没动它（' + sysUpgrade.reason + '）')
+          : '没动它（策略 read-only）')
+        + '；本次改用自带副本。';
     }
     // L1 未命中：只把这次结论当"此刻的快照"，下次读路径重探（见 sysMemoPending）。
     sysMemoPending = true;
@@ -2292,6 +2449,8 @@ export function apply(ctx) {
       // 系统层没答上来、插件缓存这层有一份能跑的：这份是**能用的**答案，但系统层那次超时要如实带着走。
       ghMemo = {
         ok: true, layer: 'plugin-cache', path: GH_BIN, version: cached.version,
+        requirement: GH_MIN_VERSION, systemPolicy: GH_SYSTEM_POLICY,
+        ...(sysNote ? { systemOutdated: true, note: sysNote, systemUpgrade: sysUpgrade } : {}),
         ...(sys.timedOut ? { systemProbeTimedOut: true, note: '系统层的 gh 探测超时（未知）；这一份来自插件缓存' } : {}),
       };
       return ghMemo;
@@ -2310,10 +2469,19 @@ export function apply(ctx) {
       };
     }
     if (install === false) {
-      return { ok: false, layer: 'none', path: null, version: null, note: '系统没有 gh，插件缓存也没落地（install:false）' };
+      return { ok: false, layer: 'none', path: null, version: null,
+        requirement: GH_MIN_VERSION, systemPolicy: GH_SYSTEM_POLICY,
+        ...(sysNote ? { systemOutdated: true, systemUpgrade: sysUpgrade } : {}),
+        note: sysNote ? (sysNote + '（这条路 install:false，不落地；要用就 gh_cli_install）') : '系统没有 gh，插件缓存也没落地（install:false）' };
     }
     const res = await ensureGh({ force, prefer });
-    ghMemo = res.ok ? { ok: true, layer: res.layer, path: res.path, version: res.version, ensure: res } : res;
+    const sysBits = {
+      requirement: GH_MIN_VERSION, systemPolicy: GH_SYSTEM_POLICY,
+      ...(sysNote ? { systemOutdated: true, note: sysNote, systemUpgrade: sysUpgrade } : {}),
+    };
+    ghMemo = res.ok
+      ? { ok: true, layer: res.layer, path: res.path, version: res.version, ensure: res, ...sysBits }
+      : { ...res, ...sysBits };
     return ghMemo;
   }
 
@@ -2341,6 +2509,29 @@ export function apply(ctx) {
       attempts: res.attempts,
       ...(res.ok ? {} : { error: '自带安装失败：' + JSON.stringify(res.attempts).slice(0, 400) }),
     };
+  }
+
+  // ---------- 「解析失败」的补救出口（Deck 半边专用） ----------
+  // 2026-10-15 本机现场：加载期那一次自动落地因 api.github.com 超时失败，而 Deck 半边唯一的 gh 入口
+  //   是只读的 resolve()（install:false），于是整个「插件后台」判死，面板只回一句「先跑 gh_cli_install」。
+  //   缺的不是重试次数，是**一条把「没有」变成「有」的路**：谁在用 gh，谁就该能催一次落地。
+  // 为什么不是让 resolve() 自己落地：快照 / 点击路径里塞一次 15MB 下载是票 47 明令禁止的。
+  // 为什么有冷却：真没网时面板每次刷新都来一次会把机器拖住（下载上界 300s）——冷却窗内只如实回「在冷却」。
+  const GH_BOOTSTRAP_COOLDOWN_MS = Number(process.env.DSH_GH_BOOTSTRAP_COOLDOWN_MS || 10 * 60 * 1000);
+  let ghBootstrapAt = 0;
+  let ghBootstrapInFlight = null;
+  /** 幂等、单飞、非阻塞：起一次落地就返回，不等人；单飞在 ensureGh 内部。 */
+  function bootstrapGh() {
+    if (ensureGhInFlight || ghBootstrapInFlight) return { started: false, reason: 'in-flight' };
+    const since = Date.now() - ghBootstrapAt;
+    if (ghBootstrapAt && since < GH_BOOTSTRAP_COOLDOWN_MS) {
+      return { started: false, reason: 'cooldown', retryAfterMs: GH_BOOTSTRAP_COOLDOWN_MS - since };
+    }
+    ghBootstrapAt = Date.now();
+    ghBootstrapInFlight = resolveGh({})
+      .catch(() => null)
+      .finally(() => { ghBootstrapInFlight = null; });
+    return { started: true };
   }
 
   /** 优先拉起手机上的默认浏览器 / GitHub 应用（DSHA 桥），退回桌面 xdg-open。 */
@@ -2682,26 +2873,47 @@ sys.stdout.flush()
 
   ctx.tools.register(textTool({
     toolName: 'gh_cli_install',
-    description: 'Make the GitHub CLI available without any manual step: reuse the system gh when present, otherwise land a plugin-owned copy at ~/.dsh/gh-cli/bin/gh (official tar.gz single-file extract; falls back to a dpkg --extract of the .deb). No root and no package install required for the tarball path. Returns the resolved path, layer, version and per-step diagnostics.',
+    description: 'Make the GitHub CLI usable without any manual step, and manage its version: the plugin declares a required gh version; the system gh is reused when it satisfies it, otherwise a plugin-owned copy is landed at ~/.dsh/gh-cli/bin/gh (official tar.gz single-file extract; falls back to a dpkg --extract of the .deb). By default this plugin MANAGES gh, including a system-layer gh that is below the required version: upgrading it needs one explicit consent (system:"manage") because it goes through the system package manager; without consent, without permission or when the install source is unknown it says so and falls back to the plugin-owned copy. system:"read-only" revokes that consent. Returns the resolved path, layer, version and per-step diagnostics.',
     parameters: {
       force: { type: 'boolean', description: 'Re-run the landing path even when a usable gh is already resolved. Defaults to false.' },
       prefer: { type: 'string', description: 'Landing preference: auto (tarball then deb), tarball, or deb. Defaults to auto.' },
+      system: {
+        type: 'string',
+        description: 'System-layer policy for this machine: "manage" records consent to upgrade a system gh that is below the required version (via apt/brew, only when permission allows), "read-only" revokes that consent and never touches the system gh. Omit to leave the policy as-is.',
+      },
     },
     readOnly: false,
     execute: async (args) => {
       const force = args.force === true;
+      // 系统层策略：这是**作者意图**的开关（本插件默认接管 gh，含系统级）。同意写进插件 state，可撤。
+      if (args.system === 'manage' || args.system === 'read-only') {
+        const prev = await readState();
+        const systemGh = { ...(prev.systemGh || {}) };
+        if (args.system === 'manage') systemGh.consent = { at: new Date().toISOString(), by: 'gh_cli_install' };
+        else { delete systemGh.consent; systemGh.revokedAt = new Date().toISOString(); }
+        await writeState({ systemGh });
+        if (args.system === 'read-only' && !force) {
+          return { installed: false, systemPolicy: 'read-only', systemGh,
+            note: '已撤销「动系统层」的同意：往后只动插件自己那份（~/.dsh/gh-cli），系统层只读。' };
+        }
+      }
       // prefer 此前**声明了却从没往下传**（handler 只读 force，ensureGh 收到的一直是默认 'auto'）——
       // 于是 prefer:'deb' 与不传完全等价。这里如实接线：认得的两个值才生效，其余按 auto
       //（判据与 ensureGh 内部一致：`prefer === 'deb' ? ['deb','tarball'] : ['tarball','deb']`）。
       const prefer = args.prefer === 'deb' ? 'deb' : args.prefer === 'tarball' ? 'tarball' : 'auto';
       const g = await resolveGh({ force, prefer });
+      const systemGhNow = (await readState()).systemGh || null;
       let res;
       if (g.ok && g.layer === 'system' && !force) {
-        return { installed: true, alreadyPresent: true, layer: 'system', path: g.path, version: g.version };
+        return { installed: true, alreadyPresent: true, layer: 'system', path: g.path, version: g.version,
+          requirement: GH_MIN_VERSION, systemPolicy: GH_SYSTEM_POLICY, systemGh: systemGhNow,
+          ...(g.systemUpgrade ? { systemUpgrade: g.systemUpgrade } : {}) };
       } else if (g.ok && g.layer === 'plugin-cache' && g.ensure) {
         res = g.ensure; // 这次调用真落地了一份，带上 attempts 诊断
       } else if (g.ok) {
-        return { installed: true, alreadyPresent: true, layer: g.layer, path: g.path, version: g.version };
+        return { installed: true, alreadyPresent: true, layer: g.layer, path: g.path, version: g.version,
+          requirement: GH_MIN_VERSION, systemPolicy: GH_SYSTEM_POLICY, systemGh: systemGhNow,
+          ...(g.systemOutdated ? { systemOutdated: true, note: g.note, systemUpgrade: g.systemUpgrade } : {}) };
       } else {
         res = await installGh({ prefer });
       }
@@ -2709,7 +2921,13 @@ sys.stdout.flush()
       // **不戴工牌**：这条报的是「宿主自己的 gh 登录了没有」，戴上去会把它读成「插件有身份」。
       const auth = await run(ghBin, ['auth', 'status', '--hostname', 'github.com']);
       // installed = 调用结束后 gh 可用（不管是本次落地的还是已经在的）。
-      return { ...res, installed: Boolean(ghBin !== 'gh' && res.version), authStatus: auth.code === 0 ? 'authenticated' : 'not-authenticated' };
+      return { ...res, installed: Boolean(ghBin !== 'gh' && res.version),
+        requirement: GH_MIN_VERSION, systemPolicy: GH_SYSTEM_POLICY,
+        // 系统层那一支的结果挂在 g（解析结果）上，不在 res（落地结果）上 —— 两个都如实带出去。
+        ...(g.systemOutdated ? { systemOutdated: true, note: g.note } : {}),
+        ...(g.systemUpgrade ? { systemUpgrade: g.systemUpgrade } : {}),
+        systemGh: systemGhNow,
+        authStatus: auth.code === 0 ? 'authenticated' : 'not-authenticated' };
     },
   }));
 
@@ -2725,12 +2943,20 @@ sys.stdout.flush()
       // 票 29：探测超时是**第三种事实**（未知），既不是 system 也不是「没有」——
       // 别让 resolved='none' 与 autoLandOnNextUse=true 替用户按下一个错的按钮（那次「自动落地」会去下载）。
       const timedOut = Boolean(sys.timedOut || cached.timedOut);
+      // 「系统层有 gh」不等于「系统层这份就是我们能用的那份」：低于期望时，resolveGh 会去接管/升级它，
+      //   升不动就改用自带副本 —— 这里报的必须是**同一个口径**，免得两个面互相打架。
+      const sysUsable = sys.ok && ghSatisfies(sys.version, GH_MIN_VERSION);
+      const systemGh = (await readState()).systemGh || null;
       return {
-        resolved: sys.ok ? 'system' : (cached.ok ? 'plugin-cache' : (timedOut ? 'unknown' : 'none')),
+        resolved: sysUsable ? 'system' : (cached.ok ? 'plugin-cache' : (timedOut ? 'unknown' : 'none')),
         system: sys,
         pluginCache: { path: GH_BIN, ...cached },
         dataDir: GH_DATA_DIR,
         arch: GH_ARCH,
+        requirement: GH_MIN_VERSION,
+        systemPolicy: GH_SYSTEM_POLICY,
+        ...(sys.ok && !sysUsable ? { systemOutdated: true } : {}),
+        systemGh,
         autoLandOnNextUse: !sys.ok && !cached.ok && !timedOut,
         ...(timedOut ? { timedOut: true } : {}),
         lastInstall: state,
@@ -2907,6 +3133,8 @@ sys.stdout.flush()
           providedWhen: '同一 ctx 具备 provide 能力时（服务位被占则缺席，Deck 侧如实回落自己的 PATH 解析，不静默换口径）',
           methods: [
             { name: 'resolve', args: [], returns: 'string|null —— gh 可执行文件的绝对路径（系统层 gh 优先，其次插件自带缓存 ~/.dsh/gh-cli/bin/gh；install:false，不落地、不回抛，找不到就回 null）' },
+            { name: 'ensure', args: [], returns: 'Promise<string|null> —— 幂等、单飞、有上界地**落地**一份再回路径（已在则直接回）；想「等它好吧」的调用方用这支。落地链：release API（追新）→ 失败退固定版本号；tar.gz → 失败退 deb' },
+            { name: 'bootstrap', args: [], returns: '{ started, reason?, retryAfterMs? } —— **立即返回**、后台落地（单飞 + 冷却，默认 10 分钟）。给「解析失败又想催一下」的调用方：不阻塞它这一次，下一次再来就有' },
             { name: 'identityEnv', args: '{ groups?: ("gh"|"git")[] }', returns: '{ gh, git, source, login } —— **两组分开**的身份环境（值现算不缓存）：gh 组＝GH_TOKEN + 非交互三件套（不含 GH_CONFIG_DIR，真源没 token 时为空组）；git 组＝GIT_TERMINAL_PROMPT=0 + GIT_CONFIG_* 注入 user.name / user.email / 指向插件自有助手的 credential.helper（**空值重置在前**，且**不含 GH_TOKEN**）。谁戴谁不戴由调用方按「以插件身份做事 / 只是问宿主」判，别无差别注入' },
           ],
           why: '合并宿主先跑 Deck 后跑 Resident，所以 Deck 必须晚绑定；这条服务的存在就是为了「同一个插件只有一个 gh 在哪的答案」',
@@ -3023,6 +3251,30 @@ sys.stdout.flush()
         '本包维护者': '新增能力项＝加字段（兼容，不动 version）；新增一段才 bump version',
       },
     },
+    // 2026-10-15（范围声明）：这个插件的定位就是**接管 gh 的生命周期**（内置、检查、更新、安装、修改）——
+    //   「它会动 gh」是设计本身，不是副作用。与其在启动路径里偷偷动，不如把范围**声明出来**，
+    //   让不放心的人有权直接删掉这个插件。这一节是给机器读的那份；人读的那份在 README 的
+    //   「本插件会动 gh 的什么」。改这一节 = 改对外承诺，不是改注释。
+    mutations: {
+      what: '本插件对 gh 做的动作：探测 / 落地 / 升级 / 垃圾回收 / **接管系统层**（低于期望的宿主 gh 按台账升级）。这个插件的定位就是接管 gh 的完整生命周期，「会动 gh」是设计本身。',
+      owns: '**默认接管系统层与自带层两层**。自带层（~/.dsh/gh-cli/：bin/gh + install.json）随时可动；系统层（PATH 上那份，通常是 /usr/bin/gh 的 apt 包）低于期望时按台账升级，走系统包管理器 —— 这一步要**一次显式同意**（gh_cli_install {system:"manage"}），可被 {system:"read-only"} 撤销。',
+      actions: [
+        { action: 'probe', target: 'gh（系统层 + 自带层）', writes: false, note: '只跑 --version 探活，带 mtime+size 缓存；探测超时**不落缓存**（一次卡死不能变成长期结论）' },
+        { action: 'install', target: '~/.dsh/gh-cli/bin/gh', writes: true, note: '官方 tar.gz 抽单文件（失败退 .deb）；不 root、不动系统包库' },
+        { action: 'upgrade', target: '~/.dsh/gh-cli/bin/gh', writes: true, note: '替换前先写 pending，替换后记 sha256+size 台账；可疑副本绝不执行（票 47）' },
+        { action: 'gc', target: '~/.dsh/gh-cli/（下载残留 / 旧版本）', writes: true, note: '只删插件自己目录里的东西，不碰别处' },
+        { action: 'system-gh', target: 'PATH 上的 gh（通常 /usr/bin/gh 的 apt 包）', writes: true, note: '**默认接管**：低于期望就用 apt/brew 升级它，要一次显式同意；没同意 / 没权限 / 认不出来源 / 包管理器失败一律如实记台账并改用自带副本，绝不绕过权限。不接受本插件动 gh 的用户，正确的做法是删掉本插件' },
+        { action: 'uninstall', target: '~/.dsh/gh-cli/', writes: true, note: '删插件目录即随包消失；插件对**宿主**做过的接线（git 凭据助手 / 全局身份）由 gh_cli_logout 与 gh_identity{unwire} 逐项还原' },
+      ],
+      optOut: {
+        'DSH_GH_SYSTEM_POLICY=read-only': '系统层只读：不升级宿主的 gh，低于期望时改用自带副本',
+        'DSH_GH_MIN_VERSION': '插件要求的 gh 最低版本（默认 2.40.0）；低于它的那一层会被升级或替换',
+        'DSH_GH_NO_BOOTSTRAP=1': '关掉加载期自动落地（仍可用 gh_cli_install 显式装）',
+        'DSH_GH_NO_UPDATE=1': '关掉加载期自更新',
+        'DSH_GH_DATA_DIR': '换自带副本与台账的落盘目录（默认 ~/.dsh/gh-cli）',
+      },
+      why: '声明优先于克制：动不动、动什么、怎么退都写在协议里；不接受的人可以删插件 —— 而不是让插件在启动路径里做没人知道的事。',
+    },
     // 2026-10-14（票「重活租约」）：重活并跑会把宿主压垮 —— 本机实测宿主被系统杀过 6 次
     //（00:35 / 00:51 / 01:07 / 01:17 / 02:16 / 02:18），签名都是「外部杀」（无异常栈、无日志异常）。
     // 多会话并跑时各自的 agent 看不见别人，所以这条规矩写进协议，锁由 runner 自己上。
@@ -3098,12 +3350,17 @@ sys.stdout.flush()
   };
   if (typeof ctx.provide === 'function') ctx.provide(SERVICE_KEY, serviceApi);
 
-  // 2026-10-12 gh 解析点归一（身份/交付融合收尾）：把**本插件唯一的 gh 解析器**（resolveGh：
-  //   系统 gh → 插件自带缓存 ~/.dsh/gh-cli/bin/gh → 自动落地）以服务形式借给同一 ctx 里的另一半
-  //   （合并进来的 Deck：它过去自己认 PATH 与 DSH_GH_PATH，于是出现"Resident 能用 gh、Deck 说没装 gh"）。
+  // 2026-10-12 gh 解析点归一（身份/交付融合收尾）：把**本插件唯一的 gh 解析器**以服务形式借给同一 ctx 里的
+  //   另一半（合并进来的 Deck：它过去自己认 PATH 与 DSH_GH_PATH，于是出现"Resident 能用 gh、Deck 说没装 gh"）。
   // 为什么是服务而不是装配层传对象：合并宿主先跑 Deck、后跑 Resident（见 tools/merge/client-factory.ts 的
   //   装配约定），所以 Deck 侧必须**晚绑定**——真正取 gh 是在用的时候（探测/执行），那时本服务已在。
-  // resolve() 只回路径或 null，不回抛：调用方（Deck 平台层）自己按"没找到"诚实报告。
+  // 2026-10-15 修正（本机现场：加载期那一次落地在 api.github.com 上超时 → Deck 从此判死，面板只回
+  //   "先跑 gh_cli_install"）：这条缝原来只有 resolve() 一支，而它**只报现状、绝不下手**；
+  //   可真正需要 gh 的正是 Deck 半边，它没有任何一条路能把"没有"变成"有"。服务位现在答三件事，
+  //   而且只有这一份实现（谁都不许在别处再拼一套 gh 解析）：
+  //     resolve()   只读、不落地 —— 快照 / 点击路径安全（票 47）
+  //     ensure()    幂等、单飞、有上界地落地一份 —— 想要"等它好吧"的调用方用这支
+  //     bootstrap() 立即返回、后台落地（单飞 + 冷却）—— 解析失败又想催一下的调用方用这支
   if (typeof ctx.provide === 'function') {
     try {
       ctx.provide('ghResolver', {
@@ -3113,6 +3370,13 @@ sys.stdout.flush()
             return (r && r.ok && r.path) ? r.path : null;
           } catch (e) { return null; }
         },
+        ensure: async function () {
+          try {
+            const r = await resolveGh({});
+            return (r && r.ok && r.path) ? r.path : null;
+          } catch (e) { return null; }
+        },
+        bootstrap: function () { return bootstrapGh(); },
         // 2026-10-14（票「子进程环境：插件启动的 gh / git 子进程按需带上真源 token」）：这支服务位从此答的是
         // 「gh 怎么跑」的**唯一答案** —— 除了"在哪"（resolve，语义与调用方都不动），还有"用谁的身份、带什么环境"
         // （identityEnv，两组分开给）。挂在这里而不是另开一个服务位，是《Deck 半边接消费面（执行环境由消费面供给）》
@@ -4118,7 +4382,8 @@ sys.stdout.flush()
   }
 
   // ---------- 版本自更新 ----------
-  // 更新只换「插件自带的那份」；系统层 gh 是宿主的东西，只报告不动它（要动就卸载系统包）。
+  // 这一段管的是**插件自己**的版本（走 dsh-plugin-update）；gh 的版本期望与系统层接管在
+  // `ghSatisfies` / `upgradeSystemGh` 那一支（见「gh 的期望态 + 系统层接管」）。两件事别混。
 
   /** 版本串形如 "gh version 2.102.0 (2026-09-30)" → 取中间三个数字。 */
   function parseGhVersion(line) {
@@ -4579,14 +4844,25 @@ sys.stdout.flush()
 
   function scheduleAutoLand() {
     if (process.env.DSH_GH_NO_BOOTSTRAP === '1') return;
-    ghTakeover()
-      .then((res) => {
-        lastTakeover = res;
-        lastEnsure = res;
-        if (res.ok && (res.action === 'installed' || res.action === 'repaired')) return gcCache({}); // 只有真落地过才顺手清残留
-        return null;
-      })
-      .catch((e) => { lastTakeover = { ok: false, action: 'error', error: String((e && e.message) || e) }; lastEnsure = lastTakeover; });
+    // 加载期落地**不是一次赌博**：失败（网络抖动那种）按退避再试有限次，成功即止。
+    //   「启动时那一下没成」过去等于「这个进程从此没有 gh」——现场就是这么死的（见 ghResolver 那段注释）。
+    //   熔断（action==='breaker-open'，有 pending 未清 = 上次死在落地中途）**不重试**：那是刻意的闸门。
+    const retryDelaysMs = [60 * 1000, 5 * 60 * 1000, 15 * 60 * 1000];
+    const attempt = (n) => {
+      ghTakeover()
+        .then((res) => {
+          lastTakeover = res;
+          lastEnsure = res;
+          if (res.ok && (res.action === 'installed' || res.action === 'repaired')) return gcCache({}); // 只有真落地过才顺手清残留
+          if (!res.ok && res.skipped !== true && n < retryDelaysMs.length) {
+            const t = setTimeout(() => attempt(n + 1), retryDelaysMs[n]);
+            if (t && typeof t.unref === 'function') t.unref();
+          }
+          return null;
+        })
+        .catch((e) => { lastTakeover = { ok: false, action: 'error', error: String((e && e.message) || e) }; lastEnsure = lastTakeover; });
+    };
+    attempt(0);
   }
 
   // 加载期预置第二部分：版本自更新（有更新才动手，24h 冷却）。

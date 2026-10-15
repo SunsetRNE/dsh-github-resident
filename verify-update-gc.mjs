@@ -191,11 +191,13 @@ if (v.parsed) {
 }
 await fs.rm(v.childHome, { recursive: true, force: true });
 
-// 系统层：应拒绝更新并给出去路（用一个能跑的系统 gh 桩遮住插件自带层）
+// 系统层：**插件自更新**（这一支）不换系统层那份，要拒绝更新并给出去路。
+//   桩版本必须**满足插件要求**（默认 ≥2.40.0）：低于要求的系统层由插件另一支接管
+//   （upgradeSystemGh，判据见 verify-gh-system-takeover.mjs），那时本支看到的根本不是 system 层。
 servedTag = 'v9.9.9'; servedVersion = '9.9.9';
 const sysStubDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ghug-sys-'));
 await fs.writeFile(path.join(sysStubDir, 'gh'),
-  '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "gh version 0.1.0 (SYS-STUB)"; fi\nexit 0\n', { mode: 0o755 });
+  '#!/bin/sh\nif [ "$1" = "--version" ]; then echo "gh version 2.102.0 (SYS-STUB)"; fi\nexit 0\n', { mode: 0o755 });
 const sys = await runChild('version', { CHILD_MODE: 'version', CHILD_FAKE: sysStubDir }, null);
 check('1b 系统层桩可用', (await fs.readFile(path.join(sysStubDir, 'gh'), 'utf8')).includes('SYS-STUB'));
 check('1b 系统层子进程跑通', sys.code === 0, sys.err.slice(0, 160));
@@ -261,13 +263,15 @@ const srv = http.createServer(async (req, res) => {
 srv.listen(0, '127.0.0.1', () => console.log('__PORT__' + srv.address().port));
 `;
 
-// 记账 gh：每次被调用就往日志里追一行（--version 要正常返回，否则探针会判不可用）
+// 记账 gh：每次被调用就往日志里追一行（--version 要正常返回，否则探针会判不可用）。
+//   版本也要**满足插件要求**：低于要求的系统层会被接管支降级（→ 解析不到路径 → 这个桩根本不会被调用，
+//   计数语义就没了）。
 const countingDir = await fs.mkdtemp(path.join(os.tmpdir(), 'ghug-count-'));
 // N5 之后 PATH 里的 gh 才会被真的执行，所以这个桩必须像一个「未登录」的 gh：
 // 否则 buildSnapshot 会把桩的 exit 0 当成已认证，快照结论就是假的。
 await fs.writeFile(path.join(countingDir, 'gh'),
   `#!/bin/sh\necho "$@" >> ${probeLog}\n`
-  + `if [ "$1" = "--version" ]; then echo "gh version 0.1.0 (COUNTING)"; exit 0; fi\n`
+  + `if [ "$1" = "--version" ]; then echo "gh version 2.102.0 (COUNTING)"; exit 0; fi\n`
   + `if [ "$1" = "auth" ]; then echo "not logged in to any GitHub hosts"; exit 1; fi\n`
   + `exit 0\n`,
   { mode: 0o755 });

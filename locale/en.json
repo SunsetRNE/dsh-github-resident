@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "GitHub Resident + Skills Deck",
-    "description": "GitHub identity, multi-repository commit/push/PR and the repository registry, plus Skills Deck issue/map tools, 27 bundled skills and the sidebar panel. Disable the standalone Skills Deck bundle before upgrading."
+    "description": "GitHub identity, multi-repository commit/push/PR and the repository registry; takes over the full gh CLI lifecycle (check/install/upgrade/modify, including a system-level gh — upgrading it goes through the system package manager and needs one explicit consent). Plus Skills Deck issue/map tools, 27 bundled skills and the sidebar panel. Disable the standalone Skills Deck bundle before upgrading."
   }
 }
