@@ -4,6 +4,7 @@ import nodePath from 'node:path'
 import nodeOs from 'node:os'
 import { pathToFileURL, fileURLToPath } from 'node:url'
 import path from 'node:path'
+import { identityEnvForStub } from './lib/identity-env-stub.js'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const WT = nodePath.resolve(__dirname, '..');
 const url = (rel) => pathToFileURL(nodePath.join(WT, rel)).href;
@@ -59,7 +60,7 @@ async function makeRunGh(spy, o) {
     getPlatform: async () => ({ resolveExecutable: async () => 'C:/fake/gh.exe' }),
     getWorkspaceStore: async () => ({ get: () => null, set: () => {} }),
     setCache: () => {}, clearWorkspaceStore: () => {}, namingSweepSoon: () => {}, canonicalKey: async (c) => c,
-    getChainBackoff: undefined, parseGithubRepo: undefined, logCtx: spy.ctx, gate: undefined, getGate: undefined });
+    getChainBackoff: undefined, parseGithubRepo: undefined, identityEnvFor: identityEnvForStub, logCtx: spy.ctx, gate: undefined, getGate: undefined });
   return { runGh: rk.runGh, spawns, timeouts, peak: () => peak };
 }
 async function makeSkillWorld(spy) {
@@ -85,7 +86,7 @@ async function makeScopedDetect(spy) {
     fs: null, DEFAULT_CWD: nodeOs.tmpdir(), TIMEOUT_MS: 30000,
     getMattSkillProbeNames: (...a) => boot.getMattSkillProbeNames(...a),
     getChainSkillNames: (...a) => boot.getChainSkillNames(...a),
-    probeSkill: fakeProbeSkill, logCtx: spy.ctx, getGate: () => null });
+    probeSkill: fakeProbeSkill, identityEnvFor: identityEnvForStub, logCtx: spy.ctx, getGate: () => null });
   const svc = await plat.getDetectionService();
   return { svc, askedNames, CHAIN_THREE: CHAIN3 };
 }
@@ -134,12 +135,14 @@ async function main() {
     for (const r of spy.rows) allEvents.add(r.event); }
   title('S4 分档：读/探活/写各等各的，超时归网络档');
   { const spy = makeSpy();
-    const g = await makeRunGh(spy, { delayFor: (argv) => (argv[1] === 'auth' ? 3500 : 60) });
+    const g = await makeRunGh(spy, { delayFor: (argv) => (argv[1] === '--version' ? 3500 : 60) });
     await g.runGh(['issue', 'list', '--limit', '5'], 'D:/repo');
     await g.runGh(['issue', 'create', '--title', 't', '--body', 'b'], 'D:/repo');
     must(g.timeouts.includes(12000), '读档等 12 秒', JSON.stringify(g.timeouts));
     must(g.timeouts.includes(30000), '写档等 30 秒', JSON.stringify(g.timeouts));
-    const slow = await g.runGh(['auth', 'status'], 'D:/repo');
+    // 探活档只服务 gh --version（合并包 1.7.8 起；会出网的 auth status / api user 已改走读档，
+    // 口径与 tests/verify-969-tiered-timeout.js 一致）。这里用 --version 当探活样例，并让它慢到撞 3 秒档。
+    const slow = await g.runGh(['--version'], 'D:/repo');
     spy.dump(['gh.timeout', 'gh.exec']);
     must(g.timeouts.includes(3000), '探活档等 3 秒', JSON.stringify(g.timeouts));
     must(slow.ok === false && slow.kind === 'network', '探活超时归网络档（未知稍后，不说没登录）', JSON.stringify(slow));
