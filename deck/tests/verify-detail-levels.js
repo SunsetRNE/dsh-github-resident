@@ -2,14 +2,10 @@
 // 断言：wf.snapshot 每个 map 的 stats.levels 结构正确 + 每张票带 level + DAG 分层语义自洽
 // 用法: node tests/verify-detail-levels.js <仓库根目录>
 import fsx from 'node:fs'
-import { fileURLToPath } from 'node:url'
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const fsp = fsx.promises
 import path from 'node:path'
 import { spawn } from 'node:child_process'
-import { compileFn } from './lib/eval-probe.js'
 const REPO_CWD = process.argv[2] || process.cwd()
-const HOST_JS = path.join(__dirname, '..', 'host.js')
 
 const subprocess = {
   async resolveExecutable(name) {
@@ -44,15 +40,38 @@ const fsSvc = {
   async readText(t) { return fsp.readFile(t, 'utf8') },
   processPath(t) { return t },
 }
-function loadPlugin(services) {
-  const handlers = {}
-  const harness = { handle: (name, fn) => { handlers[name] = fn } }
-  const ctx = { get: n => services[n], effect: fn => { const d = fn(); return typeof d === 'function' ? d : () => {} } }
-  // 产物是一段可执行文本：改走共用入口 compileFn，两个参数名照原样列出。
-  const fn = compileFn(['harness', 'ctx'], fsx.readFileSync(HOST_JS, 'utf8'))
-  const plugin = fn(harness, ctx)
-  plugin.apply(ctx)
-  return handlers
+// 装配（#58 修，2026-10-15）：宿主 apply 把几十条电话注册进 bootBody 内**自建**的那张表 —— 入参 harness
+// 被 apply 内同名常量遮蔽，老写法（整份 host.js 当函数体求值、捕获外层 harness.handle）收到的是 0 条
+// （handlers=0），而且宿主那些动态 import 在函数体里没有模块基址（#472 同款，整份 boot 都是死的）。
+// 新交付口 `dswEndpoints` 只交**注册入口**（provide 出去的是 { handle }），不给读表口；对外真正载着那张表
+// 走的只有一条路：connection.fetch.register 注册的 /api/dsws 分发路由。所以门禁按生产形状打信封走这条路
+// （与 verify-t1-getrepokey.js / verify-t1-initpublish.js / verify-chain-env-e2e.js 同一做法），
+// 被测物也换成真模块形态的包入口 ../package/lib/index.js（与 src/host/index.js 同源，由 build.mjs 生成）。
+// 端点名按 harness shim 的规矩去掉 `wf.` 前缀：'wf.refresh' → 'refresh'。
+async function loadPlugin(services) {
+  const modRaw = await import('../package/lib/index.js')
+  const mod = modRaw.default ?? modRaw
+  let route = null
+  const connection = { fetch: { register: r => { if (r && r.path === '/api/dsws') route = r; return () => {} } } }
+  const ctx = {
+    get: n => (n === 'connection' ? connection : services[n]),
+    effect: fn => { const d = fn(); return typeof d === 'function' ? d : () => {} },
+  }
+  ;(mod.apply ?? mod.default?.apply)(ctx)
+  // 通道注册在 ./rpcChannel.js 动态加载之后落地，等它。
+  const t0 = Date.now()
+  while (!route && Date.now() - t0 < 3000) await new Promise(function (r) { setTimeout(r, 20) })
+  if (!route || typeof route.fetch !== 'function') throw new Error('宿主未注册 /api/dsws 路由（先跑 npm run build:deck）')
+  return async function (endpoint, args) {
+    const res = await route.fetch({
+      method: 'POST',
+      url: 'http://127.0.0.1:1/api/dsws',
+      json: async () => ({ type: 'client-request', rpcId: 'gate-' + endpoint, method: 'dsws', payload: { method: endpoint, payload: args } }),
+    })
+    const env = (await res.json()).result
+    if (env && typeof env.value === 'object' && env.value !== null && 'ok' in env.value) return env.value
+    return env
+  }
 }
 
 async function main() {
@@ -63,8 +82,8 @@ async function main() {
     else console.log('  ✓', name)
   }
 
-  const h = loadPlugin({ subprocess, timer, fs: fsSvc })
-  const snap = await h['wf.refresh']({ cwd: REPO_CWD })
+  const h = await loadPlugin({ subprocess, timer, fs: fsSvc })
+  const snap = await h('refresh', { cwd: REPO_CWD })
   expect('快照 ok', snap && snap.ok === true)
   const maps = (snap && Array.isArray(snap.maps)) ? snap.maps : []
 
