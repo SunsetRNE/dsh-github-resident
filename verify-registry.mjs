@@ -220,7 +220,7 @@ check('协议契约里 schemaVersion 是 2', proto.registry?.schemaVersion === 2
 check('协议工具表含两个新工具', proto.tools.some((t) => t.name === 'gh_repo_registry') && proto.tools.some((t) => t.name === 'gh_repo_registry_list'));
 check('协议 service 含 registry 方法', proto.service.methods.some((m) => m.name === 'registry') && proto.service.methods.some((m) => m.name === 'registryList'));
 check('协议含 registry 落盘契约', proto.registry?.schema === 'dsh-github-resident/repo-entry' && proto.registry?.entry?.path && proto.registry?.dir === path.join(process.env.DSH_GH_REGISTRY_DIR, 'registry'), proto.registry?.dir);
-check('协议 HTTP 含 /registry 路由', proto.http.endpoints.some((e) => e.path === '/registry') && proto.http.endpoints.some((e) => e.path === '/registry/list'));
+check('协议宿主 RPC 含 registry 与 registry.list 端点', proto.http.base === '/api/dsws' && proto.http.endpoints.some((e) => e.path === 'ghr.registry') && proto.http.endpoints.some((e) => e.path === 'ghr.registry.list'));
 const viaService = await services.get('githubResident').registry({ action: 'status', root: ROOT });
 check('Host Service 与工具走同一条实现', viaService.action === 'status' && typeof viaService.libraryExists === 'boolean', viaService.action);
 

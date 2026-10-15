@@ -6,7 +6,7 @@ import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
 import { mkdtempSync, mkdirSync, writeFileSync, realpathSync, rmSync, existsSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { Socket } from 'node:net'
 import { check, section, summary, REPO_ROOT } from './_check.mjs'
 import { diagnoseOffline, diagnoseLive, guiOrigin, validateProtocol, validateState } from '../../../tools/resident-rpc.mjs'
@@ -24,7 +24,92 @@ const expectCode = async (promise, code) => {
   })
 }
 
+async function verifyOfflineHomeIsolation() {
+  section('零、导入期 HOME 隔离（只比较路径，不读任何身份文件）')
+  const bundle = join(fixtureDir, 'home-import-bundle')
+  mkdirSync(bundle)
+  writeFileSync(join(bundle, 'package.json'), JSON.stringify({ type: 'module' }))
+  const endpointNames = ['state', 'version', 'update', 'protocol', 'registry', 'registry.list',
+    'registry.plan', 'registry.build', 'registry.verify', 'registry.revoke', 'registry.purge',
+    'authStart', 'logout', 'identity.email']
+  const protocol = { version: 8, spec: 'dsh-github-resident/8', tools: [{ name: 'fixture' }],
+    http: { base: '/api/dsws', loopbackOnly: false,
+      endpoints: endpointNames.map((name) => ({ method: 'POST', path: 'ghr.' + name })) } }
+  const state = { gh: { installed: null, layer: 'checking' }, authenticated: null,
+    account: null, cached: false, probe: { state: 'idle' } }
+  const observerKey = 'resident-home-import-' + basename(fixtureDir)
+  const observer = Symbol.for(observerKey)
+  let observed
+  const inheritedKey = 'DSH_DIAGNOSTIC_HOME_SENTINEL'
+  const inheritedValue = process.env[inheritedKey]
+  const originalEnv = process.env
+  const originalHome = homedir()
+  process.env[inheritedKey] = 'fixture-inherited-marker'
+  const originalValues = { ...process.env }
+  globalThis[observer] = (facts) => { observed = { ...facts, env: process.env } }
+  // 观察发生在模块顶层，与真实 plugin.js 的 HOME/STATE_FILE 求值时机一致。
+  // 不匹配就立刻抛错，整个夹具不会读取身份文件（包括旧实现仍指向的真实 HOME）。
+  writeFileSync(join(bundle, 'plugin.js'), `
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+const importedHome = homedir()
+const fixtureHome = process.env.HOME
+const stateFile = join(importedHome, '.dsh', 'github-resident.json')
+globalThis[Symbol.for(${JSON.stringify(observerKey)})]({ importedHome, fixtureHome, stateFile,
+  inheritedAbsent: process.env.DSH_DIAGNOSTIC_HOME_SENTINEL === undefined })
+if (importedHome !== fixtureHome) throw new Error('offline native HOME differs from fixture HOME')
+process.env.DSH_DIAGNOSTIC_IMPORT_ADDED = 'fixture-added-marker'
+export function apply(ctx) {
+  ctx.provide('githubResident', {
+    protocol: () => (${JSON.stringify(protocol)}),
+    status: () => (${JSON.stringify(state)}),
+  })
+}
+`)
+  try {
+    await diagnoseOffline(bundle)
+    assert.ok(observed && observed.importedHome === observed.fixtureHome,
+      '模块导入时 os.homedir() 必须指向 fixture HOME')
+    assert.ok(observed.importedHome !== originalHome && observed.env === originalEnv,
+      '导入期必须保留原始 process.env 对象并使用不同的 HOME')
+    assert.equal(observed.stateFile, join(observed.fixtureHome, '.dsh', 'github-resident.json'))
+    assert.ok(observed.inheritedAbsent, '导入时不能继承外部环境键')
+    check(true, '模块顶层的 os.homedir/身份路径确在 fixture HOME，process.env 对象身份不变')
+    const restored = () => {
+      const keys = Object.keys(process.env)
+      return process.env === originalEnv && homedir() === originalHome
+        && keys.length === Object.keys(originalValues).length
+        && keys.every((key) => process.env[key] === originalValues[key])
+    }
+    assert.ok(restored(), '离线结束后必须逐键恢复原生环境，清除模块新增键')
+    check(true, '结束后原生 HOME 与全部环境值恢复，模块导入新增的键已清除')
+    check(!existsSync(observed.fixtureHome), '本次假 HOME 在诊断结束后被清理')
+    await assert.rejects(diagnoseOffline(join(bundle, 'missing-bundle')))
+    assert.ok(restored(), '导入失败后也必须逐键恢复原生环境')
+    check(true, '导入异常后原生 HOME、process.env 对象身份与全部环境值同样恢复')
+  } finally {
+    delete globalThis[observer]
+    if (inheritedValue === undefined) delete process.env[inheritedKey]
+    else process.env[inheritedKey] = inheritedValue
+  }
+}
+
+function cleanupFixture() {
+  assert.equal(dirname(fixtureDir), temporaryRoot)
+  assert.ok(basename(fixtureDir).startsWith('resident-diagnostic-test-'))
+  assert.equal(realpathSync(fixtureDir), fixtureDir)
+  rmSync(fixtureDir, { recursive: true, force: true })
+  assert.equal(existsSync(fixtureDir), false)
+}
+
+// 修复 HOME 隔离时可只跑这条最小回归，不重跑其它诊断或主线程门禁。
+if (process.argv.includes('--home-isolation-only')) {
+  try { await verifyOfflineHomeIsolation() } finally { cleanupFixture() }
+  summary()
+}
+
 try {
+  await verifyOfflineHomeIsolation()
   section('一、离线服务位：真 apply、隔离环境、网络守卫')
   const before = { env: process.env, fetch: globalThis.fetch, connect: Socket.prototype.connect }
   const offline = await diagnoseOffline(REPO_ROOT)
@@ -161,10 +246,6 @@ export async function apply(ctx) {
   check(cliResult.next.includes('gh_protocol') && cliResult.next.includes('gh_cli_status'),
     'CLI 缺凭据仍给出可用的宿主工具诊断路径')
 } finally {
-  assert.equal(dirname(fixtureDir), temporaryRoot)
-  assert.ok(basename(fixtureDir).startsWith('resident-diagnostic-test-'))
-  assert.equal(realpathSync(fixtureDir), fixtureDir)
-  rmSync(fixtureDir, { recursive: true, force: true })
-  assert.equal(existsSync(fixtureDir), false)
+  cleanupFixture()
 }
 summary()

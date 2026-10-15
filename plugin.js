@@ -4095,7 +4095,16 @@ sys.stdout.flush()
   function originAllowed(request) {
     try {
       const origin = new URL(pageOriginOf(request));
-      return /^https?:$/.test(origin.protocol) && origin.origin === new URL(request.url).origin;
+      if (!/^https?:$/.test(origin.protocol)) return false;
+      const target = new URL(request.url);
+      // DSH HTTP 桥用内部 URL 分发，真实目标仍在 Host 头；来源与 Host 必须同主机、同端口。
+      // 普通 fetch 载体保留真实 URL，继续按完整 origin 比较。来源从不取自 payload。
+      if (target.hostname !== 'dsh.internal') return origin.origin === target.origin;
+      const host = request.headers && typeof request.headers.get === 'function' ? request.headers.get('host') : null;
+      if (!host) return false;
+      const authority = new URL(origin.protocol + '//' + host);
+      return !authority.username && !authority.password && !authority.search && !authority.hash
+        && authority.pathname === '/' && authority.host === origin.host;
     } catch { return false; }
   }
 
@@ -4462,44 +4471,40 @@ sys.stdout.flush()
       const denied = originError(request, name, writeCodes[name]);
       if (denied) return denied;
     }
-    try {
-      switch (name) {
-        case 'state': return await statePayload({ refresh: query.get('refresh') === '1', cached: query.get('cached') === '1' });
-        case 'version': return await versionStatus({ force: query.get('force') === '1' });
-        case 'update': return await autoUpdate({ force: query.get('force') === '1' });
-        case 'protocol': return PROTOCOL;
-        case 'registry': return await registryAction({ action: 'status' });
-        case 'registry.list': return await registryListPayload({
-          prefix: query.get('prefix') || undefined, host: query.get('host') || undefined,
-          tag: query.get('tag') || undefined, onlyMissingRemote: query.get('missing_remote') === '1',
-        });
-        case 'registry.plan': return await registryAction({ action: 'plan', root, depth });
-        case 'registry.verify': return await registryAction({ action: 'verify', root });
-        case 'registry.revoke': return await registryAction({ action: 'revoke' });
-        case 'registry.purge': {
-          const confirm = query.get('confirm') === '1';
-          const denied = confirm && originError(request, 'purge', 'E_REGISTRY_ORIGIN');
-          if (denied) return { ...denied, confirmRequired: true, dryRun: true };
-          return await registryAction({ action: 'purge', confirm });
-        }
-        case 'registry.build': {
-          const consent = query.get('consent') === '1';
-          const action = query.get('rescan') === '1' ? 'rescan' : 'build';
-          const denied = consent && originError(request, action, 'E_REGISTRY_CONSENT_ORIGIN');
-          if (denied) return {
-            ...(await consentRequiredPayload({ root: root || (await registryDefaultRoot()), depth: depth || 3, action, consent: await readConsent() })),
-            ...denied,
-          };
-          return await registryAction({ action, root, depth, consent: consent ? true : undefined,
-            via: consent ? 'ui:registry-panel' : undefined, prune: query.get('prune') === '1' });
-        }
-        case 'logout': return await teardown({ confirm: false });
-        case 'authStart': return await authStart();
-        case 'identity.email': return { action: 'email', stateFile: STATE_FILE, ...(await applyCommitEmail(query.get('email') || '')) };
-        default: return { ok: false, error: 'unknown endpoint: ghr.' + name };
+    switch (name) {
+      case 'state': return await statePayload({ refresh: query.get('refresh') === '1', cached: query.get('cached') === '1' });
+      case 'version': return await versionStatus({ force: query.get('force') === '1' });
+      case 'update': return await autoUpdate({ force: query.get('force') === '1' });
+      case 'protocol': return PROTOCOL;
+      case 'registry': return await registryAction({ action: 'status' });
+      case 'registry.list': return await registryListPayload({
+        prefix: query.get('prefix') || undefined, host: query.get('host') || undefined,
+        tag: query.get('tag') || undefined, onlyMissingRemote: query.get('missing_remote') === '1',
+      });
+      case 'registry.plan': return await registryAction({ action: 'plan', root, depth });
+      case 'registry.verify': return await registryAction({ action: 'verify', root });
+      case 'registry.revoke': return await registryAction({ action: 'revoke' });
+      case 'registry.purge': {
+        const confirm = query.get('confirm') === '1';
+        const denied = confirm && originError(request, 'purge', 'E_REGISTRY_ORIGIN');
+        if (denied) return { ...denied, confirmRequired: true, dryRun: true };
+        return await registryAction({ action: 'purge', confirm });
       }
-    } catch (error) {
-      return { ok: false, error: String((error && error.message) || error) };
+      case 'registry.build': {
+        const consent = query.get('consent') === '1';
+        const action = query.get('rescan') === '1' ? 'rescan' : 'build';
+        const denied = consent && originError(request, action, 'E_REGISTRY_CONSENT_ORIGIN');
+        if (denied) return {
+          ...(await consentRequiredPayload({ root: root || (await registryDefaultRoot()), depth: depth || 3, action, consent: await readConsent() })),
+          ...denied,
+        };
+        return await registryAction({ action, root, depth, consent: consent ? true : undefined,
+          via: consent ? 'ui:registry-panel' : undefined, prune: query.get('prune') === '1' });
+      }
+      case 'logout': return await teardown({ confirm: false });
+      case 'authStart': return await authStart();
+      case 'identity.email': return { action: 'email', stateFile: STATE_FILE, ...(await applyCommitEmail(query.get('email') || '')) };
+      default: return { ok: false, error: 'unknown endpoint: ghr.' + name };
     }
   }
 

@@ -98,26 +98,26 @@ if (process.env.CHILD_MODE === 'version') {
   out.ls = await fs.readdir(out.dataDir);
 } else if (process.env.CHILD_MODE === 'state') {
   const t0 = Date.now();
-  const first = await fetch('http://127.0.0.1:' + process.env.CHILD_PORT + '/state').then((r) => r.json());
+  const first = await services.get('githubResident').status();
   out.firstMs = Date.now() - t0;
   out.firstProbing = first.probing === true;
   out.firstAuthed = first.authenticated;
   out.updates = first.updates;
   out.snapshotAt = first.snapshotAt;
   const t1 = Date.now();
-  const second = await fetch('http://127.0.0.1:' + process.env.CHILD_PORT + '/state').then((r) => r.json());
+  const second = await services.get('githubResident').status();
   out.secondMs = Date.now() - t1;
   out.secondAuthed = second.authenticated;
   out.secondLayer = second.gh && second.gh.layer;
   const t2 = Date.now();
-  const forced = await fetch('http://127.0.0.1:' + process.env.CHILD_PORT + '/state?refresh=1').then((r) => r.json());
+  const forced = await services.get('githubResident').status({ refresh: true });
   out.forcedMs = Date.now() - t2;
   out.forcedAuthed = forced.authenticated;
 }
 console.log('__CHILD__' + JSON.stringify(out));
 `;
 
-async function runChild(mode, extraEnv = {}, port) {
+async function runChild(mode, extraEnv = {}) {
   const childHome = await fs.mkdtemp(path.join(os.tmpdir(), 'ghug-child-'));
   if (extraEnv.CHILD_SEED === '1') {
     const d = path.join(childHome, '.dsh', 'gh-cli');
@@ -146,7 +146,7 @@ async function runChild(mode, extraEnv = {}, port) {
       env: {
         ...process.env,
         CHILD_HOME: childHome, CHILD_FAKE: FAKE_PATH, CHILD_MODE: mode,
-        CHILD_PORT: String(port || ''), REAL_PATH, PLUGIN_URL,
+        REAL_PATH, PLUGIN_URL,
         DSH_GH_RELEASE_API: `http://127.0.0.1:${PORT}/repos/cli/cli/releases/latest`,
         DSH_GH_DOWNLOAD_BASE: DL,
         DSH_GH_NO_BOOTSTRAP: '1',

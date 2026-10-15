@@ -5,7 +5,7 @@
  * 凭据只从 header 文件读取，不读日志/identity/环境 token；stdout 为诊断 JSON，失败退出 1。
  */
 import { mkdtempSync, readFileSync, realpathSync, rmSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { homedir, tmpdir } from 'node:os'
 import { basename, dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { randomUUID } from 'node:crypto'
@@ -153,18 +153,23 @@ export async function diagnoseLive({ gui, headerFile = process.env.DSH_GUI_HEADE
 export async function diagnoseOffline(bundleDir = ROOT) {
   const temporaryRoot = realpathSync(tmpdir())
   const fixtureDir = mkdtempSync(join(temporaryRoot, 'resident-rpc-offline-'))
-  const oldEnv = process.env
+  const environment = process.env
+  const oldEnv = { ...environment }
   const oldFetch = globalThis.fetch
   const oldConnect = Socket.prototype.connect
   let networkAttempts = 0
   const denyNetwork = () => { networkAttempts += 1; fail('OFFLINE_NETWORK', '离线诊断尝试了网络访问。') }
   try {
+    // 必须逐键修改原 process.env；整体替换普通对象不会更新 os.homedir() 使用的原生环境。
     // 从 import 到调用始终是同一假 HOME；不继承 token、代理、git 配置或 DSH 路径覆盖。
-    process.env = {
+    const fixtureEnv = {
       HOME: fixtureDir, PATH: fixtureDir, TMPDIR: fixtureDir,
       XDG_CONFIG_HOME: join(fixtureDir, '.config'), GIT_CONFIG_GLOBAL: join(fixtureDir, '.gitconfig'),
       GIT_CONFIG_NOSYSTEM: '1', DSH_GH_NO_BOOTSTRAP: '1', DSH_GH_NO_UPDATE: '1', DSH_GH_NO_STATE_CHECK: '1',
     }
+    for (const key of Object.keys(environment)) delete environment[key]
+    for (const [key, value] of Object.entries(fixtureEnv)) environment[key] = value
+    if (homedir() !== fixtureDir) fail('OFFLINE_HOME', '原生 HOME 未切换到临时目录，已拒绝导入插件。')
     globalThis.fetch = denyNetwork
     Socket.prototype.connect = denyNetwork
     const provided = new Map()
@@ -186,7 +191,8 @@ export async function diagnoseOffline(bundleDir = ROOT) {
     if (networkAttempts) fail('OFFLINE_NETWORK', '离线服务调用尝试了网络访问。')
     return receipt('offline', protocol, state)
   } finally {
-    process.env = oldEnv
+    for (const key of Object.keys(environment)) delete environment[key]
+    for (const [key, value] of Object.entries(oldEnv)) environment[key] = value
     globalThis.fetch = oldFetch
     Socket.prototype.connect = oldConnect
     // 仅清理由本次 mkdtemp 创建、仍位于原临时目录下的真实目录。
