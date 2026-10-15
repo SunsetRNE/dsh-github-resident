@@ -129,7 +129,7 @@ test('mergeEmbed 交接：登记库页渲染的正是 Deck 交出的那两个组
 test('Resident 半边单独运行（旧形态、无 embed）不崩，两个设置页仍注册', () => {
   const half = captureHalf(readResidentSource(), 'resident-half')
   const plugin = half.factory(makeRequire())
-  assert.deepEqual(plugin.inject, ['slots'])
+  assert.deepEqual(plugin.inject, ['connection', 'slots'])
   const { ctx, registrations } = makeFakeCtx()
   plugin.apply(ctx)
   assert.deepEqual(
@@ -146,10 +146,10 @@ test('Resident 半边单独运行（旧形态、无 embed）不崩，两个设�
   )
 })
 
-test('两半的顶层重名声明（React / h / API）在独立词法作用域里不冲突', () => {
+test('两半的顶层重名声明（React / h）在独立词法作用域里不冲突', () => {
   const result = rewriteDeckClient(makeDeckSource(), readResidentSource())
-  // 若两半被拼进同一个函数体，new Function 会在编译期抛 "Identifier 'API' has already been declared"。
+  // 若两半被拼进同一个函数体，new Function 会在编译期抛 "Identifier 'React' has already been declared"。
   const spec = loadMergedModule(result.text)
   assert.equal(spec.id, MERGED_PACKAGE_NAME)
-  assert.equal(result.text.split('const API =').length - 1, 2, '两半各声明一份 API，用来证明作用域隔离')
+  assert.equal(result.text.split("const React = require('react')").length - 1, 2, '两半各声明一份 React，用来证明作用域隔离')
 })

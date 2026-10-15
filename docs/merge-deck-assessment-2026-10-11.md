@@ -1,5 +1,7 @@
 # 把 dsh-mattpocock-skills-deck 合并进 dsh-github-resident：可行性与实施方案评估
 
+> 历史材料：本文的独立回环端口与 `DSH_GH_API_PORT` 方案已退役。当前面板、脚本均走宿主 RPC `/api/dsws` 的 `ghr.*` 端点；此处保留旧测量与决定的原文供追溯，现行清单以 `gh_protocol.http` 为准。
+
 | 项 | 值 |
 |---|---|
 | 评估日期 | 2026-10-11（UTC）；本次为**文档收敛修订**，未重新采集运行态 |

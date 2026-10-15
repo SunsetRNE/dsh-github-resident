@@ -11,9 +11,9 @@
 #   1) 不传 PROFILE_DIR 时**不读** $DSH_PROFILE_DIR / ~/.dsh/profiles/*：改成在临时目录造一份
 #      fixture profile（dependencies 里放本包名 + node_modules/@local/<name> 软链到 BUNDLE_DIR），
 #      跑完即删。要验真实 profile 必须显式传第二个参数（或 VERIFY_REAL_PROFILE=1）。
-#   2) 第 5 段回环接口默认**不发任何请求**：它原来硬编码 127.0.0.1:31790，是仓库里唯一会打到
-#      真实运行实例的一段。现在只有显式 `--live-api`（或 LIVE_API=1）才会打，
-#      端口取 $DSH_GH_API_PORT（默认 31790），并在输出里写明打的是哪个端口。
+#   2) 第 5 段默认在假 HOME 中真 apply，再经 githubResident 服务验证 protocol/state，不联网。
+#      显式 --live-api（或 LIVE_API=1）才走现有宿主同源 /api/dsws；DSH_GUI 指定 GUI 来源，
+#      DSH_GUI_HEADERS_FILE 显式指定认证 header 文件（每行 Header: value，凭据不放 URL/argv）。
 #   3) 客户端身份改看 dist/client.js（合并后客户端只有这一份产物，根 client.js 是作者态输入）。
 #
 # 退出码: 0 = 全部 PASS；1 = 有 FAIL（每条 FAIL 都附修复提示）
@@ -33,12 +33,21 @@ for a in "$@"; do
 done
 [ -n "${ARGS[0]:-}" ] && BUNDLE_DIR="${ARGS[0]}"
 [ -n "${ARGS[1]:-}" ] && PROFILE_DIR="${ARGS[1]}"
-BUNDLE_DIR="${BUNDLE_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
-API_PORT="${DSH_GH_API_PORT:-31790}"
-API="http://127.0.0.1:${API_PORT}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+BUNDLE_DIR="$(cd -- "${BUNDLE_DIR:-$SCRIPT_DIR}" && pwd -P)" || exit 1
+RPC_HELPER="$SCRIPT_DIR/tools/resident-rpc.mjs"
 
 FIXTURE_DIR=""
-cleanup() { [ -n "$FIXTURE_DIR" ] && rm -rf "$FIXTURE_DIR"; }
+FIXTURE_ROOT="$(cd -- "${TMPDIR:-/tmp}" && pwd -P)" || exit 1
+cleanup() {
+  [ -n "$FIXTURE_DIR" ] || return 0
+  case "$FIXTURE_DIR" in
+    "$FIXTURE_ROOT"/verify-bundle-fixture.*)
+      [ "$(dirname -- "$FIXTURE_DIR")" = "$FIXTURE_ROOT" ] &&
+        [ "$(realpath -- "$FIXTURE_DIR")" = "$FIXTURE_DIR" ] && rm -rf -- "${FIXTURE_DIR:?}"
+      ;;
+  esac
+}
 trap cleanup EXIT
 
 if [ -z "$PROFILE_DIR" ]; then
@@ -46,10 +55,10 @@ if [ -z "$PROFILE_DIR" ]; then
     PROFILE_DIR="$DSH_PROFILE_DIR"
     echo "!! 显式使用真实 profile：$PROFILE_DIR（VERIFY_REAL_PROFILE=1）"
   else
-    FIXTURE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/verify-bundle-fixture.XXXXXX")"
-    PKG_NAME="$(node -e "process.stdout.write(require('$BUNDLE_DIR/package.json').name)" 2>/dev/null || echo unknown)"
+    FIXTURE_DIR="$(mktemp -d "$FIXTURE_ROOT/verify-bundle-fixture.XXXXXX")" || exit 1
+    PKG_NAME="$(node -e 'process.stdout.write(require(process.argv[1]).name)' "$BUNDLE_DIR/package.json")" || exit 1
     mkdir -p "$FIXTURE_DIR/node_modules/@local"
-    printf '{"name":"verify-bundle-fixture","private":true,"dependencies":{"%s":"*"}}' "$PKG_NAME" > "$FIXTURE_DIR/package.json"
+    node -e 'process.stdout.write(JSON.stringify({ name: "verify-bundle-fixture", private: true, dependencies: { [process.argv[1]]: "*" } }))' "$PKG_NAME" > "$FIXTURE_DIR/package.json"
     ln -s "$BUNDLE_DIR" "$FIXTURE_DIR/node_modules/@local/${PKG_NAME##*/}"
     PROFILE_DIR="$FIXTURE_DIR"
     echo "== 隔离模式：PROFILE_DIR = 临时 fixture（$FIXTURE_DIR），未读真实 profile =="
@@ -111,31 +120,31 @@ else
 fi
 
 echo "== 4. profile 依赖里是否有本包 =="
-if node -e "
-const p=require('$PROFILE_DIR/package.json');
-const name=require('$BUNDLE_DIR/package.json').name;
-process.exit(Object.keys(p.dependencies||{}).includes(name)?0:1);
-" 2>/dev/null; then
+if node -e '
+const fs = require("fs");
+const p = JSON.parse(fs.readFileSync(process.argv[1], "utf8"));
+const name = JSON.parse(fs.readFileSync(process.argv[2], "utf8")).name;
+process.exit(Object.keys(p.dependencies || {}).includes(name) ? 0 : 1);
+' "$PROFILE_DIR/package.json" "$BUNDLE_DIR/package.json" 2>/dev/null; then
   ok "profile 依赖含本包（profile=$PROFILE_DIR）"
 else
   bad "profile 依赖不含本包（profile=$PROFILE_DIR）" "plugin_manager install_bundle $BUNDLE_DIR（本 profile 重启后会摘掉第三方 bundle）"
 fi
 
-echo "== 5. 回环接口（默认跳过；只有显式 --live-api 才发请求）=="
+echo "== 5. protocol/state（默认假 HOME 服务位；--live-api 走现有宿主同源 RPC）=="
 if [ "$LIVE_API" = "1" ]; then
-  echo "     目标：$API （端口来自 DSH_GH_API_PORT，默认 31790）"
-  for ep in /protocol /state; do
-    code=""
-    for attempt in 1 2 3; do
-      code=$(curl -s -o /dev/null -m 12 -w '%{http_code}' "$API$ep" 2>/dev/null)
-      [ -n "$code" ] || code=000
-      [ "$code" = "200" ] && break
-      sleep 2
-    done
-    if [ "$code" = "200" ]; then ok "GET $ep -> 200"; else bad "GET $ep -> $code（试了 3 次）" "插件未启用/未重启加载；先 install_bundle，必要时换包名（见 LESSONS.md）"; fi
-  done
+  RPC_ARGS=(--live)
+  CHECK_LABEL="宿主 /api/dsws"
 else
-  echo "SKIP  未指定 --live-api：不碰真实运行实例（这是默认档，避免体检顺手打到 127.0.0.1:${API_PORT}）"
+  RPC_ARGS=(--offline --bundle-dir "$BUNDLE_DIR")
+  CHECK_LABEL="假 HOME 真 apply 的 githubResident 服务（无网络）"
+fi
+if receipt="$(node "$RPC_HELPER" "${RPC_ARGS[@]}")"; then
+  ok "$CHECK_LABEL：protocol /8 与 14 个 POST ghr.* 端点有效"
+  ok "$CHECK_LABEL：state 缓存快照结构有效"
+else
+  printf '%s\n' "$receipt"
+  bad "$CHECK_LABEL：protocol/state 未就绪" "检查上述诊断；在线可调用 gh_protocol / gh_cli_status，或显式设置 DSH_GUI_HEADERS_FILE 后重试 --live-api"
 fi
 
 echo

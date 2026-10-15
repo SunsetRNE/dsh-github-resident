@@ -1,9 +1,7 @@
 /**
  * github-resident 的客户端半边：设置 → GitHub 账号管理页。
  *
- * 数据来自插件在本机回环上开的小接口（127.0.0.1:31790）：
- *   GET  /state       账号 / gh 版本 / 凭据助手 / 最近一次的一次性码
- *   POST /auth/start  生成新的一次性码并拉起浏览器
+ * 数据与动作统一通过宿主 connection 的 dsws RPC；账号页与登记库页共用同一出口。
  * 样式只用主题 token（--dsw-alias-*），局部 <style> 随组件挂载/卸载。
  */
 window.__ModuleLoader__.load({
@@ -12,45 +10,33 @@ window.__ModuleLoader__.load({
     const React = require('react');
     const h = React.createElement;
 
-    // L12：默认回环端口 31790；宿主若用 DSH_GH_API_PORT 改了端口，可以把实际值注入
-    // window.__DSH_GITHUB_RESIDENT_API__（插件半边是同名端口，只有浏览器能看到注入值）。
-    const API = (typeof window !== 'undefined' && window.__DSH_GITHUB_RESIDENT_API__)
-      || 'http://127.0.0.1:31790';
-    // 票 51 第 2 步：面板改走**宿主 RPC**（dsws 通道的 ghr.* 端点）—— call() 是唯一出口；
-    // 宿主半边没加载时如实拒绝（不再是「接口不可达」那句含混话）。
-    // 端点 ↔ 旧回环路由的对照（回落用；票 51 第 3 步删端口时这张表一起退场）。
-    const ENDPOINT_PATH = {
-      'ghr.state': '/state', 'ghr.registry': '/registry', 'ghr.registry.list': '/registry/list',
-      'ghr.authStart': '/auth/start', 'ghr.identity.email': '/identity/email', 'ghr.logout': '/logout',
-      'ghr.version': '/gh/version', 'ghr.update': '/gh/update', 'ghr.protocol': '/protocol',
-      'ghr.registry.build': '/registry/build', 'ghr.registry.plan': '/registry/plan',
-      'ghr.registry.verify': '/registry/verify', 'ghr.registry.revoke': '/registry/revoke', 'ghr.registry.purge': '/registry/purge',
-    };
-    /**
-     * 面板的唯一出口：**宿主 RPC 优先，端口回落**。
-     * 为什么要有回落（2026-10-14 实测教训）：Deck 客户端的 `host` 是它那套「规范方言」的**自由变量**、
-     * 由 shim 供给，**不是 window 上的全局** —— 我们的客户端半边能拿到它时不假思索地用，拿不到时就整块面板不可用。
-     * 端口外壳仍在（票 51 第 3 步才删），所以退回端口这条老路至少在端口可达的机器上照常能干活。
-     */
-    const callViaPort = (method, args) => {
-      const path = ENDPOINT_PATH[method] || ('/registry/' + String(method).replace(/^ghr\.registry\./, ''));
-      const q = args && args.query ? '?' + args.query : '';
-      return fetch(API + path + q, { method: 'POST', signal: AbortSignal.timeout(45000) })
-        .then((r) => (r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status))));
-    };
-    /**
-     * 面板的唯一出口：**宿主 RPC 优先、失败即回落端口**。
-     * 2026-10-14 两次实测教训（都记在票 52）：
-     *   ① Deck 客户端的 `host` 是它那套「规范方言」的自由变量、由 shim 供给，**不是 window 上的全局** —— 不能假定它在；
-     *   ② 但它在的时候**也未必认我们的端点**（`host.call('ghr.state')` 会被 dsws 通道**拒绝**）——
-     *      所以回落必须兜「**没有**这条通道」与「**调了但被拒**」两种，否则面板会在有 host 的机器上直接变成不可用。
-     */
-    const call = (method, args) => {
-      const canHost = (typeof host !== 'undefined') && host && typeof host.call === 'function';
-      if (!canHost) return callViaPort(method, args);
-      return Promise.resolve()
-        .then(() => host.call(method, args || {}))
-        .catch(() => callViaPort(method, args));
+    // 两半 factory 的词法作用域彼此独立，Resident 从自己的 apply 上下文取 connection。
+    let clientCtx = null;
+    const call = async (method, args) => {
+      const conn = clientCtx && clientCtx.get ? clientCtx.get('connection') : null;
+      if (!conn || !conn.rpc || typeof conn.rpc.call !== 'function') {
+        throw new Error('connection 服务不可用（宿主连接未就绪）');
+      }
+      const controller = new AbortController();
+      let timer;
+      const deadline = new Promise((_, reject) => {
+        timer = window.setTimeout(() => {
+          const error = new Error('RPC 超时（45 秒）：' + method + '；结果未知，请先核验状态。');
+          reject(error);
+          controller.abort(error);
+        }, 45000);
+      });
+      try {
+        // 除传输取消外，race 也给不响应 signal 的宿主载体设上界；超时与宿主拒绝都不重放。
+        const result = await Promise.race([
+          conn.rpc.call('/api', 'dsws', { method, payload: args || {} }, controller.signal),
+          deadline,
+        ]);
+        if (result && result.ok === true) return result.value;
+        throw new Error((result && result.error && result.error.message) || ('RPC 失败：' + method));
+      } finally {
+        window.clearTimeout(timer);
+      }
     };
     const DEVICE_URL = 'https://github.com/login/device';
     const STEPS = [
@@ -68,7 +54,7 @@ window.__ModuleLoader__.load({
     ];
 
     // 仓库登记文件库：面板读写的是插件协议里的落盘契约（一仓一文件）。
-    // 授权按钮是「人自己点的」那条路径 —— 点下去才带 consent=1 打 POST /registry/build。
+    // 授权按钮是「人自己点的」那条路径 —— 点下去才带 consent=1 调 ghr.registry.build。
     const REG_COMMANDS = [
       ['gh_repo_registry {action:"plan"}', '只读计划'],
       ['gh_repo_registry {action:"build", consent:true}', '同意后建库'],
@@ -168,15 +154,13 @@ window.__ModuleLoader__.load({
       const [armPurge, setArmPurge] = React.useState(false);
 
       // 三个只读入口：登记库状态（许可 + 计数）、清单（条目）、以及**账号状态**。
-      // 账号那一份和「GitHub」页读的是同一个 /state 快照 —— 两页共用一份事实，谁都不另存一份登录态。
-      // 404 说明宿主还停在旧版本那一刻。
+      // 账号那一份和「GitHub」页读的是同一个 ghr.state 快照 —— 两页共用一份事实，谁都不另存一份登录态。
       const load = React.useCallback(() => Promise.all([
-        call('ghr.registry').catch(() => ({ unsupported: true })),
-        call('ghr.registry.list').catch(() => ({ unsupported: true })),
-        call('ghr.state', { query: 'cached=1' }).catch(() => null),
+        call('ghr.registry'),
+        call('ghr.registry.list'),
+        call('ghr.state', { query: 'cached=1' }),
       ]).then((pair) => {
         setAcct(pair[2] || null);
-        if (pair[0].unsupported) { setReg({ phase: 'unsupported' }); setLib({ unsupported: true }); return; }
         setReg({ phase: 'ok', data: pair[0] });
         setLib(pair[1]);
       }).catch((e) => setReg({ phase: 'down', message: String((e && e.message) || e) })), []);
@@ -195,12 +179,9 @@ window.__ModuleLoader__.load({
         return () => window.clearInterval(timer);
       }, [load]);
 
-      const post = (url, tag) => {
+      const post = (method, tag, query) => {
         setBusy(tag);
-        // 票 51 第 2 步：登记库写操作也走宿主 RPC —— 从 url 反推端点名（ghr.registry.<动作>，带 query）。
-        const m = String(url).match(/\/(registry\/[^?]*)(?:\?(.*))?$/);
-        if (!m) return Promise.reject(new Error('未知的登记库动作：' + String(url)));
-        return call('ghr.' + m[1].replace(/\//g, '.'), m[2] ? { query: m[2] } : {})
+        return call(method, query ? { query } : {})
           .then((j) => { setLast(j); setBusy(''); return load(); })
           .catch((e) => { setLast({ ok: false, error: String((e && e.message) || e) }); setBusy(''); });
       };
@@ -228,11 +209,10 @@ window.__ModuleLoader__.load({
       // 用词纪律：这一页只说「登记库」，绝不说「未授权 / 已授权」——
       // 那两个字在「GitHub」页里指账号凭据，混用会让人以为账号掉了。
       const label = reg.phase === 'idle' ? '读取中…'
-        : reg.phase === 'down' ? '插件接口未就绪'
-          : reg.phase === 'unsupported' ? '宿主未重启（/registry 404）'
-            : hasLib ? ('登记库已建立 · ' + rows.length + ' 个仓库')
-              : granted ? '已有建库许可 · 库还没建'
-                : '登记库未建立 · 等你同意';
+        : reg.phase === 'down' ? '宿主 RPC 不可用'
+          : hasLib ? ('登记库已建立 · ' + rows.length + ' 个仓库')
+            : granted ? '已有建库许可 · 库还没建'
+              : '登记库未建立 · 等你同意';
 
       const lastText = !last ? null
         : last.flash ? last.flash
@@ -288,8 +268,8 @@ window.__ModuleLoader__.load({
             '更新：走宿主 dsh-plugin-update 的入口件（就是上面那颗按钮）。'
             + '本包是 npm 包形态；当前尚未发布到 npm，面板更新要等发布后才生效。'
             + '在那之前升级走 Release 的 tgz 重装，不会装回旧的 Deck 包。'),
-          reg.phase === 'unsupported'
-            ? h('p', { className: 'ghreg-answer' }, '宿主未重启：/registry 返回 404，重启后刷新本页。')
+          reg.phase === 'down'
+            ? h('p', { className: 'ghreg-answer' }, reg.message)
             : null,
 
           !granted && d && d.ask
@@ -299,14 +279,14 @@ window.__ModuleLoader__.load({
             : null,
 
           h('div', { className: 'ghreg-actions' },
-            h(RegBtn, { onClick: () => post(API + '/registry/build?consent=1', 'build'), disabled: busy === 'build' },
+            h(RegBtn, { onClick: () => post('ghr.registry.build', 'build', 'consent=1'), disabled: busy === 'build' },
               busy === 'build' ? '建立中…' : (granted ? '重建登记库' : '建立登记库')),
-            h(RegBtn, { ghost: true, onClick: () => post(API + '/registry/plan', 'plan'), disabled: busy === 'plan' }, '看计划'),
-            h(RegBtn, { ghost: true, onClick: () => post(API + '/registry/build?rescan=1&consent=1', 'rescan'), disabled: busy === 'rescan' || !granted }, '刷新登记快照'),
-            h(RegBtn, { ghost: true, onClick: () => post(API + '/registry/verify', 'verify'), disabled: busy === 'verify' || !hasLib }, '对账'),
-            h(RegBtn, { ghost: true, onClick: () => { setArmPurge(false); post(API + '/registry/revoke', 'revoke'); }, disabled: busy === 'revoke' || !granted }, '撤销许可'),
+            h(RegBtn, { ghost: true, onClick: () => post('ghr.registry.plan', 'plan'), disabled: busy === 'plan' }, '看计划'),
+            h(RegBtn, { ghost: true, onClick: () => post('ghr.registry.build', 'rescan', 'rescan=1&consent=1'), disabled: busy === 'rescan' || !granted }, '刷新登记快照'),
+            h(RegBtn, { ghost: true, onClick: () => post('ghr.registry.verify', 'verify'), disabled: busy === 'verify' || !hasLib }, '对账'),
+            h(RegBtn, { ghost: true, onClick: () => { setArmPurge(false); post('ghr.registry.revoke', 'revoke'); }, disabled: busy === 'revoke' || !granted }, '撤销许可'),
             armPurge
-              ? h(RegBtn, { onClick: () => { setArmPurge(false); post(API + '/registry/purge?confirm=1', 'purge'); }, disabled: busy === 'purge' }, '确认清空')
+              ? h(RegBtn, { onClick: () => { setArmPurge(false); post('ghr.registry.purge', 'purge', 'confirm=1'); }, disabled: busy === 'purge' }, '确认清空')
               : h(RegBtn, { ghost: true, onClick: () => setArmPurge(true), disabled: !hasLib }, '清空…')),
           lastText ? h('p', { className: 'ghreg-answer' }, lastText) : null,
           last && last.ask && last.consentRequired
@@ -351,10 +331,6 @@ window.__ModuleLoader__.load({
       );
     }
 
-    
-
-    const wait = (ms) => new Promise((r) => window.setTimeout(r, ms));
-
     function Panel() {
       const [svc, setSvc] = React.useState({ phase: 'idle' });
       const svcRef = React.useRef(svc);
@@ -370,7 +346,6 @@ window.__ModuleLoader__.load({
       const load = React.useCallback((opts) => {
         const q = opts && opts.refresh ? '?refresh=1' : '?cached=1';
         return call('ghr.state', { query: String(q).replace(/^\?/, '') })
-          .then((r) => (r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status))))
           .then((j) => { setSvc({ phase: 'ok', data: j }); if (j.lastFlow) setFlow(j.lastFlow); })
           .catch((e) => setSvc({ phase: 'down', message: String((e && e.message) || e) }));
       }, []);
@@ -404,7 +379,7 @@ window.__ModuleLoader__.load({
           .catch((e) => { setFlow({ ok: false, error: String((e && e.message) || e) }); setBusy(false); });
       };
 
-      // 面板侧的填写：POST 打到宿主那条**唯一写入口**（带来源头闸门，机器调用会被拒）；成功后重读快照，
+      // 面板填写通过 RPC 调宿主唯一写入口，页面来源由宿主核验；成功后重读快照，
       // 入口随即消失（快照里 offer 变 false）。不填 / 不点保存 ⇒ 一个字节都不发。
       const saveEmail = () => {
         const value = String(emailDraft || '').trim();
@@ -438,7 +413,7 @@ window.__ModuleLoader__.load({
             : 'var(--dsw-alias-state-warn-primary)';
       const probe = (d && d.probe) || null;
       const label = svc.phase === 'idle' ? '读取中…'
-        : svc.phase === 'down' ? '插件接口未就绪'
+        : svc.phase === 'down' ? '宿主 RPC 不可用'
           : probing
             ? (probe && probe.state === 'disabled' ? '后台检查未启动（DSH_GH_NO_STATE_CHECK=1）'
               : probe && probe.state === 'failed' ? '后台检查失败（点「立即刷新」看错）'
@@ -467,7 +442,7 @@ window.__ModuleLoader__.load({
                 copied === 'code' ? '已复制' : '复制码'))
             : h('div', { className: 'ghr-when', style: { marginTop: 12 } },
               svc.phase === 'down'
-                ? '宿主连接不可用（host.call 不可达）：确认插件已启用，然后刷新页面。'
+                ? '暂时无法读取账号状态，错误详情见下方。'
                 : (flow && flow.error ? '上次没成：' + flow.error : '点下面的按钮生成一次性码。')),
 
           h('div', { className: 'ghr-actions' },
@@ -485,6 +460,7 @@ window.__ModuleLoader__.load({
               + (typeof d.snapshotAgeMs === 'number' && d.snapshotAgeMs > (d.snapshotTtlMs || 90000)
                 ? '（' + Math.round(d.snapshotAgeMs / 60000) + ' 分钟前，已过期）' : '')
               + (d.cached === true ? ' · 缓存' : '')) : null),
+          svc.phase === 'down' ? h('p', { className: 'ghr-when' }, svc.message) : null,
           h('div', { className: 'ghr-row' }, h('span', { className: 'ghr-k' }, '凭据助手'),
             h('span', { className: 'ghr-v' }, (d && d.credHelper) || '未设置（跑 gh_cli_setup_git）')),
           h('div', { className: 'ghr-row' }, h('span', { className: 'ghr-k' }, 'gh 凭据'),
@@ -527,10 +503,11 @@ window.__ModuleLoader__.load({
     }
 
     return {
-      inject: ['slots'],
+      inject: ['connection', 'slots'],
       // 合并装配层（tools/merge/client-factory.ts）先跑 Deck 半边，再把它的 mergeEmbed 作为第二参数传进来。
       // 单独运行本半边（旧形态）时 embed 为空——两个设置页仍然注册，只是没有 Deck 区块。
       apply(ctx, embed) {
+        clientCtx = ctx;
         deckEmbed = embed && (embed.SettingsSections || embed.UpdateEntry) ? embed : null;
         ctx.slots.inject('settings.section', () => ctx.slots.register({
           name: 'settings.section',

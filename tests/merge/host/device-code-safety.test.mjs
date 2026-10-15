@@ -53,12 +53,11 @@ check((flow.match(/\.then\(/g) || []).length <= (flow.match(/\.catch\(/g) || [])
 // ===========================================================================
 section('二、加载期「起服务」那一处：同样不许悬空')
 // ===========================================================================
-const at = src.indexOf('startLoopbackServer(API_PORT).then(')
-const seg = at < 0 ? '' : src.slice(at, at + 700)
-check(seg.length > 100 && seg.includes('startLoopbackServer(API_PORT)'),
-  '切片自证：切到加载期起服务那一段（' + seg.length + ' 字符）')
-check(seg.includes('.catch(') || /\(\s*err\s*\)\s*=>/.test(seg),
-  '起服务那条链带拒绝去处（.catch 或双参 then）：import / 监听之前抛出的异常不该升级成宿主结束')
+check(!/startLoopbackServer|server\.listen\s*\(/.test(src),
+  '加载期不再创建端口，消除 import/listen 的悬空异步链')
+const registration = sliceFn(src, 'registerResidentEndpoints')
+check(registration.includes('throw error') && registration.includes('stop()'),
+  'RPC 注册失败清理已注册端点并交给宿主报错，不静默吞掉')
 
 // ===========================================================================
 section('三、设备桥的回执诚实性：拒绝也是 200，结论在 body 里（2026-10-14 实测）')
@@ -103,16 +102,16 @@ const authTool = sliceBetween(src, "toolName: 'gh_cli_auth_web'", "toolName: 'gh
 check(authTool.length > 500, '切片自证：切到 gh_cli_auth_web 这个工具（' + authTool.length + ' 字符）')
 check(/resolveGh\(\{ install: false \}\)/.test(authTool) && !/resolveGh\(\)/.test(authTool),
   '取码工具：resolveGh 只读（install:false）—— 取码不许顺手跑一次下载 ＋ 内存解包')
-const routeSeg = sliceBetween(src, "url.pathname === '/auth/start'", "url.pathname === '/identity/email'")
+const routeSeg = sliceFn(src, 'authStart')
 check(routeSeg.length > 200 && /ghVersion\(\{ install: false \}\)/.test(routeSeg),
-  'POST /auth/start：探测也只读（切片 ' + routeSeg.length + ' 字符）')
+  'RPC authStart：探测只读，服务与RPC共用同一支取码入口')
 check(/resolveGh\(\{ install: false \}\)/.test(flow), 'startDeviceFlowPty 里的 resolveGh 也只读')
 check(/timeout: 5000/.test(sliceFn(src, 'openUrl')), 'openUrl 的 xdg-open 有上界（5s）—— 它一挂，请求就永不返回')
 const clientSrc = readText('client.js')
 // 票 51 第 2 步：面板改走宿主 RPC 后，「上界」这件事从 fetch 的 AbortSignal 换成了宿主侧的有界（见本文件第五节）——
 // 判据**等价换、不静默删**：断言取码走唯一出口 call('ghr.authStart')，且面板里再没有裸 fetch 打插件接口。
 check(/call\('ghr\.authStart'/.test(clientSrc), "取码走宿主 RPC 的唯一出口 call('ghr.authStart')")
-check(/host\.call/.test(clientSrc) && /AbortSignal\.timeout\(45000\)/.test(clientSrc), 'RPC 优先、端口回落（回落这条路仍带 45s 上界）')
+check(/rpc\.call/.test(clientSrc) && /45000/.test(clientSrc) && !/\bfetch\s*\(/.test(clientSrc), 'RPC 调用有45s上界，且不回落端口')
 check(/flow && flow\.error \?/.test(clientSrc), '失败原因会渲染出来（原先 flow.error 没人用）')
 
 

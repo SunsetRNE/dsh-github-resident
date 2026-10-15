@@ -20,7 +20,7 @@
  */
 import { execFileSync } from 'node:child_process'
 import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs'
-import { createServer } from 'node:net'
+import { createRpcChannel } from '../../../deck/src/host/rpcChannel.js'
 import { check, note, section, summary, readText } from './_check.mjs'
 import { makeHome, withPlugin, sha256File, PLUGIN_URL } from './_env-harness.mjs'
 
@@ -253,36 +253,22 @@ section('五、邮箱随 state 一起走（登出路径删的就是这份文件�
 }
 
 // ===========================================================================
-section('六、面板那一半：快照里的入口条件（离线跑真回环，面板走的就是这条 HTTP）')
+section('六、面板那一半：快照里的入口条件（离线跑真实宿主 RPC）')
 // ===========================================================================
-
-/** 找一个空闲端口：先绑 0 拿到号再放掉（别撞上真插件占的 31790 与 verify-ui 的 31791）。 */
-const freePort = async () => {
-  const srv = createServer()
-  await new Promise((r) => srv.listen(0, '127.0.0.1', r))
-  const port = srv.address().port
-  await new Promise((r) => srv.close(r))
-  return port
-}
 
 /** 夹具里的 gh 桩：`auth status` 的成败可控，`api user --jq .login` 回登录名，`--version` 回版本串。 */
 const ghStubFor = (home, { authed }) => writeFileSync(home + '/.bin/gh', authed
   ? '#!/bin/sh\ncase "$1 $2" in\n  "auth status") exit 0 ;;\n  "api user") echo ' + LOGIN + ' ;;\n  *) echo "gh version 9.9.9 (STUB)" ;;\nesac\n'
   : '#!/bin/sh\nexit 1\n', { mode: 0o755 })
 
-/**
- * 起真回环（verify-ui 同款口径：effect 真跑、三条启动调度全关、端口自己挑）。
- * 返回 { call, restore }：call 打的就是面板会打的那几条路由。
- */
-const bootLoopback = async (home) => {
-  const keys = ['HOME', 'PATH', 'DSH_GH_API_PORT', 'DSH_GH_NO_STATE_CHECK', 'DSH_GH_NO_BOOTSTRAP', 'DSH_GH_NO_UPDATE',
+/** 真 effect 与真实 RPC 通道；只替换宿主服务表，不监听端口。 */
+const bootRpc = async (home) => {
+  const keys = ['HOME', 'PATH', 'DSH_GH_NO_STATE_CHECK', 'DSH_GH_NO_BOOTSTRAP', 'DSH_GH_NO_UPDATE',
     'DSH_GH_DATA_DIR', 'GH_TOKEN', 'GITHUB_TOKEN']
   const saved = {}
   for (const k of keys) saved[k] = process.env[k]
-  const port = await freePort()
   process.env.HOME = home
   process.env.PATH = home + '/.bin'
-  process.env.DSH_GH_API_PORT = String(port)
   process.env.DSH_GH_NO_STATE_CHECK = '1'
   process.env.DSH_GH_NO_BOOTSTRAP = '1'
   process.env.DSH_GH_NO_UPDATE = '1'
@@ -290,27 +276,35 @@ const bootLoopback = async (home) => {
   delete process.env.GH_TOKEN
   delete process.env.GITHUB_TOKEN
   const mod = await import(PLUGIN_URL + '?env=' + encodeURIComponent(home + '|panel'))
-  let stop = null
-  mod.apply({
+  const handlers = new Map(), services = new Map(), stops = []
+  let route
+  services.set('dswEndpoints', { handle: (name, fn) => { handlers.set(name, fn); return () => handlers.delete(name) } })
+  services.set('connection', { fetch: { register: (def) => { route = def.fetch; return () => {} } } })
+  const ctx = {
     tools: { register: () => () => {} },
-    provide() {}, inject() {}, get() { return undefined },
-    effect: (fn) => { stop = fn(); return () => {} },
-    logger: { info() {}, warn() {}, error() {}, debug() {} },
-  })
+    provide: (k, v) => services.set(k, v), get: k => services.get(k),
+    inject: (keys, fn) => { if (keys.every(k => services.has(k))) fn(ctx) },
+    effect: (fn) => { const stop = fn(); if (typeof stop === 'function') stops.push(stop) },
+  }
+  mod.apply(ctx)
+  createRpcChannel({ ctx, handlers, fireLog() {}, dispatchMeta: async () => ({ shortArgHash: () => '', dispatchErrorKind: () => 'internal' }) })
   const restore = () => {
-    try { if (stop) stop() } catch { /* 关服务失败不影响判定 */ }
+    for (const stop of stops.reverse()) stop()
     for (const k of keys) { if (saved[k] === undefined) delete process.env[k]; else process.env[k] = saved[k] }
   }
   const call = async (path, init) => {
-    const res = await fetch('http://127.0.0.1:' + port + path, init)
+    const [pathname, query = ''] = path.split('?')
+    const method = pathname === '/identity/email' ? 'ghr.identity.email' : 'ghr.state'
+    const res = await route(new Request('http://127.0.0.1:3080/api/dsws', {
+      method: pathname === '/identity/email' && !init ? 'GET' : 'POST',
+      headers: { 'content-type': 'application/json', ...(init?.headers || {}) },
+      ...(pathname === '/identity/email' && !init ? {} : { body: JSON.stringify({ type: 'client-request', rpcId: 'email-test', method: 'dsws', payload: { method, payload: { query } } }) }),
+    }))
     let body = null
-    try { body = await res.json() } catch { body = null }
+    try { body = (await res.json()).result.value } catch { /* 非 POST 返回 405 */ }
     return { status: res.status, body }
   }
-  for (let i = 0; i < 60; i += 1) {   // 等端口起来（最多 ~6s）
-    try { await call('/state?cached=1'); break } catch { await new Promise((r) => setTimeout(r, 100)) }
-  }
-  return { call, restore, port }
+  return { call, restore }
 }
 
 const PAGE_ORIGIN = 'http://127.0.0.1:3080'
@@ -326,7 +320,7 @@ const PANEL_COMBOS = [
 for (const c of PANEL_COMBOS) {
   const h = fixture('ce-panel-' + c.tag, c.state)
   ghStubFor(h.home, { authed: c.authed })
-  const { call, restore } = await bootLoopback(h.home)
+  const { call, restore } = await bootRpc(h.home)
   try {
     const st = await call('/state?refresh=1')
     const ce = (st.body && st.body.commitEmail) || null
@@ -342,13 +336,13 @@ for (const c of PANEL_COMBOS) {
 }
 
 // ===========================================================================
-section('七、面板的写路由 POST /identity/email：来源头闸门 + 真写 + 不写')
+section('七、面板的写路由 ghr.identity.email：来源头闸门 + 真写 + 不写')
 // ===========================================================================
 
 const hR = fixture('ce-panel-route', { token: TOKEN_FAKE, login: LOGIN })
 ghStubFor(hR.home, { authed: true })
 {
-  const { call, restore } = await bootLoopback(hR.home)
+  const { call, restore } = await bootRpc(hR.home)
   try {
     const statePath = hR.home + '/' + STATE_REL
     const gitPath = hR.home + '/.gitconfig'
@@ -395,7 +389,7 @@ ghStubFor(hR.home, { authed: true })
 
     // ⑦ 只认 POST
     const getIt = await call('/identity/email')
-    check(getIt.status === 404, 'GET 这条路径 = 404（只有 POST 是入口）')
+    check(getIt.status === 405, 'GET 宿主 RPC = 405（只有 POST 是入口）')
   } finally {
     restore()
   }

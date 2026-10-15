@@ -1,5 +1,7 @@
 # 证据文档 02：客户端 UI、设置页归属与槽位冲突
 
+> 历史材料：本文的独立回环端口与 `DSH_GH_API_PORT` 方案已退役。当前面板、脚本均走宿主 RPC `/api/dsws` 的 `ghr.*` 端点；此处保留旧测量与决定的原文供追溯，现行清单以 `gh_protocol.http` 为准。
+
 - 评估主题：把 `dsh-mattpocock-skills-deck` 合并进 `dsh-github-resident`、以一个插件运行，并「把 Deck 设置页合并进 Resident 设置页的仓库登记页」。
 - 本文只覆盖**客户端/UI 层**：设置页两类注册、可落地的合并方案、合并后页面的文字线框、逐控件交互状态、槽位与注册冲突、单 `client.js` 在 `exports`/`inject`/`immediately`/主题/i18n 上的改动点。
 - 本文**不实现、不安装、不启停、不改代码**。所有会写产物的验证都只写进第 9 节「未来验收方案」。

@@ -1,11 +1,11 @@
 /**
  * verify-ui.mjs — 验证「UI 接线」：设置页那一页与宿主半边说的是同一套接口、同一套语义。
  *
- * A. 宿主半边：在伪 HOME + 临时登记目录 + 测试端口上**真起一个回环服务**（effect 真跑），
- *    用 HTTP 打面板会打的那几条路由 —— 包括「没有浏览器来源头的 consent=1 必须被拒」。
+ * A. 宿主半边：伪 HOME + 临时登记目录，真起 effect、禁止监听端口，经真实宿主 RPC 调服务位。
+ *    保留来源、同意、清库两步确认的全部判据。
  * B. 客户端半边（不渲染）：把 client.js 当普通脚本执行（桩掉 window.__ModuleLoader__），
  *    确认它只依赖 react、注册了两个 settings.section（id / order / label 正确）。
- * C. 接线判据：client.js 里出现的每一条 /registry* 路径，都必须在宿主 PROTOCOL.http.endpoints 里有对应路由。
+ * C. 客户端每条 ghr.* 调用都必须在协议清单和实际注册表中。
  *
  * 明确不在本件范围内：**视觉验证**。没有浏览器控制就不写假渲染器、不出截图 ——
  * 一个自造渲染器通过只证明桩写得对，不证明运行中的插件长什么样（见 LESSONS 坑 26）。
@@ -17,10 +17,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { promises as fs } from 'node:fs';
 import { execFile } from 'node:child_process';
+import { Server } from 'node:net';
+import { createRpcChannel } from './deck/src/host/rpcChannel.js';
 
 const HOME = await fs.mkdtemp(path.join(os.tmpdir(), 'ghui-home-'));
 const ROOT = await fs.mkdtemp(path.join(os.tmpdir(), 'ghui-root-'));
-const PORT = 31791;
 const PAGE_ORIGIN = 'http://127.0.0.1:3080';
 const SECRET = 'ghp_FAKE0000000000000000000000000000000000';
 
@@ -28,7 +29,6 @@ os.homedir = () => HOME;
 process.env.HOME = HOME;
 process.env.GIT_CONFIG_GLOBAL = path.join(HOME, '.gitconfig');
 process.env.DSH_GH_REGISTRY_DIR = path.join(HOME, '.dsh', 'github-resident');
-process.env.DSH_GH_API_PORT = String(PORT);
 process.env.DSH_GH_NO_STATE_CHECK = '1';
 process.env.DSH_GH_NO_BOOTSTRAP = '1';
 process.env.DSH_GH_NO_UPDATE = '1';
@@ -61,35 +61,41 @@ await mkRepo(ALPHA, { remote: 'https://USER:' + SECRET + '@github.com/OWNER/alph
 await mkRepo(BETA);
 await fs.mkdir(path.join(ROOT, 'not-a-repo'), { recursive: true });
 
-// ---------- A. 宿主半边：真起回环服务 ----------
+// ---------- A. 真 effect + 服务位 + 真实 RPC 分发，不开端口 ----------
 const mod = await import(new URL('./plugin.js', import.meta.url).href);
-const tools = new Map();
-const services = new Map();
-let cleanup = null;
-mod.apply({
+const tools = new Map(), services = new Map(), endpoints = new Map(), cleanups = [];
+const listen = Server.prototype.listen;
+let listens = 0, route;
+Server.prototype.listen = function () { listens++; throw new Error('不允许自开端口'); };
+services.set('dswEndpoints', { handle: (name, fn) => { endpoints.set(name, fn); return () => endpoints.delete(name); } });
+services.set('connection', { fetch: { register: (def) => { route = def.fetch; return () => {}; } } });
+const ctx = {
   tools: { register: (t) => tools.set(t.name, t) },
-  provide: (k, v) => services.set(k, v),
-  effect: (fn) => { cleanup = fn() || null; },
-});
-
-const API = 'http://127.0.0.1:' + PORT;
-const post = (p, headers) => fetch(API + p, { method: 'POST', headers: headers || {} }).then((r) => r.json());
-const get = (p) => fetch(API + p).then((r) => r.json());
-
-async function waitUp(ms = 4000) {
-  const t0 = Date.now();
-  while (Date.now() - t0 < ms) {
-    try {
-      const r = await fetch(API + '/registry');
-      if (r.ok) return true;
-    } catch { /* 还没监听 */ }
-    await new Promise((r) => setTimeout(r, 120));
-  }
-  return false;
-}
-const up = await waitUp();
-check('测试实例的回环服务起来了', up, API);
-if (!up) { console.log(JSON.stringify({ total: steps.length, failed: 1, failedSteps: ['回环服务未起来'], steps }, null, 2)); process.exit(1); }
+  provide: (k, v) => services.set(k, v), get: (k) => services.get(k),
+  inject: (keys, fn) => { if (keys.every(k => services.has(k))) fn(ctx); },
+  effect: (fn) => { const stop = fn(); if (typeof stop === 'function') cleanups.push(stop); },
+};
+mod.apply(ctx);
+createRpcChannel({ ctx, handlers: endpoints, fireLog() {}, dispatchMeta: async () => ({ shortArgHash: () => '', dispatchErrorKind: () => 'internal' }) });
+const pathNames = {
+  '/state': 'state', '/registry': 'registry', '/registry/list': 'registry.list',
+  '/registry/plan': 'registry.plan', '/registry/verify': 'registry.verify',
+  '/registry/build': 'registry.build', '/registry/revoke': 'registry.revoke', '/registry/purge': 'registry.purge',
+};
+const request = async (path, headers = {}) => {
+  const [pathname, query = ''] = path.split('?');
+  const res = await route(new Request(PAGE_ORIGIN + '/api/dsws', {
+    method: 'POST', headers: { 'content-type': 'application/json', ...headers },
+    body: JSON.stringify({ type: 'client-request', rpcId: 'verify-ui', method: 'dsws', payload: { method: 'ghr.' + pathNames[pathname], payload: { query } } }),
+  }));
+  const envelope = await res.json();
+  if (!envelope.result.ok) throw new Error(envelope.result.error.message);
+  return envelope.result.value;
+};
+const post = request, get = request;
+check('测试实例真起 effect 后 RPC 服务位可用', endpoints.has('ghr.state') && endpoints.has('ghr.registry'));
+await new Promise(r => setTimeout(r, 20));
+check('真 effect 没有监听端口', listens === 0, listens);
 
 // 1) 状态：未授权 + 该问的问题（面板首屏就是这两样）
 const st0 = await get('/registry');
@@ -215,36 +221,22 @@ const regCjk = (regLits.join('').match(/[\u4e00-\u9fff]/g) || []).length;
 check(`登记库页文案预算：可见汉字 ≤ ${REG_CJK_BUDGET}`, regCjk <= REG_CJK_BUDGET, regCjk);
 check('登记库页最长一句 ≤ 60 字', Math.max(...regLits.map((x) => x.length)) <= 60, Math.max(...regLits.map((x) => x.length)));
 
-// ---------- C. 接线判据：客户端用的路径 ⊆ 宿主路由 ----------
-const hostPaths = new Set((services.get('githubResident').protocol().http.endpoints || []).map((e) => e.path));
-// 2026-10-14（票「面板的提交邮箱入口…」）：**不再只看 /registry\*** —— 客户端里凡是以 `API + '/…'`
-// 出现的路径全部纳入。少一条就可能有一条路由没人守（新加的 /identity/email 正是这样进来的）。
-const allClientPaths = [...new Set([...clientSrc.matchAll(/API \+ '(\/[^']*)'/g)].map((m) => m[1].split('?')[0]))];
-const clientPaths = allClientPaths.filter((p) => p.startsWith('/registry'));
-// 票 51 第 2 步：读取不再有「API 基址」这回事 —— 等价换（更强）：/state 走唯一的 RPC 出口 call()，
-// 且面板里再没有裸 fetch 打自开端口。
-check('客户端对 /state 的读取走唯一的 RPC 出口（call · 且 fetch(API…) 归零）',
-  /call\('ghr\.state'/.test(clientSrc) && clientSrc.includes('host.call'), '');
-// N1：面板不能只在挂载时读一次 —— 后台检查落地后必须自己补读，否则一直停在「检查中」
-check('客户端在检查未就绪时会自补读', clientSrc.includes("document.addEventListener('visibilitychange'")
-  && /setInterval\(\(\) => \{/.test(clientSrc), '');
-check('客户端按 probe 阶段显示（进行中 / 未启动 / 失败）',
-  clientSrc.includes("probe.state === 'disabled'") && clientSrc.includes("probe.state === 'failed'"), '');
-check('客户端确实用了多条 registry 路径', clientPaths.length >= 5, clientPaths);
-const missing = allClientPaths.filter((p) => !hostPaths.has(p));
-check('客户端每条路径都有宿主路由（全部路径，不只 registry）', missing.length === 0, { allClientPaths, missing });
-// 会写东西的那几条：一条都不许少（登记库的建库 / 清库 ＋ 设备码授权 ＋ 提交邮箱）
-// 票 51 第 2 步：客户端不再走 HTTP 路径，改走宿主 RPC 的 ghr.* 端点 —— 判据等价换（不静默删）：
-// 写类端点一条都不许少（登记库的建库 / 清库 ＋ 设备码授权 ＋ 提交邮箱）。宿主侧端点表的存在性由
-// tool-surface / tool-surface-contract 两件宿主门禁守（它们在真 apply 里数端点）；来源闸门那一层
-// 由 dispatchResident 合成页面来源头 ＋ 宿主路由自己的 originGate 保证（本文件 A 段已逐条验闸门）。
-const clientWriteEndpoints = ['ghr.registry.build', 'ghr.registry.purge', 'ghr.authStart', 'ghr.identity.email'];
-// 客户端是**动态拼**端点名的（call('ghr.' + 动作)），所以认前缀与动作名，不认整串字面量。
-const unwiredWriteEndpoints = clientWriteEndpoints.filter((e) => !clientSrc.includes(e.replace(/^ghr\./, 'ghr.')) && !clientSrc.includes("'ghr.' +"));
-if (!clientSrc.includes("'ghr.' +")) unwiredWriteEndpoints.push('（客户端没有动态端点拼接）');
-check('客户端用到的写类端点都在（ghr.* · 票 51 第 2 步的等价换）', unwiredWriteEndpoints.length === 0, { clientWriteEndpoints, unwiredWriteEndpoints });
-
-if (cleanup) { try { cleanup(); } catch { /* 关服务失败不影响判定 */ } }
+// ---------- C. 客户端用到的端点 ⊆ 协议清单 ∩ 实际服务位 ----------
+const hostNames = new Set(services.get('githubResident').protocol().http.endpoints.map(e => e.path));
+const clientNames = [...new Set([...clientSrc.matchAll(/(?:call|post)\('([^']+)'/g)].map(m => m[1]).filter(n => n.startsWith('ghr.')))];
+const registryNames = clientNames.filter(n => n.startsWith('ghr.registry'));
+check('客户端状态读取走唯一 RPC 出口，没有裸 fetch', clientNames.includes('ghr.state') && !/\bfetch\s*\(/.test(clientSrc));
+check('客户端在检查未就绪时会自补读', clientSrc.includes("document.addEventListener('visibilitychange'") && /setInterval\(\(\) => \{/.test(clientSrc));
+check('客户端按 probe 阶段显示（进行中 / 未启动 / 失败）', clientSrc.includes("probe.state === 'disabled'") && clientSrc.includes("probe.state === 'failed'"));
+check('客户端确实用了多条 registry 端点', registryNames.length >= 5, registryNames);
+const missing = clientNames.filter(n => !hostNames.has(n) || !endpoints.has(n));
+check('客户端每个端点都在协议且实际注册', missing.length === 0, { clientNames, missing });
+const requiredWrites = ['ghr.registry.build', 'ghr.registry.purge', 'ghr.authStart', 'ghr.identity.email'];
+check('客户端用到的写类端点一条不少', requiredWrites.every(n => clientNames.includes(n)), requiredWrites);
+const hostSrc = await fs.readFile(new URL('./plugin.js', import.meta.url), 'utf8');
+check('Resident 源码没有监听或端口配置', !/server\.listen\s*\(|DSH_GH_API_PORT|lastServerError/.test(hostSrc));
+for (const stop of cleanups.reverse()) stop();
+Server.prototype.listen = listen;
 await fs.rm(HOME, { recursive: true, force: true });
 await fs.rm(ROOT, { recursive: true, force: true });
 

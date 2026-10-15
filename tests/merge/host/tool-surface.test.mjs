@@ -8,8 +8,8 @@
  * 所以这里用 fake 服务（只记注册、不执行副作用）**真调用两个 apply**，再逐个断言名字、数量、交集与失败可见性。
  *
  * 安全边界（这是本文件敢真调 apply 的前提）：
- *   - fake 上下文的 `effect` **只记录、不执行**：Resident 的回环 HTTP 服务（默认 31790）就挂在那个 effect 里，
- *     执行它等于占用真实端口；本测试全程不绑端口。
+ *   - fake 上下文的 `effect` **只记录、不执行**：Resident 的启动检查与 RPC 接线挂在 effect 里；
+ *     本测试只检查注册，不触发启动期后台工作。
  *   - 不执行任何 `gh_*` 工具的 execute（它们会读写真实 HOME/gh/git/网络）。
  *   - `deck_*` 的 execute 走「同进程共享格 → 连接服务 → 同源 fetch」三条通道；测试里三条都空/不可解析，
  *     落到诚实占位；不产生网络请求（相对 URL 在 Node 的 global fetch 下直接抛，被内部 catch）。
@@ -56,7 +56,7 @@ check(ghTools.length === (declaredNames || []).length, '注册的 gh_* 条数 ==
 check(hostDeckNames.length === 0, '宿主半边不注册任何 deck_* 工具（那是 agent 行模块的事，实际 ' + hostDeckNames.length + '）')
 check(hostCtx.state.tools.every((d) => typeof d.execute === 'function' && typeof d.description === 'string' && d.parameters), '每个注册项都有 name/description/parameters/execute 四件套')
 check(hostCtx.state.provides.some((p) => p.key === 'githubResident'), '宿主半边 provide 了 githubResident 服务（10 方法契约的载体）')
-check(hostCtx.state.effects.length >= 1, '宿主半边把回环服务/启动检查登记进 ctx.effect（' + hostCtx.state.effects.length + ' 条，本测试不执行它们）')
+check(hostCtx.state.effects.length >= 1, '宿主半边把RPC 接线/启动检查登记进 ctx.effect（' + hostCtx.state.effects.length + ' 条，本测试不执行它们）')
 check(hostReturn === undefined, '宿主半边 apply 返回 undefined（清理走 ctx.effect，不靠返回值）')
 
 section('2) agent 行：真调用 deckToolsRow.js 的 apply')

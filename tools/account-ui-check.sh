@@ -1,77 +1,92 @@
 #!/usr/bin/env bash
-# account-ui-check.sh — 「GitHub 账号登录页 / 仓库登记库页还在不在」的机器判据。
-#
-# 一条命令把三件互相独立的事分开报：插件半边、账号登录态、GUI 会话凭据那一代。
-# 这样「登录 UI 没了」到底卡在哪一层，不用猜。
-#
-# 判读（实测口径）：
-#   插件半边 READY + 账号 已登录 + GUI 会话为当前代  → 页面问题在浏览器侧（旧页面/旧 URL/缓存）
-#   插件半边 DOWN                                    → 宿主没起或插件没加载（看 /root/dsh-web.log）
-#   账号 未登录                                      → 走 gh_cli_auth_web / 设置页里的「生成一次性码」
-#   GUI 会话「非当前代」                              → 宿主重启过，token 已轮换：旧页面失效，
-#                                                      入口 URL 只在宿主日志里且 **token 被掩码成 *** ，
-#                                                      容器内没有任何文件能还原它 —— 要从 App 的重开入口拿。
-#
-# 用法: bash tools/account-ui-check.sh
+# account-ui-check.sh — 只读诊断宿主、Resident RPC、账号缓存态与 GUI 会话元数据。
+# 用法: DSH_GUI_HEADERS_FILE=/path/to/headers bash tools/account-ui-check.sh
+# DSH_GUI 默认 http://127.0.0.1:3080；header 文件每行 Header: value。
+# 不从日志或 identity 文件提取凭据，不把凭据放 URL/argv，也不刷新/写入真实身份。
+# READY 只表示 protocol/state 的 RPC 回执通过校验；无凭据/端点失败如实报未就绪并退出 1。
 set -uo pipefail
 
-API="${DSH_GH_API:-http://127.0.0.1:31790}"
-GUI="${DSH_GUI:-http://127.0.0.1:3080}"
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+RPC_HELPER="$SCRIPT_DIR/resident-rpc.mjs"
 LOG="${DSH_WEB_LOG:-/root/dsh-web.log}"
 PIDFILE="${DSH_WEB_PIDFILE:-/root/.dsha-web.pid}"
 IDENTITY="${DSH_WEB_IDENTITY:-/root/.dsha-web.identity}"
 ACTIVITY="${DSH_WEB_ACTIVITY:-/root/.dsha-web-activity.json}"
 
-jq_get() { # jq_get <json> <点路径>，不依赖 jq
-  node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const j=JSON.parse(s);const p=process.argv[1].split(".");let v=j;for(const k of p)v=v?.[k];console.log(typeof v==="object"?JSON.stringify(v):String(v));}catch{console.log("(解析失败)")}})' "$2" <<<"$1" 2>/dev/null
-}
-
-echo "── 1. 宿主进程 ──"
-pid="$(cat "$PIDFILE" 2>/dev/null || echo '')"
-if [ -n "$pid" ] && kill -0 "$pid" 2>/dev/null; then
+printf '%s\n' '── 1. 宿主进程 ──'
+pid=""
+if [ -r "$PIDFILE" ]; then IFS= read -r pid < "$PIDFILE" || true; fi
+if [[ "$pid" =~ ^[1-9][0-9]*$ ]] && kill -0 "$pid" 2>/dev/null; then
   echo "dsh web 存活   : pid $pid，起于 $(ps -o lstart= -p "$pid" | sed 's/^ *//')"
 else
-  echo "dsh web        : 不在（pid 文件 ${pid:-空}）—— 宿主没起时任何页面都是死的"
+  echo "dsh web        : PID 文件未确认存活进程；以宿主 RPC 的实际回执为准"
 fi
 
-echo "── 2. 插件半边（回环口 $API）──"
-proto="$(curl -s -m 8 "$API/protocol" 2>/dev/null || echo '')"
-if [ -n "$proto" ]; then
-  echo "协议           : $(jq_get "$proto" version) 版，工具 $(node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{console.log(JSON.parse(s).tools.length)}catch{console.log("?")}})' <<<"$proto") 个"
-  echo "registry 路由  : $(node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const j=JSON.parse(s);console.log((j.http?.endpoints||[]).filter(e=>String(e.path).startsWith("/registry")).map(e=>e.method+" "+e.path).join("  "))}catch{console.log("?")}})' <<<"$proto")"
-  echo "插件半边       : READY"
-else
-  echo "插件半边       : DOWN（回环口不可达：插件没加载或宿主没起）"
-fi
+rpc_status=0
+receipt="$(node "$RPC_HELPER" --live)" || rpc_status=$?
+node -e '
+let raw = "";
+process.stdin.on("data", (part) => raw += part).on("end", () => {
+  let result;
+  try { result = JSON.parse(raw); } catch { result = { ok: false, message: "诊断 helper 未返回有效 JSON。" }; }
+  console.log("── 2. 插件半边（现有宿主同源 /api/dsws）──");
+  if (result.ok === true) {
+    console.log("宿主来源       :", result.origin);
+    console.log("协议           :", result.protocol.version, "版，工具", result.protocol.tools.length, "个");
+    console.log("registry 端点  :", result.protocol.http.endpoints.filter((e) => e.path.startsWith("ghr.registry")).map((e) => e.method + " " + e.path).join("  "));
+    console.log("插件半边       : READY（protocol/state RPC 已校验）");
+  } else {
+    console.log("插件半边       : NOT_READY —", result.message || "诊断失败");
+    console.log("工具诊断路径   : gh_protocol / gh_cli_status");
+    console.log("在线凭据入口   : DSH_GUI_HEADERS_FILE，显式 header 文件；不读日志或 identity 内容");
+  }
+  console.log("── 3. 账号登录态（缓存视图，不请求强制刷新/写入）──");
+  if (result.ok === true) {
+    const s = result.state;
+    console.log("已登录         :", s.authenticated === null ? "未知（尚无快照）" : s.authenticated);
+    console.log("账号           :", s.account === null ? "未知" : JSON.stringify(s.account));
+    console.log("gh 层 / 助手   :", s.gh.layer, "/", s.credHelper ? "已配置（内容不回显）" : "未配置或尚无快照");
+    console.log("快照时间       :", s.snapshotAt || s.probe.snapshotAt || "无");
+    console.log("快照检查阶段   :", s.probe.state, "，cached=", s.cached);
+  } else {
+    console.log("状态           : 未取得有效 RPC 快照，不能据此判断是否登录");
+    process.exitCode = 1;
+  }
+});
+' <<< "$receipt" || rpc_status=1
 
-echo "── 3. 账号登录态（这就是那一页要显示的东西）──"
-state="$(curl -s -m 12 "$API/state" 2>/dev/null || echo '')"
-if [ -n "$state" ]; then
-  echo "已登录         : $(jq_get "$state" authenticated)"
-  echo "账号           : $(jq_get "$state" account)"
-  echo "gh 层 / 助手   : $(jq_get "$state" gh.layer) / $(jq_get "$state" credHelper)"
-  echo "快照时间       : $(jq_get "$state" snapshotAt)"
-else
-  echo "状态           : 取不到（插件半边 DOWN）"
-fi
+printf '%s\n' '── 4. GUI 会话凭据元数据 ──'
+node - "$IDENTITY" "$ACTIVITY" "$LOG" <<'NODE'
+const fs = require('fs');
+const [identity, activity, log] = process.argv.slice(2);
+try {
+  const st = fs.statSync(identity);
+  console.log('identity 文件  :', st.size, '字节，mtime', st.mtime.toISOString(), '（不读内容）');
+} catch { console.log('identity 文件  : 不存在或不可读'); }
+try {
+  const act = JSON.parse(fs.readFileSync(activity, 'utf8'));
+  console.log('页面心跳       : generation=' + JSON.stringify(act.generation) + ' idle=' + JSON.stringify(act.idle) + ' plugins=' + JSON.stringify(act.plugins));
+} catch { console.log('页面心跳       : 无或不可读（不能确认当前页面连接）'); }
+try {
+  // 仅提取基址，不捕获 token；日志绝不用作 RPC 的认证来源。
+  const text = fs.readFileSync(log, 'utf8');
+  const bases = [...text.matchAll(/http:\/\/127\.0\.0\.1:[0-9]+\/(?=\?token=)/g)];
+  console.log('日志入口基址   :', bases.length ? bases.at(-1)[0] : '未找到 GUI 入口记录');
+  console.log('日志凭据       : 不读取或复用；请使用显式 header 文件');
+} catch { console.log('日志入口基址   : 日志不存在或不可读'); }
+NODE
 
-echo "── 4. GUI 会话凭据那一代 ──"
-echo "identity 文件  : $(wc -c < "$IDENTITY" 2>/dev/null || echo 0) 字节，mtime $(date -r "$IDENTITY" '+%F %T' 2>/dev/null || echo '—')"
-if [ -f "$ACTIVITY" ]; then
-  act="$(cat "$ACTIVITY")"
-  echo "页面心跳       : generation=$(jq_get "$act" generation) idle=$(jq_get "$act" idle) plugins=$(jq_get "$act" plugins)"
-else
-  echo "页面心跳       : 无（还没有页面连过这个宿主实例）"
-fi
-last="$(grep -oE 'http://127\.0\.0\.1:[0-9]+/\?token=[^[:space:]"]*' "$LOG" 2>/dev/null | tail -1)"
-if [ -n "$last" ]; then
-  echo "日志入口基址   : ${last%%\?*}"
-  case "$last" in *'token=***') echo "日志里的 token : 掩码（***）—— 容器内无法还原；重开 GUI 要从 App 的入口拿 URL" ;; esac
-else
-  echo "日志入口基址   : $LOG 里没有 'dsh web: http://…' 这一行"
-fi
-echo "未带凭据访问   : HTTP $(curl -s -o /dev/null -m 8 -w '%{http_code}' "$GUI/" 2>/dev/null)（401 = 凭据必需，正常）"
+# 保留匿名 HTTP 状态诊断：先校验 URL，再只读现有 GUI；不跟随跳转、不发送认证头。
+node --input-type=module - "$RPC_HELPER" <<'NODE'
+import { pathToFileURL } from 'node:url';
+const { guiOrigin } = await import(pathToFileURL(process.argv[2]));
+try {
+  const response = await fetch(guiOrigin() + '/', { redirect: 'manual', signal: AbortSignal.timeout(8000) });
+  console.log('未带凭据访问   : HTTP', response.status, '（401 = 凭据必需，正常）');
+  await response.body?.cancel();
+} catch { console.log('未带凭据访问   : 未完成（GUI 地址无效、不可达或超时）'); }
+NODE
 
-echo
-echo "结论口径：宿主 ✅ + 插件半边 READY + 已登录 true + 心跳存在 → 页面本身是活的；"
-echo "          此时若设置里看不到 GitHub 页，问题在浏览器那一侧的旧页面/旧 URL/缓存，重开 App 的 GUI 入口即可。"
+printf '\n%s\n' '结论口径：RPC READY 证明插件能够响应；已登录 true 只描述缓存快照。'
+printf '%s\n' '页面心跳和 identity 元数据不能独自证明当前浏览器会话有效；页面异常时再核对 App 的 GUI 入口。'
+exit "$rpc_status"

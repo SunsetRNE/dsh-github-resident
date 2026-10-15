@@ -1,5 +1,7 @@
 # 合并实施计划：Deck 并入 Resident（单包 `@local/dsh-github-resident-v2`）
 
+> 历史材料：本文的独立回环端口与 `DSH_GH_API_PORT` 方案已退役。当前面板、脚本均走宿主 RPC `/api/dsws` 的 `ghr.*` 端点；此处保留旧测量与决定的原文供追溯，现行清单以 `gh_protocol.http` 为准。
+
 | 项 | 值 |
 |---|---|
 | 规划日期 | 2026-10-11（UTC） |

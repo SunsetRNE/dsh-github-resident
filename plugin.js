@@ -1497,9 +1497,10 @@ const ERROR_CODES = {
   E_NO_UPSTREAM: '仓库没有配置 upstream，push 无处可去',
   E_API: 'GitHub REST API 返回非 2xx',
   E_ARGS: '必填参数缺失或类型不符',
+  E_RPC_ARGS: '宿主端点只接受 query 参数，不接受方法覆盖',
   E_REGISTRY_CONSENT: '登记文件库尚未获得授权：先按回执里的 ask 问用户，同意后带 consent:true 重调',
   E_REGISTRY_LIB: '登记文件库不存在：先 gh_repo_registry {action:"build", consent:true} 建库',
-  E_INTERFACE_DOWN: '插件回环接口不可达（插件未启用或未刷新页面）',
+  E_INTERFACE_DOWN: '宿主 RPC 不可用（连接未就绪或端点未注册）',
   // —— 来源闸门族：这三条真实出现在回环路由的拒绝文案里（此前没登记）——
   E_ORIGIN: '这条路由只接受带本机页面来源头（Origin/Referer）的请求',
   E_REGISTRY_ORIGIN: '写登记库的路由只接受来自设置页的请求（缺 Origin/Referer）',
@@ -2789,22 +2790,15 @@ sys.stdout.flush()
     parameters: {},
     readOnly: true,
     execute: async () => {
-      const g = await resolveGh({ install: false });
-      if (!g.ok) {
-        // 票 29：探测超时 ≠ 没装。别在这时说「下次会自动落地一份」——超时那条路**故意不下载**。
-        if (g.timedOut) {
-          return {
-            installed: false, timedOut: true, note: g.note,
-            hint: 'gh 探测超时（此刻未知）：下次调用会重新探测；确需一份自带副本，显式跑 gh_cli_install（本插件不会在超时时替你下载）',
-          };
-        }
+      const snap = await statePayload({ refresh: true, cached: true });
+      const g = snap.gh || {};
+      if (!g.installed) {
+        if (g.timedOut) return {
+          installed: false, timedOut: true, note: g.note,
+          hint: 'gh 探测超时（此刻未知）：下次调用会重新探测；确需一份自带副本，显式跑 gh_cli_install（本插件不会在超时时替你下载）',
+        };
         return { installed: false, hint: '下次调用任意 gh_* 工具会自动落地一份，或显式跑 gh_cli_install' };
       }
-      const version = g.version;
-      // **不戴工牌**（票「子进程环境…」的「不戴」清单）：本工具问的就是**宿主 gh 自己的状态**，
-      // 戴上 GH_TOKEN 会让它改口报「按 token 登录」（实测），把真相读成假象。
-      const status = await run(g.path, ['auth', 'status', '--hostname', 'github.com']);
-      const helper = await readCredHelper();
       const hostsPath = HOSTS_FILE;   // 路径只有模块顶部一处定义（原来这里又拼了一份）
       let hosts = null;
       try {
@@ -2820,21 +2814,10 @@ sys.stdout.flush()
           gitProtocol: (raw.match(/git_protocol:\s*(\S+)/) || [])[1] || null,
         };
       } catch { hosts = { path: hostsPath, exists: false }; }
-      let active = null;
-      if (status.code === 0) {
-        // **不戴工牌**：同上 —— 这里答的是「宿主 gh 的活动账号是谁」，不是「插件是谁」。
-        const who = await run(g.path, ['api', 'user', '--jq', '.login']);
-        if (who.code === 0) active = who.stdout.trim();
-      }
       return {
-        version,
-        path: g.path,
-        layer: g.layer,
-        authenticated: status.code === 0,
-        activeAccount: active,
-        gitCredentialHelper: helper || null,
-        hosts,
-        rawStatus: status.stdout.trim().slice(0, 600),
+        version: g.version, path: g.path, layer: g.layer,
+        authenticated: snap.authenticated, activeAccount: snap.account,
+        gitCredentialHelper: snap.credHelper, hosts, rawStatus: snap.rawStatus || '',
       };
     },
   }));
@@ -2878,10 +2861,23 @@ sys.stdout.flush()
   }));
 
   // ---------- 插件协议：Host Service + 自描述文档 ----------
-  // 端口定义提到协议之前：协议里的 http.base 必须报**真实端口**（见下面 base 那行 —— 它此前写死
-  // 31790，一旦用 DSH_GH_API_PORT 改端口，协议就在说谎）。接口本身的说明留在下面起服务那一段。
-  const API_PORT = Number(process.env.DSH_GH_API_PORT) || 31790;
-  const API_ORIGIN = 'http://127.0.0.1:' + API_PORT;
+  // 宿主 RPC 的能力清单：协议与注册共用；原自开端口已退役。
+  const RESIDENT_ENDPOINTS = [
+    ['state', '账号快照（query: cached=1 / refresh=1）'],
+    ['version', 'gh 当前版本 / 最新版本 / 是否可更新'],
+    ['update', '更新插件自带 gh（系统层只报告）'],
+    ['protocol', '本协议文档'],
+    ['registry', '登记库状态与建库许可'],
+    ['registry.list', '登记库清单（prefix / host / tag / missing_remote）'],
+    ['registry.plan', '只读建库计划（root / depth）'],
+    ['registry.verify', '登记库与磁盘对账（root）'],
+    ['registry.revoke', '撤销建库许可，保留库'],
+    ['registry.purge', '清库（confirm=1，真实页面来源）'],
+    ['registry.build', '建库或刷新（consent=1 / rescan=1 / root / depth / prune）'],
+    ['logout', '凭据拆除勘察（不执行拆除）'],
+    ['authStart', '一次性码 + 授权页'],
+    ['identity.email', '保存提交邮箱（email；空值只读）'],
+  ];
   const PROTOCOL = {
     id: PROTOCOL_ID,
     version: PROTOCOL_VERSION,
@@ -2892,7 +2888,7 @@ sys.stdout.flush()
         { name: 'protocol', args: [], returns: '本协议文档' },
         // 这一条曾经写的是**工具** gh_resident_status 的形状（token/identity/…），而服务方法
         // status() 走的是 statePayload（面板读的那份快照），两者字段完全不同 —— 消费方照协议调会拿不到东西。
-        { name: 'status', args: '{ cached?: boolean, refresh?: boolean }', returns: '{ gh: { installed, version, layer, path, willAutoLand }, authenticated, account, hostsPath, stateFile, credHelper, reposRoot, lastFlow, updates, cached, snapshotAt, snapshotAgeMs, probe?, serverError?, apiPort? }' },
+        { name: 'status', args: '{ cached?: boolean, refresh?: boolean }', returns: '{ gh: { installed, version, layer, path, willAutoLand }, authenticated, account, hostsPath, stateFile, credHelper, reposRoot, lastFlow, updates, cached, snapshotAt, snapshotAgeMs, probe? }' },
         { name: 'repos', args: '{ root?: string, depth?: number }', returns: '{ root, count, repos }' },
         { name: 'registry', args: '{ action?, root?, depth?, consent?, confirm?, prune?, path?, slug?, note?, tags? }', returns: '{ ok, action, consentRequired?, ask?, dir, registered|count, remoteBound, withoutRemote, drift? }' },
         { name: 'registryList', args: '{ root?, prefix?, onlyMissingRemote?, hasRemote?, host?, tag? }', returns: '{ libraryExists, dir, count, libraryCount, remoteBound, withoutRemote, byHost, entries, malformed }' },
@@ -2921,24 +2917,13 @@ sys.stdout.flush()
       consume: "const git = ctx.get('githubResident'); const r = await git.repos({ root: '/path/to/your/repos' })  // root 省略时用配置的 reposRoot，再退回 ~/GitHub",
     },
     http: {
-      base: API_ORIGIN,
-      loopbackOnly: true,
-      endpoints: [
-        { method: 'GET', path: '/state', returns: '账号快照 / gh 版本 / 更新意图 / 最近一次 GC（默认走快照，?refresh=1 同步重建）' },
-        { method: 'GET', path: '/gh/version', returns: '当前版本 / 最新版本 / 是否可更新' },
-        { method: 'POST', path: '/gh/update', returns: '自更新结果（系统层只报告）' },
-        { method: 'GET', path: '/protocol', returns: '本文档（机器可读）' },
-        { method: 'GET', path: '/registry', returns: '登记库状态：授权、条目数、有/无远端、index.json' },
-        { method: 'GET', path: '/registry/list', returns: '登记库清单（?prefix= / ?host= / ?tag= / ?missing_remote=1）' },
-        { method: 'POST', path: '/registry/plan', returns: '只读计划：会新登记谁、谁失效（不落盘）' },
-        { method: 'POST', path: '/registry/build', returns: '建库/刷新（?consent=1 且带浏览器来源头才落盘，否则只回 ask）' },
-        { method: 'POST', path: '/registry/verify', returns: '与磁盘对账（未登记 / 已消失 / 不再是仓库 / 越界）' },
-        { method: 'POST', path: '/registry/revoke', returns: '撤授权（库保留）' },
-        { method: 'POST', path: '/registry/purge', returns: '删整棵库（?confirm=1）' },
-        { method: 'POST', path: '/auth/start', returns: '一次性码 + 授权页' },
-        { method: 'POST', path: '/logout', returns: '凭据拆除勘察或执行结果（token 只回掩码）' },
-        { method: 'POST', path: '/identity/email', returns: '写提交邮箱（?email=…；只认带浏览器来源头的请求，机器调用请走 gh_identity {action:"email"}；空值只回报现状、不写）' },
-      ],
+      base: '/api/dsws',
+      loopbackOnly: false,
+      transport: '面板与机器调用走宿主 connection RPC；自开端口已删除。由宿主负责连接认证。',
+      call: "connection.rpc.call('/api', 'dsws', { method: 'ghr.<name>', payload: { query?: string } })",
+      envelope: '{ type: server-response, rpcId, result: { ok, value?, error? } }；value 是能力回执，保留自己的 ok/error',
+      writes: '写入口要求真实同源页面 Origin/Referer；不采信 payload 中的来源。机器写操作走 gh_* 工具的 consent/confirm 契约。',
+      endpoints: RESIDENT_ENDPOINTS.map(([name, returns]) => ({ method: 'POST', path: 'ghr.' + name, returns })),
     },
     envelope: {
       protocol: 'string，固定为 ' + PROTOCOL_SPEC,
@@ -2954,7 +2939,7 @@ sys.stdout.flush()
       repoDir: REGISTRY_REPO_DIR,
       indexFile: REGISTRY_INDEX_FILE,
       consentFile: REGISTRY_CONSENT_FILE,
-      envOverride: 'DSH_GH_REGISTRY_DIR 覆盖整棵数据目录（授权文件、index.json、repos/ 都在它下面）；DSH_GH_API_PORT 改回环端口（默认 31790）',
+      envOverride: 'DSH_GH_REGISTRY_DIR 覆盖整棵数据目录（授权文件、index.json、repos/ 都在它下面）',
       oneFilePerRepo: '<slug>.json，slug = <basename>-<sha1(绝对路径)[:12]>；目录名即事实来源，消费方只读目录即可',
       entry: {
         schema: 'string，固定 ' + REGISTRY_SCHEMA,
@@ -3068,7 +3053,7 @@ sys.stdout.flush()
 
     guarantees: {
       masking: '任何输出都不含 token 原文，只出现掩码',
-      loopbackOnly: 'HTTP 只监听 127.0.0.1',
+      loopbackOnly: '不自开监听；所有面板能力走宿主已认证的 RPC 通道',
       readOnlyTools: TOOL_PROTOCOL.filter((t) => t.kind === 'read').map((t) => t.name),
       protocolIncrements: '协议增量规矩：给已有段**加字段**算向后兼容（不动 version）；**新增段**必须 bump version —— 消费方只按 spec 就能判断某段在不在',
       idempotent: '只读工具可重复调用；gh_sync 支持 dry_run 预演；registry build/rescan 幂等（同路径同 slug）',
@@ -3102,12 +3087,7 @@ sys.stdout.flush()
       push: opts.push,
       dryRun: opts.dryRun === true,
     }),
-    authStart: async () => {
-      const flow = await startDeviceFlowPty();
-      const opened = await openUrl(GH_DEVICE_URL);
-      lastFlow = { user_code: flow.code, at: new Date().toISOString(), opened };
-      return { user_code: flow.code, verification_uri: GH_DEVICE_URL, opened };
-    },
+    authStart: () => authStart(),
     logout: async (opts = {}) => teardown(opts),
     version: async (opts = {}) => {
       const st = await versionStatus({ force: opts.force === true });
@@ -4096,61 +4076,36 @@ sys.stdout.flush()
 
   ctx.tools.register(textTool({
     toolName: 'gh_protocol',
-    description: 'Return the machine-readable protocol of this plugin: protocol version, the Host Service surface other plugins may call, the loopback HTTP endpoints, the tool catalogue with declared inputs and returns, the result envelope, and the error-code table. Read this before driving this plugin from another plugin or script.',
+    description: 'Return the machine-readable protocol of this plugin: protocol version, the Host Service surface other plugins may call, the host RPC endpoints, the tool catalogue with declared inputs and returns, the result envelope, and the error-code table. Read this before driving this plugin from another plugin or script.',
     parameters: {},
     readOnly: true,
     execute: async () => PROTOCOL,
   }));
 
-  // ---------- 本机回环 API：让设置页能真正生成并显示一次性码 ----------
-  // 设置页（浏览器）与插件（node）是两个进程，没有现成的数据通道；
-  // 这里在 127.0.0.1 上开一个小接口，浏览器直连取状态与一次性码。
-  // 只监听回环、只回状态与一次性码，任何 token 都不出现在响应里。
-  // （API_PORT / API_ORIGIN 两行已提到上面协议定义之前 —— 协议里的 http.base 要报真实端口。）
+  // ---------- 宿主 RPC：保留真实请求的来源，不伪造页面身份 ----------
   let lastFlow = null;
-  let lastServerError = null;
 
-  /** 请求自带的浏览器来源头（Origin 优先，退回 Referer）。 */
-  function pageOriginOf(req) {
-    return String((req && req.headers && (req.headers.origin || req.headers.referer)) || '');
+  function pageOriginOf(request) {
+    const headers = request && request.headers;
+    return headers && typeof headers.get === 'function'
+      ? headers.get('origin') || headers.get('referer') || ''
+      : String((headers && (headers.origin || headers.referer)) || '');
   }
 
-  /** 只有回环来源算「本机页面」（设置页）；其余一律不给 CORS，也不放行写路由（审计 L4）。 */
-  function originAllowed(req) {
+  function originAllowed(request) {
     try {
-      const u = new URL(pageOriginOf(req));
-      return u.hostname === '127.0.0.1' || u.hostname === 'localhost' || u.hostname === '::1' || u.hostname === '[::1]';
-    } catch {
-      return false;
-    }
+      const origin = new URL(pageOriginOf(request));
+      return /^https?:$/.test(origin.protocol) && origin.origin === new URL(request.url).origin;
+    } catch { return false; }
   }
 
-  /** 写路由统一闸门：缺来源头 = 机器调用，只回错，不改任何东西。 */
-  function originGate(res, req, action, code) {
-    if (originAllowed(req)) return false;
-    sendJson(res, 200, {
-      ok: false,
-      action,
-      error: (code || 'E_ORIGIN') + '：这条路由只接受带本机页面来源头（Origin/Referer）的请求',
+  function originError(request, action, code = 'E_ORIGIN') {
+    if (originAllowed(request)) return null;
+    return {
+      ok: false, action,
+      error: code + '：这条宿主端点只接受带同源页面来源头（Origin/Referer）的请求',
       hint: '机器调用请走 gh_* 工具：需要同意时工具先回 ask，由模型把问题交给用户',
-    }, req);
-    return true;
-  }
-
-  function sendJson(res, code, body, req) {
-    const headers = {
-      'content-type': 'application/json; charset=utf-8',
-      'access-control-allow-headers': 'content-type',
-      'access-control-allow-methods': 'GET,POST,OPTIONS',
-      'cache-control': 'no-store',
     };
-    // 原来恒发 ACAO:* —— 任意网页都能读本机状态（审计 L4）。改成只回环来源回显。
-    if (originAllowed(req)) {
-      headers['access-control-allow-origin'] = pageOriginOf(req);
-      headers.vary = 'Origin';
-    }
-    res.writeHead(code, headers);
-    res.end(code === 204 ? undefined : JSON.stringify(body));
   }
 
   // ---------- 版本自更新 ----------
@@ -4347,17 +4302,21 @@ sys.stdout.flush()
     const g = await resolveGh({ install: false });
     let authenticated = false;
     let account = null;
+    let rawStatus = '';
     if (g.ok) {
       // **不戴工牌**：面板那格「宿主 gh 登录态」要如实；插件自己的身份由消费面与体检回答。
       const st = await run(g.path, ['auth', 'status', '--hostname', 'github.com']);
       authenticated = st.code === 0;
+      rawStatus = st.stdout.trim().slice(0, 600);
       if (authenticated) {
         const who = await run(g.path, ['api', 'user', '--jq', '.login']);
         if (who.code === 0 && who.stdout.trim()) account = who.stdout.trim();
       }
     }
     return {
-      gh: { installed: g.ok, version: g.ok ? g.version : null, layer: g.layer, path: g.path, willAutoLand: !g.ok },
+      gh: { installed: g.ok, version: g.ok ? g.version : null, layer: g.layer, path: g.path, willAutoLand: !g.ok,
+        ...(g.timedOut ? { timedOut: true, note: g.note } : {}) },
+      rawStatus,
       authenticated,
       account,
       // 提交邮箱（票「面板的提交邮箱入口：已授权但没填过时给一次填写机会」）：面板据此决定要不要给填写入口。
@@ -4464,7 +4423,8 @@ sys.stdout.flush()
    */
   async function statePayload(opts = {}) {
     const base = (await readSnapshot(opts)) || {};
-    if (opts.cached === true && !opts.refresh) {
+    // cached 选择轻量快照；可同时 refresh 账号，仍不触发独立的版本网络检查。
+    if (opts.cached === true) {
       const peeked = await peekSnapshot();
       return { ...peeked, lastFlow, updates: versionState, ...(lastGc ? { lastGc } : {}), cached: peeked.cached === true, probe: peeked.probe || probeView() };
     }
@@ -4484,164 +4444,74 @@ sys.stdout.flush()
     };
   }
 
-  /** 票 51 第 2 步：回环 listener 的具名持有 —— 端口外壳与宿主 RPC 端点共用**同一份**处理体。 */
-  let handleResidentRequest = null;
-
-  async function startLoopbackServer(port) {
-    const http = await import('node:http');
-    handleResidentRequest = async (req, res) => {
-      try {
-        const url = new URL(req.url || '/', API_ORIGIN);
-        const send = (code, body) => sendJson(res, code, body, req);
-        if (req.method === 'OPTIONS') {
-          send(204, {});
-          return;
-        }
-        if (url.pathname === '/state') {
-          // ?refresh=1 才同步重建；?cached=1 只回缓存（首屏用），默认同样只读快照。
-          const snap = await statePayload({
-            refresh: url.searchParams.get('refresh') === '1',
-            cached: url.searchParams.get('cached') === '1',
-          });
-          // 面板连的是 31790；端口被占时这里能看出「服务没起来」（审计 L4/L5）。
-          send(200, { ...snap, apiPort: API_PORT, ...(lastServerError ? { serverError: lastServerError } : {}) });
-          return;
-        }
-        if (url.pathname === '/gh/version') {
-          send(200, await versionStatus({ force: url.searchParams.get('force') === '1' }));
-          return;
-        }
-        if (url.pathname === '/gh/update' && req.method === 'POST') {
-          if (originGate(res, req, 'gh-update')) return;
-          send(200, await autoUpdate({ force: url.searchParams.get('force') === '1' }));
-          return;
-        }
-        if (url.pathname === '/protocol') {
-          send(200, PROTOCOL);
-          return;
-        }
-        if (url.pathname === '/registry') {
-          send(200, await registryAction({ action: 'status' }));
-          return;
-        }
-        if (url.pathname === '/registry/list') {
-          send(200, await registryListPayload({
-            prefix: url.searchParams.get('prefix') || undefined,
-            host: url.searchParams.get('host') || undefined,
-            tag: url.searchParams.get('tag') || undefined,
-            onlyMissingRemote: url.searchParams.get('missing_remote') === '1',
-          }));
-          return;
-        }
-        if (url.pathname === '/registry/plan' && req.method === 'POST') {
-          const d = Number(url.searchParams.get('depth'));
-          send(200, await registryAction({
-            action: 'plan',
-            root: url.searchParams.get('root') || undefined,
-            depth: Number.isInteger(d) && d > 0 ? d : undefined,
-          }));
-          return;
-        }
-        if (url.pathname === '/registry/verify' && req.method === 'POST') {
-          send(200, await registryAction({ action: 'verify', root: url.searchParams.get('root') || undefined }));
-          return;
-        }
-        if (url.pathname === '/registry/revoke' && req.method === 'POST') {
-          if (originGate(res, req, 'revoke', 'E_REGISTRY_ORIGIN')) return;
-          send(200, await registryAction({ action: 'revoke' }));
-          return;
-        }
-        if (url.pathname === '/registry/purge' && req.method === 'POST') {
-          // 破坏性动作同样只接受设置页来的请求；工具路径要 confirm:true。
-          const wantsConfirm = url.searchParams.get('confirm') === '1';
-          if (wantsConfirm && !originAllowed(req)) {
-            send(200, {
-              ok: false, action: 'purge', confirmRequired: true, dryRun: true,
-              error: 'E_REGISTRY_ORIGIN：confirm=1 只接受来自设置页的请求（缺 Origin/Referer）',
-            });
-            return;
-          }
-          send(200, await registryAction({ action: 'purge', confirm: wantsConfirm }));
-          return;
-        }
-        if (url.pathname === '/registry/build' && req.method === 'POST') {
-          // 同意是「人自己点的」这件事：?consent=1 只接受带浏览器来源头（Origin/Referer）的请求 ——
-          // 也就是设置页里的按钮。没有来源头的机器调用一律走工具路径：工具先回 ask，由模型问用户。
-          const d = Number(url.searchParams.get('depth'));
-          const wantsConsent = url.searchParams.get('consent') === '1';
-          const action = url.searchParams.get('rescan') === '1' ? 'rescan' : 'build';
-          const root = url.searchParams.get('root') || undefined;
-          if (wantsConsent && !originAllowed(req)) {
-            send(200, {
-              ...(await consentRequiredPayload({
-                root: root || (await registryDefaultRoot()),
-                depth: Number.isInteger(d) && d > 0 ? d : 3,
-                action,
-                consent: await readConsent(),
-              })),
-              error: 'E_REGISTRY_CONSENT_ORIGIN：consent=1 只接受来自设置页的请求（缺 Origin/Referer）',
-              hint: '机器调用请走 gh_repo_registry 工具：它会先回 ask，由模型把问题交给用户',
-            });
-            return;
-          }
-          send(200, await registryAction({
-            action,
-            consent: wantsConsent ? true : undefined,
-            via: wantsConsent ? 'ui:registry-panel' : undefined,
-            prune: url.searchParams.get('prune') === '1',
-            root,
-            depth: Number.isInteger(d) && d > 0 ? d : undefined,
-          }));
-          return;
-        }
-        if (url.pathname === '/logout' && req.method === 'POST') {
-          if (originGate(res, req, 'logout')) return;
-          send(200, await teardown({ confirm: false }));
-          return;
-        }
-        if (url.pathname === '/auth/start' && req.method === 'POST') {
-          if (originGate(res, req, 'auth-start')) return;
-          if (!(await ghVersion({ install: false }))) {
-            send(200, { ok: false, error: 'gh 不可用（这条路只读、不替你下载）：先跑 gh_cli_install；诊断见它的 attempts' });
-            return;
-          }
-          const flow = await startDeviceFlowPty();
-          const opened = await openUrl(GH_DEVICE_URL);
-          lastFlow = { user_code: flow.code, at: new Date().toISOString(), opened };
-          send(200, {
-            ok: Boolean(flow.code),
-            user_code: flow.code,
-            verification_uri: GH_DEVICE_URL,
-            opened,
-          });
-          return;
-        }
-        if (url.pathname === '/identity/email' && req.method === 'POST') {
-          // 面板的填写入口（票「面板的提交邮箱入口：已授权但没填过时给一次填写机会」）：
-          // **只认带本机页面来源头的请求** —— 机器调用请走 `gh_identity {action:"email"}`（同一条写入口、
-          // 同一套校验、只是回执形状不同）。写的是插件自己的 state，不碰宿主；不带 email（空值）时只回报现状。
-          if (originGate(res, req, 'identity-email', 'E_IDENTITY_EMAIL_ORIGIN')) return;
-          send(200, { action: 'email', stateFile: STATE_FILE, ...(await applyCommitEmail(url.searchParams.get('email') || '')) });
-          return;
-        }
-        send(404, { error: 'not found' });
-      } catch (err) {
-        send(500, { error: String(err) });
-      }
+  /** 注册只绑定端点名；入参无法改变方法或路径，来源取自宿主的真实 Request。 */
+  async function dispatchResident(name, args = {}, request) {
+    if (!args || typeof args !== 'object' || Array.isArray(args)
+      || (args.query !== undefined && typeof args.query !== 'string') || args.method !== undefined) {
+      return { ok: false, error: 'E_RPC_ARGS：只接受 { query?: string }，不接受方法覆盖' };
+    }
+    const query = new URLSearchParams(args.query || '');
+    const root = query.get('root') || undefined;
+    const d = Number(query.get('depth'));
+    const depth = Number.isInteger(d) && d > 0 ? d : undefined;
+    const writeCodes = {
+      update: 'E_ORIGIN', 'registry.revoke': 'E_REGISTRY_ORIGIN',
+      authStart: 'E_ORIGIN', logout: 'E_ORIGIN', 'identity.email': 'E_IDENTITY_EMAIL_ORIGIN',
     };
-    const server = http.createServer(handleResidentRequest);
-    // 端口被占（重复加载）不该静默：留一条诊断，/state 里能看到（审计 L5）。
-    server.on('error', (e) => {
-      lastServerError = {
-        at: new Date().toISOString(),
-        port: API_PORT,
-        code: e && e.code ? e.code : null,
-        message: String((e && e.message) || e).slice(0, 200),
-        note: '端口被占时首个实例继续服务；本实例的 HTTP 路由不可达',
-      };
-    });
-    server.listen(port, '127.0.0.1');
-    return server;
+    if (writeCodes[name]) {
+      const denied = originError(request, name, writeCodes[name]);
+      if (denied) return denied;
+    }
+    try {
+      switch (name) {
+        case 'state': return await statePayload({ refresh: query.get('refresh') === '1', cached: query.get('cached') === '1' });
+        case 'version': return await versionStatus({ force: query.get('force') === '1' });
+        case 'update': return await autoUpdate({ force: query.get('force') === '1' });
+        case 'protocol': return PROTOCOL;
+        case 'registry': return await registryAction({ action: 'status' });
+        case 'registry.list': return await registryListPayload({
+          prefix: query.get('prefix') || undefined, host: query.get('host') || undefined,
+          tag: query.get('tag') || undefined, onlyMissingRemote: query.get('missing_remote') === '1',
+        });
+        case 'registry.plan': return await registryAction({ action: 'plan', root, depth });
+        case 'registry.verify': return await registryAction({ action: 'verify', root });
+        case 'registry.revoke': return await registryAction({ action: 'revoke' });
+        case 'registry.purge': {
+          const confirm = query.get('confirm') === '1';
+          const denied = confirm && originError(request, 'purge', 'E_REGISTRY_ORIGIN');
+          if (denied) return { ...denied, confirmRequired: true, dryRun: true };
+          return await registryAction({ action: 'purge', confirm });
+        }
+        case 'registry.build': {
+          const consent = query.get('consent') === '1';
+          const action = query.get('rescan') === '1' ? 'rescan' : 'build';
+          const denied = consent && originError(request, action, 'E_REGISTRY_CONSENT_ORIGIN');
+          if (denied) return {
+            ...(await consentRequiredPayload({ root: root || (await registryDefaultRoot()), depth: depth || 3, action, consent: await readConsent() })),
+            ...denied,
+          };
+          return await registryAction({ action, root, depth, consent: consent ? true : undefined,
+            via: consent ? 'ui:registry-panel' : undefined, prune: query.get('prune') === '1' });
+        }
+        case 'logout': return await teardown({ confirm: false });
+        case 'authStart': return await authStart();
+        case 'identity.email': return { action: 'email', stateFile: STATE_FILE, ...(await applyCommitEmail(query.get('email') || '')) };
+        default: return { ok: false, error: 'unknown endpoint: ghr.' + name };
+      }
+    } catch (error) {
+      return { ok: false, error: String((error && error.message) || error) };
+    }
+  }
+
+  async function authStart() {
+    if (!(await ghVersion({ install: false }))) {
+      return { ok: false, error: 'gh 不可用（这条路只读、不替你下载）：先跑 gh_cli_install；诊断见它的 attempts' };
+    }
+    const flow = await startDeviceFlowPty();
+    const opened = flow.code ? await openUrl(GH_DEVICE_URL) : null;
+    lastFlow = { user_code: flow.code, at: new Date().toISOString(), opened };
+    return { ok: Boolean(flow.code), user_code: flow.code, verification_uri: GH_DEVICE_URL, opened,
+      ...(flow.error ? { error: flow.error } : {}) };
   }
 
   // 加载期预置：只先探本地（毫秒级、不出网），确认缺 gh 才在后台落地一份。
@@ -4719,79 +4589,38 @@ sys.stdout.flush()
     scheduleAutoUpdate();
   }
 
-  /** 票 51 第 2 步：端点名 ghr.<名字>，参数 { method?, query? }。与端口外壳共享同一份分发（一份真源）。 */
-  const RESIDENT_ENDPOINTS = [
-    ['state', 'GET', '/state'], ['version', 'GET', '/gh/version'], ['update', 'POST', '/gh/update'],
-    ['protocol', 'GET', '/protocol'], ['registry', 'GET', '/registry'], ['registry.list', 'GET', '/registry/list'],
-    ['registry.plan', 'POST', '/registry/plan'], ['registry.verify', 'POST', '/registry/verify'],
-    ['registry.revoke', 'POST', '/registry/revoke'], ['registry.purge', 'POST', '/registry/purge'],
-    ['registry.build', 'POST', '/registry/build'], ['logout', 'POST', '/logout'],
-    ['authStart', 'POST', '/auth/start'], ['identity.email', 'POST', '/identity/email'],
-  ];
-
-  /** 最小 res 桩：sendJson 只用到 writeHead/setHeader/end，回执从 end 里解析。合成的 req 带**真实页面来源头**
-   *  （面板就是从那里来的）—— 与端口外壳走同一道来源闸门，不做特权旁路。 */
-  async function dispatchResident({ method = 'GET', url = '/' } = {}) {
-    if (typeof handleResidentRequest !== 'function') return { ok: false, error: '宿主分发未就绪' };
-    let out = null;
-    const res = {
-      writeHead() { return this },
-      setHeader() { return this },
-      end(body) { try { out = JSON.parse(String(body)) } catch { out = { ok: false, raw: String(body) } } },
-    };
-    await handleResidentRequest({ method, url, headers: { origin: 'http://127.0.0.1:3080' } }, res);
-    return out === null ? { ok: false, error: '宿主内部没有回话（路由未命中）' } : out;
-  }
-
-  /** 把 13 条路由挂到宿主 RPC 上（服务位 dswEndpoints 由另一半边 provide —— 票 51 裁决 B）。 */
-  function registerResidentEndpoints() {
-    let h = null;
-    // 取服务位这一步本身可能抛（真宿主与夹具的行为不同：夹具静默返回 undefined，真服务可能报「服务不存在」）——
-    // 注册失败只该少一条通道，绝不许影响加载期的其它工作（端口外壳、快照、工具注册）。
-    try { h = typeof ctx.get === 'function' ? ctx.get('dswEndpoints') : null; } catch { h = null; }
-    if (!h || typeof h.handle !== 'function') return { ok: false, note: 'dswEndpoints 服务位不可用（宿主另一半边未加载）' };
+  function registerResidentEndpoints(scope) {
+    const h = scope.get('dswEndpoints');
+    if (!h || typeof h.handle !== 'function') throw new Error('dswEndpoints.handle 不可用');
+    const disposers = [];
     try {
-      for (const [name, method, path] of RESIDENT_ENDPOINTS) {
-        h.handle('ghr.' + name, async (args) => {
-          const a = args || {};
-          return await dispatchResident({ method: a.method || method, url: path + (a.query ? '?' + a.query : '') });
-        });
+      for (const [name] of RESIDENT_ENDPOINTS) {
+        const stop = h.handle('ghr.' + name, (args, request) => dispatchResident(name, args, request));
+        if (typeof stop === 'function') disposers.push(stop);
       }
-      return { ok: true, count: RESIDENT_ENDPOINTS.length };
-    } catch (e) {
-      // 挂端点失败只该少一条通道 —— 加载期的其它工作（端口外壳、快照、工具注册）不受影响。
-      return { ok: false, note: '挂端点失败：' + String((e && e.message) || e) };
+    } catch (error) {
+      for (const stop of disposers.reverse()) stop();
+      throw error;
     }
+    return () => { for (const stop of disposers.reverse()) stop(); };
   }
 
-  if (typeof ctx.effect === 'function') {
-    ctx.effect(() => {
-      let handle = null;
-      let disposed = false;
-      // dispose 可能早于 listen 回调：那时也要关掉，否则端口留在旧实例手里（审计 L5）。
-      // 同票 47 的教训：起服务这条路（`await import('node:http')` 等）也会抛 —— 链尾必须有拒绝处理，
-      // 否则「路由起不来」会升级成「宿主进程结束」。端口被占那条路另由 server.on('error') 如实记账。
-      registerResidentEndpoints();   // 票 51：面板走宿主 RPC（端口外壳另行起停，见下）
-      startLoopbackServer(API_PORT).then(
-        (s) => { if (disposed) s.close(); else handle = s; },
-        (err) => {
-          lastServerError = {
-            at: new Date().toISOString(), port: API_PORT, code: null,
-            message: String((err && err.message) || err).slice(0, 200),
-            note: '回环服务没起来（这次异常发生在监听之前）：本实例的 HTTP 路由不可达',
-          };
-        },
-      );
-      scheduleStartupChecks();
-      scheduleAutoLand();
-      scheduleVersionWork();
-      return () => { disposed = true; if (handle) handle.close(); };
+  // 两半加载顺序及 Deck 的依赖可晚到；用宿主依赖门注册，不能只在 apply 时探一次。
+  if (typeof ctx.inject === 'function') {
+    ctx.inject(['dswEndpoints'], (scope = ctx) => {
+      if (typeof scope.effect === 'function') scope.effect(() => registerResidentEndpoints(scope));
+      else return registerResidentEndpoints(scope);
     });
-  } else {
-    startLoopbackServer(API_PORT);
+  } else if (typeof ctx.get === 'function' && ctx.get('dswEndpoints')) {
+    if (typeof ctx.effect === 'function') ctx.effect(() => registerResidentEndpoints(ctx));
+    else registerResidentEndpoints(ctx);
+  }
+
+  const startup = () => {
     scheduleStartupChecks();
     scheduleAutoLand();
     scheduleVersionWork();
-  }
-  return undefined;
+  };
+  if (typeof ctx.effect === 'function') ctx.effect(startup);
+  else startup();
 }

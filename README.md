@@ -218,14 +218,20 @@ npm run verify          # 期望：bundle pass=8 fail=0，三个验证件 failed
 `npm run verify` 等价于：
 
 ```bash
-bash verify-bundle.sh          # 标识一致 / 语法 / profile 链接 / 回环接口
+bash verify-bundle.sh          # 标识一致 / 语法 / profile 链接 / 隔离服务位
 node verify-logout.mjs         # 19 条：凭据销毁在伪 HOME 下清干净
 node verify-registry.mjs       # 63 条：未授权不落盘 / 授权后一仓一文件 / 不污染工作树 / 凭据脱敏
-node verify-ui.mjs             # 39 条：宿主真起回环服务打全套面板路由（含来源门）+ 客户端模块/slot 注册 + 两半路径对齐；不含视觉验证
+node verify-ui.mjs             # 真起 effect、不监听端口，经宿主 RPC 验全套面板能力（含来源门）+ 模块/slot 注册 + 端点覆盖；不含视觉验证
 node verify-gh-bootstrap.mjs   # 31 条：系统无 gh 时自带落地（含 fetch 兜底、加载期预置）
 node verify-update-gc.mjs      # 34 条：版本自更新 / 缓存 GC / 零检查读
 node verify-real-artifact.mjs  # 拿官方 release 真包验抽取器（断网自动 SKIP）
 ```
+
+## 面板与机器调用
+
+面板通过宿主 `connection.rpc.call('/api', 'dsws', { method: 'ghr.state', payload: { query: 'cached=1' } })` 读取状态；其余能力见 `gh_protocol.http.endpoints`。原独立回环端口已退役，`DSH_GH_API_PORT` 与页面 API 地址覆盖不再生效；协议 `spec` 保持 `dsh-github-resident/8`。
+
+宿主仍提供 `githubResident` 服务位，工具、服务与面板共用实现。机器写操作沿用 `gh_*` 工具的同意/确认契约；页面写操作保留真实同源来源检查。`bash verify-bundle.sh` 默认只验证假 HOME 下的服务位；在线只读诊断用 `DSH_GUI_HEADERS_FILE=/path/to/headers bash tools/account-ui-check.sh`，凭据只从 header 文件读取。
 
 ## 环境开关
 
@@ -244,7 +250,6 @@ node verify-real-artifact.mjs  # 拿官方 release 真包验抽取器（断网�
 | `DSH_GH_RELEASE_API` / `DSH_GH_DOWNLOAD_BASE` | release 元数据 / 下载基址（夹具与私有镜像用） | 官方 |
 | `DSH_GH_OAUTH_CLIENT_ID` | 撤销 token 用的 OAuth client id | 占位常量 |
 | `DSH_GH_NET_TIMEOUT_MS` | 对 GitHub 的 REST 动作的上界（`api()` / release 元数据 / 撤销 token 三处；超时按「超时 / 未知」回，**不重试**）。钳 100ms–120s | `20000` |
-| `DSH_GH_API_PORT` | 插件回环接口端口（设置页/脚本都打它）。改端口要同时给页面注入 `window.__DSH_GITHUB_RESIDENT_API__`，否则面板失联（审计 L12） | `31790` |
 | `DSH_GH_REGISTRY_DIR` | 登记文件库的数据根（含 `registry/consent.json`、`index.json`、`repos/`） | `~/.dsh/github-resident` |
 
 ## 目录
@@ -260,6 +265,8 @@ LESSONS.md                踩坑记录（现象 / 真因 / 判据；条数以文
 ```
 
 ## 审计修复（1.6.4）
+
+以下为历史记录：其中自开端口、CORS 与 serverError/apiPort 的实现已随宿主 RPC 迁移退役。
 
 2026-10-10 的代码审计（`plugin-audit/AUDIT-2026-10-10.md`）逐条落实的修复：
 

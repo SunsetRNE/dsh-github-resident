@@ -44,7 +44,7 @@ export default {
     // H1 #445：bundled provider（原 31–215 行）已搬到 ./bootstrap.js；B3 rpc shim 与「方案 C 原样复制」的原委见 docs/design/837-host-index-wiring-ledger.md §2，下接动态接线与分发注册。
     const __DSW_HANDLERS__ = new Map()
     // harness.handle 压成一行写法：本文件顶 350 行上限，省下的行留给真正要读的接线说明（见账本 §1）。
-    const harness = { handle: (method, fn) => { __DSW_HANDLERS__.set(String(method).replace(/^wf\./, ''), fn) } }
+    const harness = { handle: (method, fn) => { const key = String(method).replace(/^wf\./, ''); __DSW_HANDLERS__.set(key, fn); return () => { if (__DSW_HANDLERS__.get(key) === fn) __DSW_HANDLERS__.delete(key) } } }
     // 票「面板改走宿主 RPC ＋ 删掉自开端口 31790」：把注册入口以**服务位**交付给另一半边（维护者三选一裁 B）——
     // Resident 半边用 ctx.get('dswEndpoints').handle(...) 挂自己的端点，两半边之间不传整张表、也不新增端口。
     if (typeof ctx.provide === 'function') ctx.provide('dswEndpoints', { handle: harness.handle })

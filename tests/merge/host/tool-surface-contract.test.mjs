@@ -7,7 +7,7 @@
  *   - `gh_cli_logout.optional` 漏了 `remove_gh_cache`（工具 schema 与实现里都真有）；
  *   - `service.methods[status].returns` 写的是**工具** gh_resident_status 的形状，而服务方法走 statePayload；
  *   - `serviceApi` 里 `version` 键写了两次（对象字面量后写者胜，协议号那行被静默丢掉）；
- *   - `http.base` 写死 31790，而真实端口读 `DSH_GH_API_PORT`；
+ *   - `http.base` 曾与真实监听地址漂移；票 51 后改为宿主同源 `/api/dsws` 契约；
  *   - 第二个服务 `ghResolver` 已在被 deck 半边消费，却从没登记进 `service.alsoProvided`；
  *   - 错误码表 9 条里 7 条从未出现，而真实出现的 3 条（E_ORIGIN 族）没登记；
  *   - deck 侧工具清单有 4 份副本（`DECK_TOOL_FILES`、行模块的 import、行模块的 `SEVEN` 常量、
@@ -103,7 +103,7 @@ if (resident) {
   // -------------------------------------------------------------------------
   // 二、Host Service 与 http 面
   // -------------------------------------------------------------------------
-  section('二、Host Service 与回环面：声明 == 实现')
+  section('二、Host Service 与宿主 RPC 面：声明 == 实现')
 
   const svc = protocol && protocol.service ? protocol.service : {}
   const methods = Array.isArray(svc.methods) ? svc.methods.map((m) => m.name).sort() : []
@@ -126,9 +126,19 @@ if (resident) {
 
   check(typeof svc.consume === 'string' && svc.consume.indexOf(MERGED_PACKAGE_NAME) < 0, 'consume 示例不写死机器路径')
   const base = (protocol && protocol.http && protocol.http.base) || ''
-  check(base.indexOf('127.0.0.1') >= 0, 'http.base 指向回环（' + base + '）')
-  const portFromEnv = String((protocol && protocol.http && protocol.http.base || '').split(':').pop())
-  check(/^\d+$/.test(portFromEnv), 'http.base 报的是端口数字（不是写死的字面量）')
+  // 票 51：原两条「回环地址 / 数字端口」改为同源载体契约；其余判据保持原样。
+  check(base === '/api/dsws', 'http.base 指向宿主同源 RPC 通道（' + base + '）')
+  check(protocol.http.loopbackOnly === false, 'http.loopbackOnly 为 false（连接地址与鉴权由宿主管理）')
+  const endpoints = Array.isArray(protocol.http.endpoints) ? protocol.http.endpoints : []
+  const expectedEndpoints = [
+    'ghr.state', 'ghr.version', 'ghr.update', 'ghr.protocol', 'ghr.registry', 'ghr.registry.list',
+    'ghr.registry.plan', 'ghr.registry.build', 'ghr.registry.verify', 'ghr.registry.revoke',
+    'ghr.registry.purge', 'ghr.authStart', 'ghr.logout', 'ghr.identity.email',
+  ].sort()
+  check(JSON.stringify(endpoints.map((e) => e.path).sort()) === JSON.stringify(expectedEndpoints),
+    'http.endpoints 完整声明 14 个 ghr.* 端点，无缺项或重复')
+  check(endpoints.length > 0 && endpoints.every((e) => e.method === 'POST'),
+    'http.endpoints 的每项均经 POST 宿主 RPC 调用')
 
   // 错误码：真实出现在源码里的码都要在表里。
   // 判据只认**带引号的**码（'E_X' 或 'E_X：文案'）—— 不加这个边界，"PROBE_TTL_MS" 这类

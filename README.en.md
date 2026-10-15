@@ -10,6 +10,12 @@ A resident GitHub identity bundle for [DeepSeek Harness](https://github.com/deep
 
 > Package `@sunsetrne/dsh-github-resident-v2` ｜ Plugin name `github-resident` ｜ Profile row id `include:github-resident-v2`
 
+## Panel transport
+
+The settings panel uses the host connection RPC at `/api/dsws` with `ghr.*` endpoint names. The independent loopback listener and its port/address overrides are retired. `gh_protocol.http.endpoints` lists all 14 existing capabilities; the protocol spec remains `dsh-github-resident/8`. Tools and RPC share the same host implementation. Page writes retain same-origin checks and explicit consent/confirmation; machine writes use the `gh_*` tools.
+
+`bash verify-bundle.sh` checks the service in an isolated HOME by default. Live read-only diagnostics use `DSH_GUI_HEADERS_FILE=/path/to/headers bash tools/account-ui-check.sh`; credentials are read from that file, never passed in a URL.
+
 ## What it does
 
 ### 1. Ships its own gh — usable right after install

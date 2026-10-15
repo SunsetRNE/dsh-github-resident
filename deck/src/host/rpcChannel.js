@@ -108,7 +108,7 @@ export function createRpcChannel(deps) {
   }
 
   // 一次分发：命中端点表，异常归一到 RpcResult 失败信封并留一行错误级日志（#46）。
-  const dispatchRpcEndpoint = async function (endpoint, payload) {
+  const dispatchRpcEndpoint = async function (endpoint, payload, request) {
     const fn = handlers.get(endpoint)
     if (!fn) {
       // #733：不认识端点名也留一行常驻告警（与 #724 回话空共用 host.dispatch.empty，不新增事件名）。
@@ -119,7 +119,7 @@ export function createRpcChannel(deps) {
       return { ok: false, error: { code: 'internal', message: 'unknown endpoint: ' + endpoint, details: {} } }
     }
     try {
-      const value = await fn(payload)
+      const value = await fn(payload, request)
       // #724：回话里没有内容的三种形状各留一行常驻告警（方法名、缺了哪个键、服务这一份的版本）。
       // 只记枚举、散列与版本号：不记入参原文、不记路径、不记任何回话内容。
       const shape = emptyReplyShape(value)
@@ -153,7 +153,7 @@ export function createRpcChannel(deps) {
     // 路径仍须落在本通道上：外层的 method 与请求路径要能相互印证，改坏了立刻拒绝（#596 正是路径对不上）。
     const pathname = String((request.url && (request.url.split('?')[0])) || '')
     if (!pathname.endsWith(DSW_RPC_ROUTE)) return badRequest(rpcId, 'request path is not on channel ' + DSW_RPC_ROUTE)
-    return replyEnvelope(rpcId, await dispatchRpcEndpoint(endpoint, call.payload))
+    return replyEnvelope(rpcId, await dispatchRpcEndpoint(endpoint, call.payload, request))
   }
 
   // 注册方式（#596 的关键一处）：走 connection.fetch.register 这条精确路由，不用 connection.rpc.handle。

@@ -110,7 +110,7 @@
   | `gh` 二进制 39 MB | `/usr/bin/gh`（dpkg 包 `gh`） | `gh_cli_install` 的 `dpkg -i` | 留下 |
 - **正确做法**：卸载前先跑 `gh_cli_logout`（`confirm:true` + 需要的开关），再 `remove_bundle`。
   不给 `confirm` 时它只回勘察报告，不动任何东西。
-- **判据**：`curl -s http://127.0.0.1:31790/protocol | grep gh_cli_logout`；拆除后 `leftover` 必须为空数组。
+- **判据**：`gh_protocol` 的工具清单包含 `gh_cli_logout`（原端口调用已退役）；拆除后 `leftover` 必须为空数组。
 
 ## 坑 12：测试脚本先 import 插件再改 HOME = 打到真 HOME
 
