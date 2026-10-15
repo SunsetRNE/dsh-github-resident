@@ -341,7 +341,8 @@ function mask(token) {
 
 /**
  * 对 GitHub 的 REST 动作的**统一上界**（票「给对 GitHub 的网络动作定一套统一的有界冗余策略（可达性随机）」
- * 的收窄版：只把三处**完全没有上界**的 REST 调用变成有界；重试 / 退避 / 双通道**不在本票范围**）。
+ * 的收窄版：只把三处**完全没有上界**的 REST 调用变成有界。重试 / 退避 / 双通道是**票 55 / #38**
+ * 补上的下一层 —— 分档表见 PROTOCOL.guarantees.networkPolicy）。
  * 默认 20s，`DSH_GH_NET_TIMEOUT_MS` 可覆盖；钳 100ms–120s。调用时才读，改环境不用重载插件
  *（与 `ghProbeTimeoutMs` 同款写法）。
  */
@@ -355,9 +356,55 @@ export function ghNetTimeoutMs() {
 }
 
 /**
+ * 票 55 / #38：对 GitHub 的**每一次网络尝试**只有**一种记账形状**（四个站点共用这一支）：
+ *   { step, channel: 'fetch' | 'curl' | 'node', attempt, ok, ms, httpCode, timedOut, error }
+ *   - step      站点名（哪个动作）：'api GET /user' / 'release-api' / 'download' / 探测的那一路；
+ *   - channel   走的是哪条通道：Node fetch / 系统 curl（'node' 留给本地 Node 侧通道，今天没用上，
+ *               但**留在形状里**，免得以后有人为了加它再改一次账本）；
+ *   - attempt   **1 起**的序号（同一次动作里的第几次）；
+ *   - ms        这一次花掉的毫秒；
+ *   - httpCode  HTTP 状态码（数字）或 null（没拿到响应）；
+ *   - timedOut  **只**表示「这一次尝试超时（结果未知）」—— 不许把超时说成「没有」；
+ *   - error     这一次的原始原因或 null（不吞成泛化错误）。
+ * 为什么要有它：过去四处各写一份 `attempts.push({ ... })`，字段名与含义各自漂移
+ *（gh_env_probe 的 attempts 是数字、releaseMeta 的是数组），读回执要先猜是哪一套账本。
+ */
+export const NET_ATTEMPT_FIELDS = ['step', 'channel', 'attempt', 'ok', 'ms', 'httpCode', 'timedOut', 'error'];
+
+/** 把任意一次尝试的描述**归一成唯一形状**（缺的字段补默认值，多余的字段丢掉）。 */
+export function netAttempt(rec = {}) {
+  const n = Number(rec.attempt);
+  return {
+    step: String(rec.step == null ? '' : rec.step),
+    channel: (rec.channel === 'curl' || rec.channel === 'node') ? rec.channel : 'fetch',
+    attempt: Number.isFinite(n) && n > 0 ? Math.round(n) : 1,
+    ok: rec.ok === true,
+    ms: Number.isFinite(Number(rec.ms)) ? Math.max(0, Math.round(Number(rec.ms))) : 0,
+    httpCode: Number.isFinite(Number(rec.httpCode)) ? Number(rec.httpCode) : null,
+    timedOut: rec.timedOut === true,
+    error: rec.error == null ? null : String(rec.error),
+  };
+}
+
+/** 往一份 attempts 数组里记一条规范记录（就地追加，返回同一个数组）。 */
+export function recordAttempt(list, rec) {
+  const arr = Array.isArray(list) ? list : [];
+  arr.push(netAttempt(rec));
+  return arr;
+}
+
+/** 分档表：B 档（只读 REST）的固定退避。 */
+export const NET_REST_RETRY_BACKOFF_MS = 300;
+/** 分档表：C 档（下载）的固定退避。 */
+export const NET_DOWNLOAD_RETRY_BACKOFF_MS = 1000;
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/**
  * 带上界的 fetch：超时抛一个**说得清是超时**的错（`err.timedOut` / `err.boundMs`），
  * 而不是让调用方拿到一个泛化错误、或者永远等下去（本仓不许的第三态）。
- * 只加上界这一件事 —— 传输层怎么选（fetch / curl）、要不要重试都保持现状（票面「留给下一轮」）。
+ * 只管上界这一件事：要不要重试、退避多久、走哪条通道都由**调用方**按分档表决定
+ *（票 55 / #38；见 PROTOCOL.guarantees.networkPolicy）—— 这一支自己绝不重试。
  */
 async function fetchBounded(url, init = {}) {
   const ms = ghNetTimeoutMs();
@@ -375,33 +422,66 @@ async function fetchBounded(url, init = {}) {
   }
 }
 
+/**
+ * GitHub REST 的统一入口。**分档（票 55 / #38）**：
+ *   - GET（只读，B 档）：首发 + 退避 300ms 重试一次；超时 / 传输层 / 5xx 才值得重试，4xx 不重试；
+ *   - 非 GET（写，B' 档，不可幂等）：**只发一次，绝不重放** —— 一个 POST 重发一次可能就建了第二张票 /
+ *     撤了第二个 token；超时如实记 timedOut，由调用方按「结果未知」措辞说。
+ * 回执**新增** `attempts`（规范形状数组，见 netAttempt）；`status`/`ok`/`timedOut`/`error`/`json`
+ * 的语义原样保留（调用方与门禁依赖它们）。
+ */
 async function api(token, method, urlPath, body) {
-  let res;
-  try {
-    res = await fetchBounded(`https://api.github.com${urlPath}`, {
-      method,
-      headers: {
-        accept: 'application/vnd.github+json',
-        'user-agent': 'dsh-github-resident',
-        ...(token ? { authorization: `Bearer ${token}` } : {}),
-        ...(body ? { 'content-type': 'application/json' } : {}),
-      },
-      body: body ? JSON.stringify(body) : undefined,
-    });
-  } catch (e) {
-    // 超时是**第三种事实**：既不是「没身份」，也不是某个 HTTP 状态。如实回出去（`status` 留 null、
-    // `timedOut` 为真），由每个调用方按自己的话术说「超时 / 未知」—— 别在这里吞成泛化错误。
-    const message = String((e && e.message) || e);
-    return { status: null, ok: false, timedOut: true, error: message, json: { message } };
+  const verb = String(method || 'GET').toUpperCase();
+  const isRead = verb === 'GET';
+  const maxAttempts = isRead ? 2 : 1;      // B 档 2 次；B' 档 1 次
+  const step = 'api ' + verb + ' ' + urlPath;
+  const attempts = [];
+  const init = {
+    method: verb,
+    headers: {
+      accept: 'application/vnd.github+json',
+      'user-agent': 'dsh-github-resident',
+      ...(token ? { authorization: `Bearer ${token}` } : {}),
+      ...(body ? { 'content-type': 'application/json' } : {}),
+    },
+    body: body ? JSON.stringify(body) : undefined,
+  };
+  let lastErr = null;
+  for (let i = 0; i < maxAttempts; i += 1) {
+    const startedAt = Date.now();
+    try {
+      const res = await fetchBounded(`https://api.github.com${urlPath}`, init);
+      recordAttempt(attempts, {
+        step, channel: 'fetch', attempt: i + 1, ok: res.ok, ms: Date.now() - startedAt,
+        httpCode: res.status, timedOut: false, error: res.ok ? null : 'HTTP ' + res.status,
+      });
+      // 5xx 值得重试一次（可达性随机）；4xx 同一个请求再发一次不会变，直接如实回。
+      if (isRead && !res.ok && res.status >= 500 && i + 1 < maxAttempts) {
+        await sleep(NET_REST_RETRY_BACKOFF_MS);
+        continue;
+      }
+      const text = await res.text();
+      let json;
+      try {
+        json = JSON.parse(text);
+      } catch {
+        json = { raw: text.slice(0, 500) };
+      }
+      return { status: res.status, ok: res.ok, json, attempts };
+    } catch (e) {
+      // 超时是**第三种事实**：既不是「没身份」，也不是某个 HTTP 状态。如实回出去（`status` 留 null、
+      // `timedOut` 为真 —— 这条顶层语义原样不动），由每个调用方按自己的话术说「超时 / 未知」，
+      // 别在这里吞成泛化错误。逐次记录里的 timedOut 才是「这一次真超时了没有」。
+      lastErr = e;
+      recordAttempt(attempts, {
+        step, channel: 'fetch', attempt: i + 1, ok: false, ms: Date.now() - startedAt,
+        httpCode: null, timedOut: Boolean(e && e.timedOut), error: String((e && e.message) || e),
+      });
+      if (i + 1 < maxAttempts) await sleep(NET_REST_RETRY_BACKOFF_MS);
+    }
   }
-  const text = await res.text();
-  let json;
-  try {
-    json = JSON.parse(text);
-  } catch {
-    json = { raw: text.slice(0, 500) };
-  }
-  return { status: res.status, ok: res.ok, json };
+  const message = String((lastErr && lastErr.message) || lastErr);
+  return { status: null, ok: false, timedOut: true, error: message, json: { message }, attempts };
 }
 
 /**
@@ -1625,6 +1705,8 @@ export function apply(ctx) {
           : me.timedOut
             ? { error: 'timeout', message: me.json.message ?? null }
             : { error: `HTTP ${me.status}`, message: me.json.message ?? null };
+        // 票 55 / #38：api() 的逐次尝试（规范形状）如实带出来 —— 「试了几次、哪次超时」一眼可见。
+        identity = { ...identity, attempts: me.attempts || [] };
       }
 
       return {
@@ -2206,28 +2288,53 @@ export function apply(ctx) {
   }
 
   /** 拿到 release 元数据；测试可用 DSH_GH_RELEASE_API 指向本地夹具。**带上界**（超时的错说得清是超时）。
-   *  最多试 RELEASE_API_ATTEMPTS 次：超时 / 传输层报错 / 5xx 值得重试一次（可达性随机）；
-   *  4xx 不重试（同一个请求再发一次不会变），如实抛出去。 */
+   *  **B 档（票 55 / #38）**：最多试 RELEASE_API_ATTEMPTS 次（首发 + 固定 300ms 退避重试一次）；
+   *  重试条件**保持不变** —— 超时 / 传输层报错 / 5xx 值得重试一次（可达性随机）；4xx 不重试
+   *（同一个请求再发一次不会变），如实抛出去。
+   *  逐次尝试走**共享记账器**，记录挂在抛出的错上（`err.attempts`）—— latestRelease 把它带进
+   *  gh_cli_version 的回执，诊断不必再猜「重试了几次、哪次超时」。 */
   async function releaseMeta() {
+    const attempts = [];
     let last = null;
     for (let i = 0; i < RELEASE_API_ATTEMPTS; i += 1) {
+      const startedAt = Date.now();
+      let recorded = false;
       try {
         const res = await fetchBounded(RELEASE_API, {
           headers: { 'user-agent': 'dsh-github-resident', accept: 'application/vnd.github+json' },
         });
         if (!res.ok) {
+          recordAttempt(attempts, {
+            step: 'release-api', channel: 'fetch', attempt: i + 1, ok: false, ms: Date.now() - startedAt,
+            httpCode: res.status, timedOut: false, error: 'release API HTTP ' + res.status,
+          });
+          recorded = true;
           const err = new Error('release API HTTP ' + res.status);
           err.httpStatus = res.status;
           err.retryable = res.status >= 500;
           throw err;
         }
-        return await res.json();
+        const json = await res.json();
+        recordAttempt(attempts, {
+          step: 'release-api', channel: 'fetch', attempt: i + 1, ok: true, ms: Date.now() - startedAt,
+          httpCode: res.status, timedOut: false, error: null,
+        });
+        recorded = true;
+        return json;
       } catch (e) {
+        if (!recorded) {
+          recordAttempt(attempts, {
+            step: 'release-api', channel: 'fetch', attempt: i + 1, ok: false, ms: Date.now() - startedAt,
+            httpCode: null, timedOut: Boolean(e && e.timedOut), error: String((e && e.message) || e),
+          });
+        }
         last = e;
         const retryable = Boolean(e && (e.timedOut || e.retryable || e.name === 'TypeError'));
         if (!retryable) break;
+        if (i + 1 < RELEASE_API_ATTEMPTS) await sleep(NET_REST_RETRY_BACKOFF_MS);
       }
     }
+    if (last && typeof last === 'object') last.attempts = attempts;   // 逐次记录随错一起抛出去
     throw last;
   }
 
@@ -2248,28 +2355,62 @@ export function apply(ctx) {
 
   /**
    * 下载首选 curl（带进度可控的超时），没有 curl 就退回 node 内建 fetch。
-   * 两条路都回同一个形状：{ ok, method, httpCode }，诊断里能看到走的哪条。
+   * **C 档（票 55 / #38）**：最多 2 次 —— 首发 + 固定 1000ms 退避重试一次。
+   * ⚠️ **两条通道各自的重试都算在这一档里**（别叠成 curl×2 + fetch×2 = 4 次）：
+   * 首发走首选通道，退避后那一次换到另一条通道（curl 优先、fetch 兜底）。
+   * 单次 300s 上界**不动**。回执新增 `attempts`（规范形状数组）；
+   * `ok`/`method`/`httpCode`/`stderr` 的语义原样保留。
    */
   async function downloadTo(url, file, extraArgs = []) {
     await fs.mkdir(path.dirname(file), { recursive: true });
     const forceFetch = process.env.DSH_GH_FORCE_FETCH === '1';
-    if (!forceFetch) {
-      const haveCurl = await run('sh', ['-c', 'command -v curl']);
-      if (haveCurl.code === 0) {
-        const r = await run('curl', ['-sSL', '--max-time', '300', '-w', '%{http_code}', ...extraArgs, '-o', file, url]);
-        return { ok: r.code === 0, method: 'curl', httpCode: (r.stdout || '').trim().slice(-3), stderr: r.stderr || '' };
+    const haveCurl = forceFetch ? false : (await run('sh', ['-c', 'command -v curl'])).code === 0;
+    const order = haveCurl ? ['curl', 'fetch'] : ['fetch', 'fetch'];   // 一档两次，两条通道都在内
+    const attempts = [];
+    let last = null;
+    for (let i = 0; i < order.length; i += 1) {
+      const startedAt = Date.now();
+      let r;
+      if (order[i] === 'curl') {
+        const c = await run('curl', ['-sSL', '--max-time', '300', '-w', '%{http_code}', ...extraArgs, '-o', file, url]);
+        const httpCode = (c.stdout || '').trim().slice(-3);
+        r = { ok: c.code === 0, method: 'curl', httpCode, stderr: c.stderr || '' };
+        recordAttempt(attempts, {
+          step: 'download', channel: 'curl', attempt: i + 1, ok: r.ok, ms: Date.now() - startedAt,
+          httpCode: httpCode || null, timedOut: Boolean(c.timedOut),
+          error: r.ok ? null : ((c.stderr || '').trim() || 'curl exit ' + c.code).slice(0, 300),
+        });
+      } else {
+        try {
+          const res = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(300_000) });
+          if (!res.ok) r = { ok: false, method: 'fetch', httpCode: String(res.status), stderr: '' };
+          else {
+            const buf = Buffer.from(await res.arrayBuffer());
+            if (buf.length === 0) r = { ok: false, method: 'fetch', httpCode: String(res.status), stderr: '响应体为空' };
+            else {
+              await fs.writeFile(file, buf);
+              r = { ok: true, method: 'fetch', httpCode: String(res.status), bytes: buf.length, stderr: '' };
+            }
+          }
+          recordAttempt(attempts, {
+            step: 'download', channel: 'fetch', attempt: i + 1, ok: r.ok, ms: Date.now() - startedAt,
+            httpCode: r.httpCode || null, timedOut: false,
+            error: r.ok ? null : (r.stderr || 'HTTP ' + res.status),
+          });
+        } catch (e) {
+          const timedOut = /abort|timeout/i.test(String((e && (e.name || e.message)) || e));
+          r = { ok: false, method: 'fetch', httpCode: '', stderr: String(e).slice(0, 300) };
+          recordAttempt(attempts, {
+            step: 'download', channel: 'fetch', attempt: i + 1, ok: false, ms: Date.now() - startedAt,
+            httpCode: null, timedOut, error: r.stderr,
+          });
+        }
       }
+      last = r;
+      if (r.ok) return { ...r, attempts };
+      if (i + 1 < order.length) await sleep(NET_DOWNLOAD_RETRY_BACKOFF_MS);
     }
-    try {
-      const res = await fetch(url, { redirect: 'follow', signal: AbortSignal.timeout(300_000) });
-      if (!res.ok) return { ok: false, method: 'fetch', httpCode: String(res.status), stderr: '' };
-      const buf = Buffer.from(await res.arrayBuffer());
-      if (buf.length === 0) return { ok: false, method: 'fetch', httpCode: String(res.status), stderr: '响应体为空' };
-      await fs.writeFile(file, buf);
-      return { ok: true, method: 'fetch', httpCode: String(res.status), bytes: buf.length, stderr: '' };
-    } catch (e) {
-      return { ok: false, method: 'fetch', httpCode: '', stderr: String(e).slice(0, 300) };
-    }
+    return { ...last, attempts };
   }
 
   /** tar.gz 优先：抽 bin/gh 落缓存，不需要 root、不动系统包库。 */
@@ -2279,13 +2420,13 @@ export function apply(ctx) {
     const file = path.join(GH_DATA_DIR, tarball);
     const dl = await downloadTo(url, file);
     if (!dl.ok) {
-      return { ok: false, step: 'tarball', url, error: '下载失败', method: dl.method, httpCode: dl.httpCode, stderr: (dl.stderr || '').slice(0, 300) };
+      return { ok: false, step: 'tarball', url, error: '下载失败', method: dl.method, httpCode: dl.httpCode, attempts: dl.attempts, stderr: (dl.stderr || '').slice(0, 300) };
     }
     try {
       await fs.mkdir(path.join(GH_DATA_DIR, 'bin'), { recursive: true });
       const extracted = extractGhFromTarGz(await fs.readFile(file), GH_BIN);
       await fs.rm(file, { force: true });
-      return { ok: true, step: 'tarball', url, asset: tarball, ...extracted };
+      return { ok: true, step: 'tarball', url, asset: tarball, attempts: dl.attempts, ...extracted };
     } catch (e) {
       return { ok: false, step: 'tarball', url, error: '抽取失败: ' + String(e) };
     }
@@ -2303,7 +2444,7 @@ export function apply(ctx) {
     const url = assetUrl(meta, debName);
     const dl = await downloadTo(url, file);
     if (!dl.ok) {
-      return { ok: false, step: 'deb', url, error: '下载失败', method: dl.method, httpCode: dl.httpCode, stderr: (dl.stderr || '').slice(0, 300) };
+      return { ok: false, step: 'deb', url, error: '下载失败', method: dl.method, httpCode: dl.httpCode, attempts: dl.attempts, stderr: (dl.stderr || '').slice(0, 300) };
     }
     const ex = await run('dpkg', ['--force-not-root', '--extract', file, dir]);
     if (ex.code !== 0) return { ok: false, step: 'deb', url, error: 'dpkg --extract 失败', stderr: ex.stderr.slice(0, 300) };
@@ -2314,7 +2455,7 @@ export function apply(ctx) {
     await fs.chmod(GH_BIN, 0o755);
     await fs.rm(file, { force: true });
     await fs.rm(dir, { recursive: true, force: true });
-    return { ok: true, step: 'deb', url, asset: debName };
+    return { ok: true, step: 'deb', url, asset: debName, attempts: dl.attempts };
   }
 
   /** 落地一份自带 gh；已经能用则直接回。失败不抛，把诊断回给调用方。 */
@@ -3362,6 +3503,22 @@ sys.stdout.flush()
       idempotent: '只读工具可重复调用；gh_sync 支持 dry_run 预演；registry build/rescan 幂等（同路径同 slug）',
       registryConsent: '登记库的建立与刷新必须先拿到用户同意：工具只回 ask 载荷，由模型转述给用户',
       registryWritesOnlyItsOwnDir: '登记过程不在任何仓库里写文件',
+      /**
+       * 票 55 / #38：对 GitHub 的网络动作**统一分档** + **一种记账形状**。
+       * 这张表就是口径本身 —— 代码与判据都引它；改档位等于改口径（加字段向后兼容，换口径要走评审）。
+       */
+      networkPolicy: {
+        oneShape: '每一次网络尝试只记一种形状：{ step: "<站点名>", channel: "fetch"|"curl"|"node", attempt: <1 起的序号>, ok: boolean, ms: number, httpCode: number|null, timedOut: boolean, error: string|null }。timedOut **只**表示「这一次尝试超时（结果未知）」—— 不许把超时说成「没有」；error 保留原始原因或 null。实现只有一处：netAttempt() / recordAttempt()。',
+        counts: '「试了几次」一律用 attempts.length；要显式数字字段就叫 attemptCount（别再用 attempts 当数字）。唯一的例外在 gh_env_probe：每路 detail 里 attempts 是**历史数字字段**（fetch 通道的尝试次数），数组叫 attemptLog，attemptCount = attemptLog.length —— 三者同时给，老判据与面板不断。',
+        tiers: [
+          { tier: 'A 只读探测', who: 'gh_env_probe 的三路连通性', tries: '每路默认 3（attempts 参数可覆盖 1–5）', channels: 'fetch + curl 双通道（Node fetch 不读 HTTP(S)_PROXY，curl 读）', backoff: '无（每路本来就多次）', giveUp: '单次上界 + 每路 15s 总预算用完' },
+          { tier: 'B 只读 REST', who: 'api() 的 GET、release 元数据', tries: '2（首发 + 退避重试一次）', channels: 'fetch', backoff: '固定 300ms', giveUp: '单次上界（DSH_GH_NET_TIMEOUT_MS，默认 20s）或 2 次用完' },
+          { tier: "B' 写 REST（不可幂等）", who: 'api() 的 POST / DELETE 等', tries: '1，不重试', channels: 'fetch', backoff: '—', giveUp: '单次上界；超时如实记 timedOut + 「结果未知」措辞，绝不重放' },
+          { tier: 'C 下载', who: 'downloadTo()', tries: '2（退避重试一次）', channels: 'curl 优先、fetch 兜底（两条通道各自的重试都算在这一档里，不叠成 4 次）', backoff: '固定 1000ms', giveUp: '300s 上界或 2 次用完' },
+          { tier: '不适用', who: 'probeGh（<gh> --version）', tries: '1', channels: '—', backoff: '—', giveUp: '5s 上界（现状不动）。理由：它是**本地子进程探测，不是网络动作** —— 重试一个卡死的本地进程既不会变通、又白等一遍 5s 上界' },
+        ],
+        receipts: 'api() 回执新增 attempts（数组）；releaseMeta() 把逐次记录挂在抛出的错上（err.attempts），gh_cli_version 的 error 回执里带出来；downloadTo() 回执新增 attempts，落地步骤（installFromTarball / installFromDeb）一并带上；gh_env_probe 见 counts。既有字段只增不减、语义不变。',
+      },
     },
   };
 
@@ -4274,7 +4431,7 @@ sys.stdout.flush()
       const budgetLeft = () => Math.max(0, netBudgetMs - (Date.now() - netStartedAt));
       for (const t of targets) {
         const t0 = Date.now();
-        const rec = { attempts: 0, okCount: 0, firstOkMs: null, httpCode: null, redirects: false, finalUrl: null, error: null };
+        const rec = { attempts: 0, attemptLog: [], okCount: 0, firstOkMs: null, httpCode: null, redirects: false, finalUrl: null, error: null };
         // 通道一：Node fetch（插件自己的 REST 工具走它）
         for (let i = 0; i < attemptsWanted; i += 1) {
           const budget = Math.min(NET_TIMEOUT_MS, budgetLeft());
@@ -4287,9 +4444,18 @@ sys.stdout.flush()
             if (rec.firstOkMs === null) rec.firstOkMs = Date.now() - a0;
             rec.httpCode = res.status;
             if (res.redirected) { rec.redirects = true; rec.finalUrl = res.url; }
+            recordAttempt(rec.attemptLog, {
+              step: t.name, channel: 'fetch', attempt: rec.attempts, ok: true,
+              ms: Date.now() - a0, httpCode: res.status, timedOut: false, error: null,
+            });
           } catch (e) {
             const msg = String((e && (e.message || e.name)) || e);
-            rec.error = /abort|timeout/i.test(msg) ? 'timeout（单次上界 ' + NET_TIMEOUT_MS + 'ms）' : msg.slice(0, 120);
+            const timedOut = /abort|timeout/i.test(msg);
+            rec.error = timedOut ? 'timeout（单次上界 ' + NET_TIMEOUT_MS + 'ms）' : msg.slice(0, 120);
+            recordAttempt(rec.attemptLog, {
+              step: t.name, channel: 'fetch', attempt: rec.attempts, ok: false,
+              ms: Date.now() - a0, httpCode: null, timedOut, error: rec.error,
+            });
           }
         }
         // 通道二：系统 curl（读 HTTP(S)_PROXY + 自己的 DNS/TLS 栈；VPN 环境下常常只有它通）
@@ -4301,13 +4467,21 @@ sys.stdout.flush()
             // `--max-time` 用**小数秒**（curl 支持）：取整到整秒会让 1200ms 的预算实际变成 2s。
             const r = await run('curl', ['-sS', '-o', '/dev/null', '-w', '%{http_code}', '-I', '--max-time', (budget / 1000).toFixed(2), t.url], { timeout: budget + 800, killSignal: 'SIGKILL' });
             const code = Number(String(r.stdout).trim().split('\n').pop()) || 0;
+            const curlOk = r.code === 0 && code > 0;
+            const curlErr = r.code !== 0 && r.stderr ? String(r.stderr).trim().slice(0, 120) : null;
             curl = {
-              ok: r.code === 0 && code > 0,
+              ok: curlOk,
               httpCode: code || null,
               ms: Date.now() - c0,
               viaProxyEnv: Boolean(process.env.HTTPS_PROXY || process.env.HTTP_PROXY || process.env.https_proxy || process.env.http_proxy),
-              ...(r.code !== 0 && r.stderr ? { error: String(r.stderr).trim().slice(0, 120) } : {}),
+              ...(curlErr ? { error: curlErr } : {}),
             };
+            // curl 这一跳也记进同一本账（序号接在 fetch 那几次后面）—— 形状与上面完全一致。
+            recordAttempt(rec.attemptLog, {
+              step: t.name, channel: 'curl', attempt: rec.attemptLog.length + 1, ok: curlOk,
+              ms: curl.ms, httpCode: code || null, timedOut: Boolean(r.signal === 'SIGKILL' || r.timedOut),
+              error: curlOk ? null : (curlErr || 'curl exit ' + r.code),
+            });
           } else {
             curl = { ok: false, httpCode: null, ms: 0, viaProxyEnv: false, error: 'budget-exhausted' };
           }
@@ -4324,7 +4498,8 @@ sys.stdout.flush()
           name: t.name, url: t.url, what: t.what, state,
           detail: {
             via: rec.okCount > 0 ? 'fetch' : (curl && curl.ok ? 'curl' : null),
-            attempts: rec.attempts, okCount: rec.okCount, successRate: rate,
+            attempts: rec.attempts, attemptCount: rec.attemptLog.length, attemptLog: rec.attemptLog,
+            okCount: rec.okCount, successRate: rate,
             httpCode: rec.httpCode,
             // ms = 这一路**总耗时**（全部失败时也要有值 —— 「卡了多久」正是失败时最该看的数）；
             // firstOkMs = 首次成功的那次延迟（全失败时为 null）。
@@ -4375,6 +4550,7 @@ sys.stdout.flush()
           '网络探测是 HEAD 可达性判断，任何 HTTP 状态码都算「通」；不代表某个具体资产能下载',
           '可达性按**随机**对待：每路多次尝试（默认 3 次，可传 attempts 覆盖），回执报成功次数/成功率/最终落点，不做二元判断',
           '双通道：先 Node fetch（不读 HTTP(S)_PROXY），再系统 curl（读代理）；只有 curl 通 = degraded，不是 missing',
+          '记账（票 55 / #38）：每次尝试都是一条 { step, channel, attempt, ok, ms, httpCode, timedOut, error }，放在 detail.attemptLog；detail.attempts（数字，fetch 通道次数，历史字段）与 detail.attemptCount（= attemptLog.length，两通道总次数）同时给 —— 老判据不断，新账本只有一种形状',
         ],
       };
     },
@@ -4456,7 +4632,11 @@ sys.stdout.flush()
       const meta = await releaseMeta();
       latestCache = { at: Date.now(), tag: meta.tag_name, version: parseGhVersion(meta.tag_name) };
     } catch (e) {
-      latestCache = { at: Date.now(), error: String(e).slice(0, 200) };
+      latestCache = {
+        at: Date.now(), error: String(e).slice(0, 200),
+        // 票 55 / #38：releaseMeta 的逐次尝试（规范形状）随错抛出来（err.attempts），这里如实带进回执。
+        ...(e && Array.isArray(e.attempts) ? { attempts: e.attempts } : {}),
+      };
     }
     return latestCache;
   }
@@ -4496,6 +4676,7 @@ sys.stdout.flush()
       ttlMs: VERSION_PROBE_TTL_MS,
       ...(g.timedOut ? { timedOut: true, note: g.note } : {}),
       ...(latest.error ? { error: latest.error } : {}),
+      ...(Array.isArray(latest.attempts) ? { attempts: latest.attempts } : {}),
       ...(lastAutoUpdate ? { lastUpdate: lastAutoUpdate } : {}),
     };
     return versionState;

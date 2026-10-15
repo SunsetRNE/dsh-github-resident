@@ -7,7 +7,7 @@
  *   ① **旋钮**：可配 + 上下限钳制 + 调用时才读（不重载插件）；
  *   ② **三处都真的在设定上界内返回**（旋钮压到 300ms，用一个**永不回话**的 fetch 桩实跑）；
  *   ③ 超时**按失败回**，且措辞说得清是「超时 / 未知」—— 不是泛化错误，也不是「HTTP null」；
- *   ④ 三处走的是**同一支** `fetchBounded`（tripwire 防回潮），而下载那条（本来就有 300s 上界）没被顺手改。
+ *   ④ 三处走的是**同一支** `fetchBounded`（tripwire 防回潮），而下载那条的 300s 上界没被顺手改（重试 / 退避 / 分档口径由 tests/merge/host/net-policy.test.mjs 接着钉 —— 票 55 / #38）。
  *
  * 离线：门禁里临时替换 `globalThis.fetch`（照《gh_pr 共用解析器 + 回落 gh pr create》那条裁决），
  * **不联网、不碰真实 api.github.com**；销毁那条路只走「撤销」一档，破坏性选项全部显式关掉。
@@ -176,7 +176,7 @@ await withPlugin(hC.home, { path: hC.path, dataDir: hC.home + '/.dsh/gh-cli' }, 
 hC.cleanup()
 
 // ===========================================================================
-section('五、源码级：三处走的是同一支 fetchBounded；下载那条没被顺手改（tripwire）')
+section('五、源码级：三处走的是同一支 fetchBounded；下载那条的上界没被顺手改（tripwire）')
 // ===========================================================================
 
 {
@@ -187,9 +187,9 @@ section('五、源码级：三处走的是同一支 fetchBounded；下载那条�
   check(!src.includes('await fetch(`https://api.github.com${urlPath}`'), 'api() 里那处裸 fetch 已消失（防回潮）')
   check(!src.includes('await fetch(RELEASE_API'), 'releaseMeta() 里那处裸 fetch 已消失（防回潮）')
   check(src.includes('signal: AbortSignal.timeout(300_000)'),
-    '下载那条的 300s 上界**原样没动**（本票只收三处 REST，不顺手改别处）')
+    '下载那条的 300s 上界**原样没动**（票 55 / #38 只给它加「退避重试一次」，不加别的）')
   check(readText('README.md').includes('DSH_GH_NET_TIMEOUT_MS'), '旋钮在 README 的环境变量表里登记过（协议与代码对得上）')
-  note('重试 / 退避 / 双通道**不在本票范围**（票面「留给下一轮的大问题」）——本件只钉「有上界」这一件事')
+  note('本件只钉「有上界」这一件事；重试 / 退避 / 分档口径在 net-policy.test.mjs（票 55 / #38）')
 }
 
 summary()
