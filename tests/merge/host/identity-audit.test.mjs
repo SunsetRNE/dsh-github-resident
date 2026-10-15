@@ -151,6 +151,52 @@ check(pointOf(rE, 'gh-cli').state === 'missing', 'E gh CLI 消费点 = missing�
 check(/gh auth login|gh_cli_auth_web/.test(String(pointOf(rE, 'gh-cli').checks[0].fix)), 'E 给的是「去登录」这一步，而不是「去装」')
 check(pointOf(rE, 'git').state === 'missing', 'E git 消费点 = missing（没助手、也没全局身份）')
 
+// ================================================================ 环境 G / H：host 作用域那条助手**带引号**
+// 票 55 / #45 的红→绿证据：audit 抠 gh 路径那一处原来用不带归一化的正则，值带引号时抠成 null →
+// 判 drift + 给一条与本格无关的补救理由（「全局是 store 但 ~/.git-credentials 不存在」）。
+// 这两个环境就是那次实测输入的复刻：git config --global credential.….helper '"!…"' 落到文件里是
+// helper = \"!…\"，而 --get-all 读回来**带引号**（见 #45 正文的实测）。路径里还特意放一个空格：
+// 旧正则的 \S+ 在这里也会断，所以「归一化」与「整条取路径」两件事都得对，才可能绿。
+section('环境 G：host 作用域助手值带引号（git 自己写的形状）—— 不许误报 drift')
+const hG = fakeHome('g', { withGh: true })
+const spaceBinG = join(hG.home, 'gh bin')
+mkdirSync(spaceBinG, { recursive: true })
+writeFileSync(join(spaceBinG, 'gh'), '#!/bin/sh\necho "gh version 9.9.9 (HARNESS-STUB)"\n', { mode: 0o755 })
+chmodSync(join(spaceBinG, 'gh'), 0o755)
+const ghInSpace = join(spaceBinG, 'gh')
+const gitCfgG = join(hG.home, 'gitconfig-g')
+writeFileSync(gitCfgG, [
+  '[credential "https://github.com"]',
+  '\thelper = \\"!' + ghInSpace + ' auth git-credential\\"',
+  '',
+].join('\n'), { mode: 0o600 })
+const rG = await withScenario(hG, { path: hG.path, gitConfig: gitCfgG }, (tool) => tool.execute({}, {}))
+const helperG = checkOf(pointOf(rG, 'git'), 'credential-helper')
+check(helperG.state === 'pass', 'G 带引号的 host 作用域助手仍判 pass（旧口径在这里误报 drift）')
+check(String(helperG.detail.hostScope).charAt(0) === '!', 'G detail 报的 hostScope 已归一化（首尾引号剥掉，实得 ' + JSON.stringify(String(helperG.detail.hostScope).slice(0, 40)) + '）')
+check(helperG.detail.hostHelperRunnable === true, 'G 路径**带空格**也抠得出来、且真跑得起来（不是只看字符串）')
+check(helperG.fix === null, 'G 判 pass 时不给补救命令（不塞废话）')
+
+section('环境 H：同一条带引号的助手，但它指向的 gh 跑不起来 —— 理由要与这一格对得上')
+const hH = fakeHome('h', { withGh: true })
+const spaceBinH = join(hH.home, 'gh bin')
+mkdirSync(spaceBinH, { recursive: true })
+writeFileSync(join(spaceBinH, 'gh'), '#!/bin/sh\nexit 1\n', { mode: 0o755 })
+chmodSync(join(spaceBinH, 'gh'), 0o755)
+const brokenGh = join(spaceBinH, 'gh')
+const gitCfgH = join(hH.home, 'gitconfig-h')
+writeFileSync(gitCfgH, [
+  '[credential "https://github.com"]',
+  '\thelper = \\"!' + brokenGh + ' auth git-credential\\"',
+  '',
+].join('\n'), { mode: 0o600 })
+const rH = await withScenario(hH, { path: hH.path, gitConfig: gitCfgH }, (tool) => tool.execute({}, {}))
+const helperH = checkOf(pointOf(rH, 'git'), 'credential-helper')
+check(helperH.state === 'drift', 'H 助手跑不起来 → drift')
+check(String(helperH.fix).indexOf(brokenGh) > 0, 'H 补救理由点名那条跑不起来的路径（抠得出来才写得出）')
+check(String(helperH.fix).indexOf('~/.git-credentials') < 0,
+  'H 不许再拿「全局是 store 但 ~/.git-credentials 不存在」当理由 —— 全局那一格与这次 drift 无关')
+
 // ================================================================ 不泄漏 + 只读
 section('不泄漏与只读（用环境 A 的夹具，含真 token 的 hosts.yml）')
 const dump = JSON.stringify(rA) + JSON.stringify(rB) + JSON.stringify(rC)
@@ -200,6 +246,6 @@ check(protoLine.indexOf("'action'") > 0 && protoLine.indexOf("'consent'") > 0 &&
 note('夹具用 GIT_CONFIG_GLOBAL 指向临时 gitconfig：git config --global 的读写都落在临时文件，绝不碰真全局配置。')
 note('本用例覆盖的形状（identity/points/config/summary）按票面约定同时服务《启动自述》与协议 identity 段，改字段属接口变更。')
 
-for (const h of [hA, hB, hC, hE]) h.cleanup()
+for (const h of [hA, hB, hC, hE, hG, hH]) h.cleanup()
 
 summary()

@@ -114,6 +114,43 @@ function git(repo, args, opts = {}) {
 }
 
 /**
+ * **读一个 git 配置值**的归一化口径 —— 全插件只有这一支（票 55 / #45：原来 audit 那一处
+ * 用不带归一化的正则抠路径，于是「值带引号」时抠成 null、报一个不存在的 drift 并给一条错的补救路）。
+ *
+ * 去掉**首尾**空白与引号，只用于**判断**，绝不拿去写（票 36）。
+ * 为什么反复剥（空白 → 引号 → 空白）：两者互相遮挡，`  "!helper"  ` 要能归到 `!helper`；
+ * 只剥一轮会在这种形状上留下引号。`null`（键不存在）与空串在这一层**不是**同一件事 ——
+ * 归一化不改变「有没有这个键」这一维，否则「原本为空 → 删键」那条判断会被抹平。
+ * （读那一侧另有一层全仓一致的约定：`--get` / `--get-all` + trim 会把**空值**折成「未设置」；
+ *   那条路径的行为由 §七⑧ 的判据钉着，不是这里悄悄决定的。）
+ */
+function normalizeForCompare(v) {
+  if (v === null || v === undefined) return null;
+  let s = String(v);
+  for (let i = 0; i < 8; i += 1) {
+    const next = s.trim().replace(/^["']+/, '').replace(/["']+$/, '').trim();
+    if (next === s) break;
+    s = next;
+  }
+  return s;
+}
+
+/**
+ * 从一条 credential helper 的值里抠出 gh 可执行文件的路径 —— 同样**全插件只有这一支**（票 55 / #45）。
+ *
+ * 两件事一起做，缺一个都会误报：① 先过 `normalizeForCompare`（值带引号时正则不该失配）；
+ * ② 不用 `\S+` 截路径 —— gh 的安装路径**可以带空格**（`!/opt/gh bin/gh auth git-credential`），
+ * `\S+` 会先咬到空格前那半截、再要求后面紧跟 `auth`，于是照样抠成 null。
+ * 形状认不出（例如 host 作用域里是 `store`）就回 null，由调用方按「这不是 gh 的助手」如实说。
+ */
+function ghPathFromCredHelper(value) {
+  const v = normalizeForCompare(value);
+  if (!v) return null;
+  const m = String(v).match(/^!\s*(.+?)\s+auth\s+git-credential(?:\s.*)?$/);
+  return m ? (normalizeForCompare(m[1]) || null) : null;
+}
+
+/**
  * 读当前生效的 git 凭据助手 —— 只给**报告类**调用点用（gh_cli_status / buildSnapshot）。
  *
  * `gh auth setup-git` 写的是 host 作用域 credential.https://github.com.helper，
@@ -132,8 +169,13 @@ function git(repo, args, opts = {}) {
  * 全插件只有这一处读 helper 作用域：`readCredHelper` 与身份体检共用它。
  */
 async function readCredHelpers() {
-  const hostScope = (await git(process.cwd(), ['config', '--global', '--get-all', 'credential.https://github.com.helper'])).stdout.trim();
-  const globalScope = (await git(process.cwd(), ['config', '--global', '--get-all', 'credential.helper'])).stdout.trim();
+  // 票 55 / #45：这一处原来只 `.trim()`（逐字读，不剥引号），而 audit 拿它去抠 gh 路径的那支正则
+  // 认不出带引号的值 —— 同一件事实两处口径，于是报一个不存在的 drift。现在两处共用同一个归一化。
+  const readOne = async (key) => normalizeForCompare(
+    (await git(process.cwd(), ['config', '--global', '--get-all', key])).stdout.trim(),
+  ) || '';
+  const hostScope = await readOne('credential.https://github.com.helper');
+  const globalScope = await readOne('credential.helper');
   return { hostScope, global: globalScope, effective: hostScope || globalScope };
 }
 
@@ -3575,25 +3617,8 @@ sys.stdout.flush()
     };
   }
 
-  /**
-   * 撤销比对用的**归一化**：去掉**首尾**空白与引号 —— 只用于**判断**，绝不拿去写（票 36）。
-   *
-   * 为什么反复剥（空白 → 引号 → 空白）：两者互相遮挡，`  "!helper"  ` 要能归到 `!helper`；
-   * 只剥一轮会在这种形状上留下引号。`null`（键不存在）与空串在这一层**不是**同一件事 ——
-   * 归一化不改变「有没有这个键」这一维，否则「原本为空 → 删键」那条判断会被抹平。
-   * （读那一侧另有一层全仓一致的约定：`--get` / `--get-all` + trim 会把**空值**折成「未设置」；
-   *   那条路径的行为由 §七⑧ 的判据钉着，不是这里悄悄决定的。）
-   */
-  function normalizeForCompare(v) {
-    if (v === null || v === undefined) return null;
-    let s = String(v);
-    for (let i = 0; i < 8; i += 1) {
-      const next = s.trim().replace(/^["']+/, '').replace(/["']+$/, '').trim();
-      if (next === s) break;
-      s = next;
-    }
-    return s;
-  }
+  // 归一化那一支已上提到模块级 `normalizeForCompare`（票 55 / #45）：verify / unwire 的归属判定、
+  // readCredHelpers 的读法、audit 抠 gh 路径，三处**共用同一份实现**，本作用域不再自带一份。
 
   /** 回执里怎么显示一个值（`null` ＝ 这个键没有 / 读不到）—— 两处共用，别各写一遍。 */
   const shownValue = (v) => (v === null ? '(未设置)' : JSON.stringify(v));
@@ -3982,7 +4007,8 @@ sys.stdout.flush()
       // ---- 消费点 1：git（凭据助手两个作用域 + 全局身份）----
       const helpers = await readCredHelpers();
       const credFileExists = await pathExists(CRED_FILE);
-      const ghPathFromHelper = (String(helpers.hostScope || '').match(/^!\s*(\S+)\s+auth\s+git-credential/) || [])[1] || null;
+      // 票 55 / #45：路径抠法走**全插件唯一那支**（先归一化，再按「!<path> auth git-credential」取路径）。
+      const ghPathFromHelper = ghPathFromCredHelper(helpers.hostScope);
       const hostHelperRunnable = ghPathFromHelper ? (await probeGh(ghPathFromHelper)).ok : false;
       const globalIsStore = /(^|\s)store(\s|$)/.test(helpers.global || '');
       const helperState = helpers.hostScope
@@ -3990,9 +4016,16 @@ sys.stdout.flush()
         : helpers.global
           ? (globalIsStore && !credFileExists ? 'drift' : 'pass')
           : 'missing';
+      // 补救理由必须与**实际是哪一格**对上（票 55 / #45）：host 作用域有值时，理由只能是「它指向的 gh 跑不起来」
+      // 或「它根本不是 gh 的助手」—— 原来那种情形会掉进「全局是 store 但 ~/.git-credentials 不存在」，
+      // 而全局那一格跟这次 drift 毫无关系，等于给了一条错的补救路。
+      const h = helpers.hostScope || '';
+      const helperDriftWhy = !h ? '全局是 store 但 ~/.git-credentials 不存在'
+        : ghPathFromHelper ? ('host 作用域的助手指向的 gh 跑不起来：' + ghPathFromHelper)
+          : ('host 作用域那条助手不是 gh 的（' + h + '）—— gh auth setup-git 会把它改写成 gh 自己的');
       const helperFix = helperState === 'pass' ? null
         : helperState === 'drift'
-          ? 'gh auth setup-git   # 现在这条接线不可用（' + (ghPathFromHelper && !hostHelperRunnable ? 'host 作用域的助手指向的 gh 跑不起来：' + ghPathFromHelper : '全局是 store 但 ~/.git-credentials 不存在') + '）'
+          ? 'gh auth setup-git   # 现在这条接线不可用（' + helperDriftWhy + '）'
           : 'gh auth setup-git   # 让 git 用 gh 的凭据（它写的是 host 作用域，全局为空是正常的）';
       const gitName = (await git(process.cwd(), ['config', '--global', 'user.name'])).stdout.trim();
       const gitEmail = (await git(process.cwd(), ['config', '--global', 'user.email'])).stdout.trim();
