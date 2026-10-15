@@ -1,0 +1,409 @@
+# deck 门禁链存量红分流（issue #42）
+
+> 只做「量 + 定性 + 落清单」：本次没有改任何门禁源码，没有建 issue，没有 commit/push。
+
+## 怎么量的
+
+- **日期 / 环境**：2026-10-15，容器内（Linux）。devDeps 已装齐，但**装在仓库根 `node_modules/`**（jsdom / react / react-dom / esbuild / typescript / typescript-ast / dsh-plugin-update / dsh-log / @deepseek-ai/dsh-tools 都在这里）；`deck/node_modules/` **根本不存在**（pnpm 提升布局）。
+- **Chromium**：`~/.cache/ms-playwright/` 只有 `chromium-1208/chrome-linux/chrome`；门禁默认解析要 `chromium_headless_shell-1248`，不一致 → 所有真渲染门禁起不来。系统 Chrome（`/opt/google/chrome/chrome`）也没装。
+- **重活租约**：先 `gh_load_lease {action:acquire, holder:"verify:deck@issue42", purpose:"#42 deck 链存量红分流"}` 拿到（2026-10-15T19:44:18Z，TTL 30min，pid 存活）；全程没跑 `tests/merge/run.mjs`、没跑 `npm run verify`；量完 release。
+- **名单**：311 道，取自 `deck/package.json` → `scripts.verify`（`&&` 拆开后去掉 `node `），与 `deck/tests/verify-*.js` 派生一致。
+- **逐道怎么跑**：驱动脚本 `/tmp/deck-gates-runner.mjs`，每道 `cd deck && timeout 65 node tests/<file>`（进程级 78s 兜底），**不遇到红就停**。
+- **日志**：每道落 `/tmp/deck-gates/<name>.log`（`FILE/EXIT/DURATION` + 输出尾部 40 行 + 线索行），全量另存 `<name>.full.log`；`/tmp/deck-gates/progress.json` 是总账。
+- **节奏**：每道之间 sleep 0.2s；逐道读 `/proc/meminfo` 的 MemAvailable，全程在 9.4–10.4 GB，从未低于 1.5 GB 阈值，无需等待。
+
+## 总量表
+
+| 项 | 数 |
+| --- | --- |
+| 门禁总数（scripts.verify） | 311 |
+| 绿 | 221 |
+| 红 | 90 |
+| 红 · 环境依赖 | 27 |
+| 红 · 真漂移 | 60 |
+| 红 · 待定 | 3 |
+
+对比 2026-10-14 基线（口径：跳过 5 道浏览器依赖后的 299 道 214 绿 / 85 红）：本轮 311 道全跑，绿 221 / 红 90。**两者口径不同，不能直接相减**（本轮把 15 道真渲染门禁全部计入红）；但可以定性说：当年那批「环境依赖红」确实没消失（Chromium 仍缺），而今天 90 道红里有 60 道能定位到具体的「源码/门禁对不上」，占三分之二 —— 存量红的主体已经从环境问题变成了门禁欠账。
+
+> 说明：名字带 `-browser.js` 的只有 5 道（423-title-clamp / 640-dock-width / 997-vc-sight / bar-scroll / cap-fold），但实测**要真渲染的共 15 道**（另有 10 道没这个后缀）；另有 2 道要系统 Chrome 通道。
+
+## 红名单表
+
+### 环境依赖（27）
+
+| 门禁文件 | 类别 | 一行理由 | 关键证据 |
+| --- | --- | --- | --- |
+| `deck/tests/verify-423-title-clamp-browser.js` | 环境依赖（缺 Chromium） | playwright 默认解析找不到浏览器：本机只有 chromium-1208，门禁要 chromium_headless_shell-1248 | browserType.launch: Executable doesn't exist at ~/.cache/ms-playwright/chromium_headless_shell-1248/chrome-headless-shell-linux-arm64/chrome-headless-shell（补：npx playwright install chromium；或把 tests/lib/chromium-channel.js 的候选指向 ~/.cache/ms-playwright/chromium-1208/chrome-linux/chrome + --disable-dev-shm-usage） |
+| `deck/tests/verify-640-dock-width-browser.js` | 环境依赖（缺 Chromium） | 同上，且本门禁自己的候选表已实测写出「本机可用通道」 | Error: 真渲染通道起不来…Executable doesn't exist…（本机可用通道（实测）：~/.cache/ms-playwright/chromium-1208/chrome-linux/chrome + --disable-dev-shm-usage） |
+| `deck/tests/verify-667-dock-header-no-brand.js` | 环境依赖（缺 Chromium） | 直连 playwright 起 chromium，版本对不上 | browserType.launch: Executable doesn't exist at …/chromium_headless_shell-1248/… |
+| `deck/tests/verify-669-collapsed-recoverable.js` | 环境依赖（缺 Chromium） | 同上 | browserType.launch: Executable doesn't exist at …/chromium_headless_shell-1248/… |
+| `deck/tests/verify-670-panel-first-frame.js` | 环境依赖（缺 Chromium） | 同上 | browserType.launch: Executable doesn't exist at …/chromium_headless_shell-1248/… |
+| `deck/tests/verify-958-label-name-visible.js` | 环境依赖（缺 Chromium） | 同上 | browserType.launch: Executable doesn't exist at …/chromium_headless_shell-1248/… |
+| `deck/tests/verify-997-vc-sight-browser.js` | 环境依赖（缺 Chromium） | 门禁把它记成「门禁自身抛错」，根因仍是缺浏览器 | FAIL 门禁自身抛错：browserType.launch: Executable doesn't exist at …/chromium_headless_shell-1248/… |
+| `deck/tests/verify-chain-view-ui.js` | 环境依赖（缺 Chromium） | 同上 | browserType.launch: Executable doesn't exist at …/chromium_headless_shell-1248/… |
+| `deck/tests/verify-banner-narrow.js` | 环境依赖（缺 Chromium） | 走 tests/lib/chromium-channel.js，候选 0 个 | Error: 真渲染通道起不来，试过 1 个候选：…Executable doesn't exist…（本机可用通道（实测）：chromium-1208/…） |
+| `deck/tests/verify-bar-scroll-browser.js` | 环境依赖（缺 Chromium） | 同上 | Error: 真渲染通道起不来…Executable doesn't exist… |
+| `deck/tests/verify-cap-fold-browser.js` | 环境依赖（缺 Chromium） | 同上 | Error: 真渲染通道起不来…Executable doesn't exist… |
+| `deck/tests/verify-cap-fold.js` | 环境依赖（缺 Chromium） | 名字不带 -browser，但同样要真渲染通道 | Error: 真渲染通道起不来…Executable doesn't exist… |
+| `deck/tests/verify-capsule-layout.js` | 环境依赖（缺 Chromium） | 同上 | Error: 真渲染通道起不来…Executable doesn't exist… |
+| `deck/tests/verify-issue22-ui.js` | 环境依赖（缺系统 Chrome） | 要 Chromium 通道 'chrome'，本机没装 /opt/google/chrome/chrome | browserType.launch: Chromium distribution 'chrome' is not found at /opt/google/chrome/chrome（补：装系统 Chrome 或 npx playwright install chrome） |
+| `deck/tests/verify-t2-repokey-ui.js` | 环境依赖（缺系统 Chrome） | 同上 | SCRIPT ERROR browserType.launch: Chromium distribution 'chrome' is not found at /opt/google/chrome/chrome |
+| `deck/tests/verify-587-update-live.js` | 环境依赖（依赖安装位置） | 找「装在本机使用范围里、且包完好的」dsh-plugin-update；该包只在仓库根 node_modules，deck 侧解析不到 | FAIL 找得到装在本机使用范围里、且包完好的那份插件（真宿主判据的输入） |
+| `deck/tests/verify-587-update-restart.js` | 环境依赖（依赖安装位置） | 读 deck/node_modules/dsh-plugin-update/dist/reader.js；文件实际在仓库根 node_modules | ENOENT: no such file or directory, open '…/deck/node_modules/dsh-plugin-update/dist/reader.js' |
+| `deck/tests/verify-731-resident.js` | 环境依赖（依赖安装位置） | 读 deck/node_modules/dsh-log/dist/store.js；实际在仓库根 | ENOENT: …/deck/node_modules/dsh-log/dist/store.js |
+| `deck/tests/verify-update-migration.js` | 环境依赖（依赖安装位置） | 读 deck/node_modules/dsh-plugin-update/package.json；实际在仓库根 | 门禁异常：ENOENT: …/deck/node_modules/dsh-plugin-update/package.json |
+| `deck/tests/verify-update-mirror-hint.js` | 环境依赖（依赖安装位置） | 读 deck/node_modules/dsh-plugin-update/dist/commands.js；实际在仓库根 | FAIL ENOENT: …/deck/node_modules/dsh-plugin-update/dist/commands.js |
+| `deck/tests/verify-update-panel.js` | 环境依赖（依赖安装位置） | 同上 | 门禁执行异常：ENOENT: …/deck/node_modules/dsh-plugin-update/package.json |
+| `deck/tests/verify-deck-tools-agent-register.js` | 环境依赖（依赖安装位置） | import deck/node_modules/@deepseek-ai/dsh-tools/lib/index.js；实际在仓库根 | ERR_MODULE_NOT_FOUND: Cannot find module '…/deck/node_modules/@deepseek-ai/dsh-tools/lib/index.js' |
+| `deck/tests/verify-deck-tools-row-zero-dep.js` | 环境依赖（依赖安装位置） | imp('node_modules/@deepseek-ai/dsh-tools/lib/index.js')（ROOT=deck），deck/node_modules 不存在 | FAIL 真原生判定可加载（开发依赖与线上同版本） |
+| `deck/tests/verify-config-store-freshness.js` | 环境依赖（依赖安装位置） | 门禁按 ROOT(=deck)/node_modules/typescript/bin/tsc 找；typescript 只在仓库根 | FAIL typescript 已安装（node_modules/typescript 缺失，请跑 pnpm install） |
+| `deck/tests/verify-label-color-freshness.js` | 环境依赖（依赖安装位置） | 同上 | FAIL typescript 已安装（node_modules/typescript 缺失，请跑 pnpm install） |
+| `deck/tests/verify-refresh-freshness.js` | 环境依赖（依赖安装位置） | 同上 | FAIL typescript 已安装（node_modules/typescript 缺失，请跑 pnpm install） |
+| `deck/tests/verify-version-control-freshness.js` | 环境依赖（依赖安装位置） | 同上 | FAIL typescript 已安装（node_modules/typescript 缺失，请跑 pnpm install） |
+
+**环境类怎么补 / 怎么跳过**
+
+- **缺 Chromium（13 道 + 2 道走 `chromium-channel.js` 的）**：补法是 `npx playwright install chromium`（装 `chromium_headless_shell-1248`）。不想下载就走本机已有那份：`tests/lib/chromium-channel.js` 的候选表加一条 `~/.cache/ms-playwright/chromium-1208/chrome-linux/chrome` + `--disable-dev-shm-usage`（640/banner/bar-scroll/cap-fold/capsule 几道自己已经把这条实测写进错误里了）。本次**没下 Chromium**（重活，超出本任务）。
+- **缺系统 Chrome（2 道：issue22-ui / t2-repokey-ui）**：要 `chromium` 通道 `chrome`，即 `/opt/google/chrome/chrome`。补法是装系统 Chrome，或 `npx playwright install chrome`；跳过条件写成「无 chrome 通道即 skip 且不计红」。
+- **依赖安装位置（12 道）**：门禁按 `deck/node_modules/...` 找包/构建产物，而依赖被提升到了仓库根 `node_modules/`。补法是二选一：① 在 `deck/` 下 `pnpm install`（造出 deck 局部 `node_modules`）；② 把门禁改成按 Node 解析（`import.meta.resolve` / 从 `deck/` 向上找），而不是硬拼 `path.join(ROOT,'node_modules',...)`。跳过条件：`deck/node_modules` 不存在时这 12 道应显式 skip，不要算红。
+
+### 真漂移（60）
+
+| 门禁文件 | 类别 | 一行理由 | 关键证据 |
+| --- | --- | --- | --- |
+| `deck/tests/verify-927-gate-injection.js` | 真漂移 | 门禁直连 createPlatformChannel 时没传新依赖 identityEnvFor；平台层出站 exec 现在必须经它取身份 env（platformChannel.js:256 无条件调用），夹具第 64 行触雷 | 断言「③ 真件：闸晚一步就位也接得上」→ exec spawn failed: identityEnvFor is not a function |
+| `deck/tests/verify-log-exec-606.js` | 真漂移 | 同一构造缺 identityEnvFor（platformChannel.js:256） | 断言「经 ctx.exec 起的外部命令留计数与耗时」→ 门禁执行异常：Error: exec spawn failed: identityEnvFor is not a function |
+| `deck/tests/verify-963-log-order.js` | 真漂移 | 同一构造缺 identityEnvFor，超时分档三条断言随之全空 | 断言「探活超时归网络档（未知稍后，不说没登录）」→ {"ok":false,"kind":"spawn","error":"identityEnvFor is not a function"} |
+| `deck/tests/verify-deck-tools.js` | 真漂移 | 门禁自建 deps 未注入 decideBackend；#1003 单出口后它是 shell.pickBackend 的必需依赖，缺了如实回 unsupported（shell.js:179） | 断言「deck_context 正例：回 ok」→ 实得 unsupported |
+| `deck/tests/verify-deck-no-hang.js` | 真漂移 | 同上（deps 无 decideBackend） | 断言「超时判成可重试的执行失败」→ 实得「判定出口这次没装上，我没往下做…」 |
+| `deck/tests/verify-deck-tools-matrix.js` | 真漂移 | 同上（deps 无 decideBackend） | 断言「[github] 建票：回 ok」→ 实得 unsupported；reason=判定出口这次没装上… |
+| `deck/tests/verify-790-parent-edge.js` | 真漂移 | 同上（deps 无 decideBackend，工具在选后端这步就退） | 断言「E1 票建成、边没挂上 → partial」→ 实得 unsupported |
+| `deck/tests/verify-829-parent-reread.js` | 真漂移 | 同上（deps 无 decideBackend） | 断言「G3 写成功但读票失败 → 逐条 failed」→ 实得 undefined |
+| `deck/tests/verify-895-bulk-deadline.js` | 真漂移 | 同上（deps 无 decideBackend） | 断言「预算打满 → 部分成功」→ 实得 unsupported |
+| `deck/tests/verify-898-block-merge.js` | 真漂移 | 同上（deps 无 decideBackend） | 断言「A1 两条阻塞边明细都成功」→ 实得 [] |
+| `deck/tests/verify-929-batch-cycle.js` | 真漂移 | 同上（deps 无 decideBackend） | 断言「③ 两条不相干且不成环的边都建成」→ 实得 status=unsupported [] |
+| `deck/tests/verify-971-markdown-parent.js` | 真漂移 | 同上（deps 无 decideBackend） | 断言「快照回 ok」→ 实得 unsupported |
+| `deck/tests/verify-992-readonly-labels.js` | 真漂移 | 同上（deps 无 decideBackend） | 断言「E1 标签没挂上 → partial」→ 实得 unsupported |
+| `deck/tests/verify-784-effortId.js` | 真漂移 | 同上（deps 无 decideBackend） | 断言「读票 alpha 落在 alpha」→ 实得落空（工具回 unsupported） |
+| `deck/tests/verify-deck-thin-reads.js` | 真漂移 | 同上（工具回 unsupported，没有 relations 可读） | 断言「缺省取反向边（调了依赖接口）」→ 门禁抛错：TypeError: Cannot read properties of undefined (reading 'relations') |
+| `deck/tests/verify-deck-parallel.js` | 真漂移 | 同上（deps 无 decideBackend） | 断言「同票并发改标签两笔都成」→ 实得 unsupported/unsupported |
+| `deck/tests/verify-panel.js` | 真漂移 | 宿主 apply 已改成经 ctx.inject/bootBody 内自建 harness + dswEndpoints 交付电话表，入参 harness 被遮蔽；门禁仍按入参 harness.handle 捕获 → handlers=0（探针复现） | 断言「快照 ok + repo 解析」→ SCRIPT ERROR TypeError: h.wf.refresh is not a function |
+| `deck/tests/verify-detail-fog.js` | 真漂移 | 同 verify-panel | 断言「折叠雾化详情」→ ERROR TypeError: h.wf.refresh is not a function |
+| `deck/tests/verify-detail-levels.js` | 真漂移 | 同 verify-panel | 断言「详情分级」→ ERROR TypeError: h.wf.refresh is not a function |
+| `deck/tests/verify-496b-inject-guard.js` | 真漂移 | 这三处日志点确不在现实现里（或已改名） | 断言「决策/执行/补发三处日志」→ 实 0 |
+| `deck/tests/verify-656-subworkspace-acceptance.js` | 真漂移 | 工作区根解析把 d:\ 判成了 relative，不变式当场破 | 断言「盘符根与 UNC 共享根都是上溯的终点：到顶就停」→ drive={"root":"d:\\","source":"relative"} unc={"root":"//srv/share","source":"self"} |
+| `deck/tests/verify-666-subws-mark-root.js` | 真漂移 | 路径归一没做大小写无关比较 | 断言「C10 大小写与斜杠写法不同，仍然算在根下面，照样切出干净尾巴」→ relOf('D:\\ilife','d:/ILIFE/packages/skill-calorie') 切不出来 |
+| `deck/tests/verify-669-switch-visible.js` | 真漂移 | 产物里已没有 data-repo-switch 这个钩子，门禁选择器过期 | 断言「等 [data-repo-switch] 出现再点」→ 崩了 TypeError: Cannot read properties of null (reading 'dispatchEvent')（60 轮没等到） |
+| `deck/tests/verify-671-modal-global-overlay.js` | 真漂移 | 门禁从产物文本里切的组件段落与现产物对不上 | 断言「座位里按「卡开着」分派到那张卡」→ FAIL 从产物里抽到了弹窗组件那一段；B 组跑不起来：FormModalContent is not defined |
+| `deck/tests/verify-698-switch-asks-layout.js` | 真漂移 | 判据单源被破坏：客户端多了一处实现 | 断言「弹窗座位按「卡开着」分派到它；客户端里没有第二处在抄这个判据」→ 实得 1 处：src/client/kernel/prompts-setup.js |
+| `deck/tests/verify-709-no-self-continuing-timers.js` | 真漂移 | 评估轮里一条 REST 都没发，门禁与实现口径不一致 | 断言「一次评估的 REST 条数 = 3（票面口径：5 条降到 3 条）」→ 实得 0 条：[] |
+| `deck/tests/verify-842-version-control-write-view.js` | 真漂移 | 门禁自身在 ESM 里用 require（门禁缺陷，非源码漂移） | 断言「版本管理写操作界面 A–M 组」→ ReferenceError: require is not defined（脚本 1183 行） |
+| `deck/tests/verify-926-capfold-gate.js` | 真漂移 | 折叠档位换代没接进新机器 | 断言「换代从旧档起步（flex 写 72 次，至多两次放下判断）」→ 仍写 72 次 |
+| `deck/tests/verify-b3-done-color.js` | 真漂移 | 门禁的产物文本切片过期 | 断言「client.js 列表行动作组块（完成+新会话）提取成功」→ FAIL（client.js 与 package/lib/client.js 双缺） |
+| `deck/tests/verify-b5-quota.js` | 真漂移 | 实现里确实没有这两点 | 断言「host.js probe 返回 repo 字段；buildSnapshot 透传 fallback 标记」→ FAIL（host.js 与 package/lib/index.js 双缺） |
+| `deck/tests/verify-bug-366-refresh.js` | 真漂移 | #366 的旁路与去重没落到 host | 断言「probe dedup distinguishes force；host contains #366 bypass」→ FAIL（host 里找不到 #366 绕过；disk cache check 出现 0 次） |
+| `deck/tests/verify-chain-renderer.js` | 真漂移 | 源码里这四处确实不在（静态文本判据） | 断言「host chain 使用 resolveGenericChain；ChainForm 含 required 校验；host chain 注册通用谓词；ghAuthLogin 含 gh auth login 文案」→ 65 项 4 红 |
+| `deck/tests/verify-config-store-package.js` | 真漂移 | 根 package.json 没有 yaml 依赖 | 断言「仓库 package.json 生产依赖里有 yaml」→ 实得 undefined（两处版本比对 undefined / ^2.9.1） |
+| `deck/tests/verify-delta-patch.js` | 真漂移 | 门禁 import 的旧路径已搬家：模块现住 deck/src/shared/tracker/indexWindow.js | 断言「（import 期就断）」→ ERR_MODULE_NOT_FOUND: …/deck/src/tracker/indexWindow.js |
+| `deck/tests/verify-file-granularity.js` | 真漂移 | 文件粒度红线被真实突破 | 断言「新增超标：381 行（上限 350）等」→ src/host/index.js 381、src/host/updateFromPackage.js 385、src/host/platformChannel.js 356 等 5 个文件超标 |
+| `deck/tests/verify-gate-dialect.js` | 真漂移 | ESM 产物里残留 require() | 断言「仍有欠账文件」→ FAIL ② 仍有 1 个欠账文件：src/client/kernel/portal.js[require()] |
+| `deck/tests/verify-handoff-latest-sort.js` | 真漂移 | 交接时间解析的助手指令在产物里找不到 | 断言「parseHandoffMtime helper 定义（dyn 与 npm 双产物）」→ FAIL ×2 |
+| `deck/tests/verify-issue-comment.js` | 真漂移 | 门禁自身引用了未定义标识符 idOf（门禁缺陷） | 断言「只读提示条件化 / updatedAt bump 闪烁数据源」→ #255 四缝验证失败；（diff 求值异常: idOf is not defined） |
+| `deck/tests/verify-issue179-workspace-switch.js` | 真漂移 | #179 的兜底被 #1003 改造带走了 | 断言「非判定电话保留 DEFAULT_CWD 兜底；host.js 保留 DEFAULT_CWD 兜底」→ FAIL ×2 |
+| `deck/tests/verify-issue212-213-214.js` | 真漂移 | #212/#213/#214 的三条不变式在实现里已不成立 | 断言「#214 buildSnapshot must define let backendModules = null；#213 probe must invalidate cache on changed」→ FAIL ×4 |
+| `deck/tests/verify-issue58-cache-first.js` | 真漂移 | 缓存优先改造没落进产物 | 断言「loadSnapshot 拆 doLoad；openPagePanel 三分支；probeNow 按 cwd 归一键分组隔离」→ FAIL（client.js 与 package/lib/client.js 双缺） |
+| `deck/tests/verify-leaves.js` | 真漂移 | 冻结基线被突破 55 行 | 断言「src/client/statusbar/StatusBar.js ≤359 行（零增长基线冻结值）」→ 实际 414 |
+| `deck/tests/verify-log-coverage.js` | 真漂移 | 日志电话注册表与实现清单对不上 | 断言「注册总数恰为现役数；清单里没有 wf.pluginIdentity」→ 实得 56；wf.updateStatus/updateCheck/updateInstall 没有方法可识行 |
+| `deck/tests/verify-log-fields.js` | 真漂移 | 埋点事件名与附录白名单不同步 | 断言「事件有埋点落点 update.install.exec（全仓未找到）」→ FAIL；另有未知事件 identity.migrate |
+| `deck/tests/verify-log-switch-597.js` | 真漂移 | 配置页调试开关的提示分类整段取不到 | 断言「超时/未知端点/没接上宿主的提示都要分类」→ 实际全部取到「」（9 项红） |
+| `deck/tests/verify-map-subissues-352.js` | 真漂移 | 已知真漂移：prompts.js 未做 v14 解耦 | 断言「PROMPTS version 14」→ FAIL: prompts.js 未满足 352 v14 解耦要求 |
+| `deck/tests/verify-markdown.js` | 真漂移 | 被测源码引用了 Tip，门禁求值探针只喂了 h，没给 Tip 桩 | 断言「mdToHtml 里 inlineWith 走 Tip 分支」→ ReferenceError: Tip is not defined（mdInline → Tip） |
+| `deck/tests/verify-market-tarball.js` | 真漂移 | 工作流文件不在仓库 | 断言「.github/workflows/release-tarball.yml 存在；workflow 里的资产名 NAME 等于包名」→ ✗ ×2（文件不存在） |
+| `deck/tests/verify-naming-isolation-315.js` | 真漂移 | #315 的宽限与裸档保留规则未落实现 | 断言「A 未过宽限且无 hint 不产单；无 hint 冲突时裸档保留」→ 23 checks, some failed |
+| `deck/tests/verify-probe-since.js` | 真漂移 | 探测基线推进的代码确实不在产物里 | 断言「probe 每轮记录 lastProbeAtByRepo 探测时间；删除/状态变化时失效内存快照缓存」→ FAIL（src 与 package 双产物） |
+| `deck/tests/verify-readme-sync.js` | 真漂移 | 生成物过期（改根 README 后没跑 scripts/build.mjs） | 断言「发布目录 README.md 与源头一致」→ 差异字节数=104 |
+| `deck/tests/verify-refresh-414.js` | 真漂移 | #414 的 isForce 守卫在 host 里找不到 | 断言「src host 含 isForce；wf.snapshot 受 isForce 守卫；pkg host 含 isForce」→ FAIL ×3 |
+| `deck/tests/verify-release-contract.js` | 真漂移 | CHANGELOG/产物版本落后于目标版本 | 断言「CHANGELOG 最新节版本 == 目标 v1.8.0-rc.13；构建产物含版本注入」→ 实际 v1.7.1（并本轮 65s 超时被杀） |
+| `deck/tests/verify-release-template.js` | 真漂移 | 发布模板文件不在仓库 | 断言「.github/ISSUE_TEMPLATE/release.yml 存在」→ ✗（前置文件缺失，双入口一致性检查跳过） |
+| `deck/tests/verify-repo-jump.js` | 真漂移 | 仓库 URL 注入占位没落进产物 | 断言「index 注入占位声明；pkg/dev 产物注入仓库 URL」→ FAIL（19/22） |
+| `deck/tests/verify-skill-probe-redcard-and-waiting.js` | 真漂移 | 红牌/等待链的常量与分支不在实现里（末段夹具也抛错） | 断言「src/host/index.js 含 SKILL_PENDING_MAX 等 5 条」→ FAIL；另有 TypeError: dispatch is not a function |
+| `deck/tests/verify-strict-module-syntax.js` | 真漂移 | 源码里有模块顶层 return | 断言「src/client/panelAssembly.js 严格解析」→ Transform failed：<stdin>:209:4 Top-level return cannot be used inside an ECMAScript module |
+| `deck/tests/verify-t1-getrepokey.js` | 真漂移 | 上游降级路径不再生效 | 断言「场景4 snapshot.repo 降级到 gh mock（upstream）」→ 实得 null |
+| `deck/tests/verify-t14-detail-badge.js` | 真漂移 | T14 徽章渲染块在产物里切片失败 | 断言「client.js / package/lib/client.js 提取 T14 渲染块成功」→ FAIL ×2 |
+| `deck/tests/verify-tabs-narrow.js` | 真漂移 | tabsRef 的使用点数量与判据不符 | 断言「tabsRef 出现 2 次（dock + overlay）」→ FAIL（dyn 与 npm 双产物） |
+
+### 待定（3）
+
+| 门禁文件 | 类别 | 一行理由 | 关键证据 |
+| --- | --- | --- | --- |
+| `deck/tests/verify-839-credential-exec.js` | 待定 | 65s 上限被杀；被杀前 13 项全 PASS，没有失败断言 | 输出尾部停在「⑥ 总预算用完：下一步直接 budget-exhausted」，疑似末尾用例挂住未返回 |
+| `deck/tests/verify-wire-subissues-script.js` | 待定 | 65s 上限被杀；被杀前 17.x 全 PASS，没有失败断言 | 输出停在 17.5d，疑似后面某场景挂住 |
+| `deck/tests/verify-bundled-discovery.js` | 待定 | 103 项只此 1 红：[FAIL] host apply 已调用 registerProvider（mock 捕获） | 未定位：可能是宿主装配（bootBody 经 ctx.inject/dswEndpoints）与夹具 mockCtx 不匹配，也可能是 400ms 等待窗口不够；证据不足以归前两类 |
+
+## 真漂移逐条
+
+每条：文件 / 断言原话 / 实得 / 初步根因猜测。
+
+1. **`deck/tests/verify-927-gate-injection.js`**
+   - 断言原话：「③ 真件：闸晚一步就位也接得上」
+   - 实得：exec spawn failed: identityEnvFor is not a function
+   - 初步根因猜测：门禁直连 createPlatformChannel 时没传新依赖 identityEnvFor；平台层出站 exec 现在必须经它取身份 env（platformChannel.js:256 无条件调用），夹具第 64 行触雷
+2. **`deck/tests/verify-log-exec-606.js`**
+   - 断言原话：「经 ctx.exec 起的外部命令留计数与耗时」
+   - 实得：门禁执行异常：Error: exec spawn failed: identityEnvFor is not a function
+   - 初步根因猜测：同一构造缺 identityEnvFor（platformChannel.js:256）
+3. **`deck/tests/verify-963-log-order.js`**
+   - 断言原话：「探活超时归网络档（未知稍后，不说没登录）」
+   - 实得：{"ok":false,"kind":"spawn","error":"identityEnvFor is not a function"}
+   - 初步根因猜测：同一构造缺 identityEnvFor，超时分档三条断言随之全空
+4. **`deck/tests/verify-deck-tools.js`**
+   - 断言原话：「deck_context 正例：回 ok」
+   - 实得：实得 unsupported
+   - 初步根因猜测：门禁自建 deps 未注入 decideBackend；#1003 单出口后它是 shell.pickBackend 的必需依赖，缺了如实回 unsupported（shell.js:179）
+5. **`deck/tests/verify-deck-no-hang.js`**
+   - 断言原话：「超时判成可重试的执行失败」
+   - 实得：实得「判定出口这次没装上，我没往下做…」
+   - 初步根因猜测：同上（deps 无 decideBackend）
+6. **`deck/tests/verify-deck-tools-matrix.js`**
+   - 断言原话：「[github] 建票：回 ok」
+   - 实得：实得 unsupported；reason=判定出口这次没装上…
+   - 初步根因猜测：同上（deps 无 decideBackend）
+7. **`deck/tests/verify-790-parent-edge.js`**
+   - 断言原话：「E1 票建成、边没挂上 → partial」
+   - 实得：实得 unsupported
+   - 初步根因猜测：同上（deps 无 decideBackend，工具在选后端这步就退）
+8. **`deck/tests/verify-829-parent-reread.js`**
+   - 断言原话：「G3 写成功但读票失败 → 逐条 failed」
+   - 实得：实得 undefined
+   - 初步根因猜测：同上（deps 无 decideBackend）
+9. **`deck/tests/verify-895-bulk-deadline.js`**
+   - 断言原话：「预算打满 → 部分成功」
+   - 实得：实得 unsupported
+   - 初步根因猜测：同上（deps 无 decideBackend）
+10. **`deck/tests/verify-898-block-merge.js`**
+   - 断言原话：「A1 两条阻塞边明细都成功」
+   - 实得：实得 []
+   - 初步根因猜测：同上（deps 无 decideBackend）
+11. **`deck/tests/verify-929-batch-cycle.js`**
+   - 断言原话：「③ 两条不相干且不成环的边都建成」
+   - 实得：实得 status=unsupported []
+   - 初步根因猜测：同上（deps 无 decideBackend）
+12. **`deck/tests/verify-971-markdown-parent.js`**
+   - 断言原话：「快照回 ok」
+   - 实得：实得 unsupported
+   - 初步根因猜测：同上（deps 无 decideBackend）
+13. **`deck/tests/verify-992-readonly-labels.js`**
+   - 断言原话：「E1 标签没挂上 → partial」
+   - 实得：实得 unsupported
+   - 初步根因猜测：同上（deps 无 decideBackend）
+14. **`deck/tests/verify-784-effortId.js`**
+   - 断言原话：「读票 alpha 落在 alpha」
+   - 实得：实得落空（工具回 unsupported）
+   - 初步根因猜测：同上（deps 无 decideBackend）
+15. **`deck/tests/verify-deck-thin-reads.js`**
+   - 断言原话：「缺省取反向边（调了依赖接口）」
+   - 实得：门禁抛错：TypeError: Cannot read properties of undefined (reading 'relations')
+   - 初步根因猜测：同上（工具回 unsupported，没有 relations 可读）
+16. **`deck/tests/verify-deck-parallel.js`**
+   - 断言原话：「同票并发改标签两笔都成」
+   - 实得：实得 unsupported/unsupported
+   - 初步根因猜测：同上（deps 无 decideBackend）
+17. **`deck/tests/verify-panel.js`**
+   - 断言原话：「快照 ok + repo 解析」
+   - 实得：SCRIPT ERROR TypeError: h.wf.refresh is not a function
+   - 初步根因猜测：宿主 apply 已改成经 ctx.inject/bootBody 内自建 harness + dswEndpoints 交付电话表，入参 harness 被遮蔽；门禁仍按入参 harness.handle 捕获 → handlers=0（探针复现）
+18. **`deck/tests/verify-detail-fog.js`**
+   - 断言原话：「折叠雾化详情」
+   - 实得：ERROR TypeError: h.wf.refresh is not a function
+   - 初步根因猜测：同 verify-panel
+19. **`deck/tests/verify-detail-levels.js`**
+   - 断言原话：「详情分级」
+   - 实得：ERROR TypeError: h.wf.refresh is not a function
+   - 初步根因猜测：同 verify-panel
+20. **`deck/tests/verify-496b-inject-guard.js`**
+   - 断言原话：「决策/执行/补发三处日志」
+   - 实得：实 0
+   - 初步根因猜测：这三处日志点确不在现实现里（或已改名）
+21. **`deck/tests/verify-656-subworkspace-acceptance.js`**
+   - 断言原话：「盘符根与 UNC 共享根都是上溯的终点：到顶就停」
+   - 实得：drive={"root":"d:\\","source":"relative"} unc={"root":"//srv/share","source":"self"}
+   - 初步根因猜测：工作区根解析把 d:\ 判成了 relative，不变式当场破
+22. **`deck/tests/verify-666-subws-mark-root.js`**
+   - 断言原话：「C10 大小写与斜杠写法不同，仍然算在根下面，照样切出干净尾巴」
+   - 实得：relOf('D:\\ilife','d:/ILIFE/packages/skill-calorie') 切不出来
+   - 初步根因猜测：路径归一没做大小写无关比较
+23. **`deck/tests/verify-669-switch-visible.js`**
+   - 断言原话：「等 [data-repo-switch] 出现再点」
+   - 实得：崩了 TypeError: Cannot read properties of null (reading 'dispatchEvent')（60 轮没等到）
+   - 初步根因猜测：产物里已没有 data-repo-switch 这个钩子，门禁选择器过期
+24. **`deck/tests/verify-671-modal-global-overlay.js`**
+   - 断言原话：「座位里按「卡开着」分派到那张卡」
+   - 实得：FAIL 从产物里抽到了弹窗组件那一段；B 组跑不起来：FormModalContent is not defined
+   - 初步根因猜测：门禁从产物文本里切的组件段落与现产物对不上
+25. **`deck/tests/verify-698-switch-asks-layout.js`**
+   - 断言原话：「弹窗座位按「卡开着」分派到它；客户端里没有第二处在抄这个判据」
+   - 实得：实得 1 处：src/client/kernel/prompts-setup.js
+   - 初步根因猜测：判据单源被破坏：客户端多了一处实现
+26. **`deck/tests/verify-709-no-self-continuing-timers.js`**
+   - 断言原话：「一次评估的 REST 条数 = 3（票面口径：5 条降到 3 条）」
+   - 实得：实得 0 条：[]
+   - 初步根因猜测：评估轮里一条 REST 都没发，门禁与实现口径不一致
+27. **`deck/tests/verify-842-version-control-write-view.js`**
+   - 断言原话：「版本管理写操作界面 A–M 组」
+   - 实得：ReferenceError: require is not defined（脚本 1183 行）
+   - 初步根因猜测：门禁自身在 ESM 里用 require（门禁缺陷，非源码漂移）
+28. **`deck/tests/verify-926-capfold-gate.js`**
+   - 断言原话：「换代从旧档起步（flex 写 72 次，至多两次放下判断）」
+   - 实得：仍写 72 次
+   - 初步根因猜测：折叠档位换代没接进新机器
+29. **`deck/tests/verify-b3-done-color.js`**
+   - 断言原话：「client.js 列表行动作组块（完成+新会话）提取成功」
+   - 实得：FAIL（client.js 与 package/lib/client.js 双缺）
+   - 初步根因猜测：门禁的产物文本切片过期
+30. **`deck/tests/verify-b5-quota.js`**
+   - 断言原话：「host.js probe 返回 repo 字段；buildSnapshot 透传 fallback 标记」
+   - 实得：FAIL（host.js 与 package/lib/index.js 双缺）
+   - 初步根因猜测：实现里确实没有这两点
+31. **`deck/tests/verify-bug-366-refresh.js`**
+   - 断言原话：「probe dedup distinguishes force；host contains #366 bypass」
+   - 实得：FAIL（host 里找不到 #366 绕过；disk cache check 出现 0 次）
+   - 初步根因猜测：#366 的旁路与去重没落到 host
+32. **`deck/tests/verify-chain-renderer.js`**
+   - 断言原话：「host chain 使用 resolveGenericChain；ChainForm 含 required 校验；host chain 注册通用谓词；ghAuthLogin 含 gh auth login 文案」
+   - 实得：65 项 4 红
+   - 初步根因猜测：源码里这四处确实不在（静态文本判据）
+33. **`deck/tests/verify-config-store-package.js`**
+   - 断言原话：「仓库 package.json 生产依赖里有 yaml」
+   - 实得：实得 undefined（两处版本比对 undefined / ^2.9.1）
+   - 初步根因猜测：根 package.json 没有 yaml 依赖
+34. **`deck/tests/verify-delta-patch.js`**
+   - 断言原话：「（import 期就断）」
+   - 实得：ERR_MODULE_NOT_FOUND: …/deck/src/tracker/indexWindow.js
+   - 初步根因猜测：门禁 import 的旧路径已搬家：模块现住 deck/src/shared/tracker/indexWindow.js
+35. **`deck/tests/verify-file-granularity.js`**
+   - 断言原话：「新增超标：381 行（上限 350）等」
+   - 实得：src/host/index.js 381、src/host/updateFromPackage.js 385、src/host/platformChannel.js 356 等 5 个文件超标
+   - 初步根因猜测：文件粒度红线被真实突破
+36. **`deck/tests/verify-gate-dialect.js`**
+   - 断言原话：「仍有欠账文件」
+   - 实得：FAIL ② 仍有 1 个欠账文件：src/client/kernel/portal.js[require()]
+   - 初步根因猜测：ESM 产物里残留 require()
+37. **`deck/tests/verify-handoff-latest-sort.js`**
+   - 断言原话：「parseHandoffMtime helper 定义（dyn 与 npm 双产物）」
+   - 实得：FAIL ×2
+   - 初步根因猜测：交接时间解析的助手指令在产物里找不到
+38. **`deck/tests/verify-issue-comment.js`**
+   - 断言原话：「只读提示条件化 / updatedAt bump 闪烁数据源」
+   - 实得：#255 四缝验证失败；（diff 求值异常: idOf is not defined）
+   - 初步根因猜测：门禁自身引用了未定义标识符 idOf（门禁缺陷）
+39. **`deck/tests/verify-issue179-workspace-switch.js`**
+   - 断言原话：「非判定电话保留 DEFAULT_CWD 兜底；host.js 保留 DEFAULT_CWD 兜底」
+   - 实得：FAIL ×2
+   - 初步根因猜测：#179 的兜底被 #1003 改造带走了
+40. **`deck/tests/verify-issue212-213-214.js`**
+   - 断言原话：「#214 buildSnapshot must define let backendModules = null；#213 probe must invalidate cache on changed」
+   - 实得：FAIL ×4
+   - 初步根因猜测：#212/#213/#214 的三条不变式在实现里已不成立
+41. **`deck/tests/verify-issue58-cache-first.js`**
+   - 断言原话：「loadSnapshot 拆 doLoad；openPagePanel 三分支；probeNow 按 cwd 归一键分组隔离」
+   - 实得：FAIL（client.js 与 package/lib/client.js 双缺）
+   - 初步根因猜测：缓存优先改造没落进产物
+42. **`deck/tests/verify-leaves.js`**
+   - 断言原话：「src/client/statusbar/StatusBar.js ≤359 行（零增长基线冻结值）」
+   - 实得：实际 414
+   - 初步根因猜测：冻结基线被突破 55 行
+43. **`deck/tests/verify-log-coverage.js`**
+   - 断言原话：「注册总数恰为现役数；清单里没有 wf.pluginIdentity」
+   - 实得：实得 56；wf.updateStatus/updateCheck/updateInstall 没有方法可识行
+   - 初步根因猜测：日志电话注册表与实现清单对不上
+44. **`deck/tests/verify-log-fields.js`**
+   - 断言原话：「事件有埋点落点 update.install.exec（全仓未找到）」
+   - 实得：FAIL；另有未知事件 identity.migrate
+   - 初步根因猜测：埋点事件名与附录白名单不同步
+45. **`deck/tests/verify-log-switch-597.js`**
+   - 断言原话：「超时/未知端点/没接上宿主的提示都要分类」
+   - 实得：实际全部取到「」（9 项红）
+   - 初步根因猜测：配置页调试开关的提示分类整段取不到
+46. **`deck/tests/verify-map-subissues-352.js`**
+   - 断言原话：「PROMPTS version 14」
+   - 实得：FAIL: prompts.js 未满足 352 v14 解耦要求
+   - 初步根因猜测：已知真漂移：prompts.js 未做 v14 解耦
+47. **`deck/tests/verify-markdown.js`**
+   - 断言原话：「mdToHtml 里 inlineWith 走 Tip 分支」
+   - 实得：ReferenceError: Tip is not defined（mdInline → Tip）
+   - 初步根因猜测：被测源码引用了 Tip，门禁求值探针只喂了 h，没给 Tip 桩
+48. **`deck/tests/verify-market-tarball.js`**
+   - 断言原话：「.github/workflows/release-tarball.yml 存在；workflow 里的资产名 NAME 等于包名」
+   - 实得：✗ ×2（文件不存在）
+   - 初步根因猜测：工作流文件不在仓库
+49. **`deck/tests/verify-naming-isolation-315.js`**
+   - 断言原话：「A 未过宽限且无 hint 不产单；无 hint 冲突时裸档保留」
+   - 实得：23 checks, some failed
+   - 初步根因猜测：#315 的宽限与裸档保留规则未落实现
+50. **`deck/tests/verify-probe-since.js`**
+   - 断言原话：「probe 每轮记录 lastProbeAtByRepo 探测时间；删除/状态变化时失效内存快照缓存」
+   - 实得：FAIL（src 与 package 双产物）
+   - 初步根因猜测：探测基线推进的代码确实不在产物里
+51. **`deck/tests/verify-readme-sync.js`**
+   - 断言原话：「发布目录 README.md 与源头一致」
+   - 实得：差异字节数=104
+   - 初步根因猜测：生成物过期（改根 README 后没跑 scripts/build.mjs）
+52. **`deck/tests/verify-refresh-414.js`**
+   - 断言原话：「src host 含 isForce；wf.snapshot 受 isForce 守卫；pkg host 含 isForce」
+   - 实得：FAIL ×3
+   - 初步根因猜测：#414 的 isForce 守卫在 host 里找不到
+53. **`deck/tests/verify-release-contract.js`**
+   - 断言原话：「CHANGELOG 最新节版本 == 目标 v1.8.0-rc.13；构建产物含版本注入」
+   - 实得：实际 v1.7.1（并本轮 65s 超时被杀）
+   - 初步根因猜测：CHANGELOG/产物版本落后于目标版本
+54. **`deck/tests/verify-release-template.js`**
+   - 断言原话：「.github/ISSUE_TEMPLATE/release.yml 存在」
+   - 实得：✗（前置文件缺失，双入口一致性检查跳过）
+   - 初步根因猜测：发布模板文件不在仓库
+55. **`deck/tests/verify-repo-jump.js`**
+   - 断言原话：「index 注入占位声明；pkg/dev 产物注入仓库 URL」
+   - 实得：FAIL（19/22）
+   - 初步根因猜测：仓库 URL 注入占位没落进产物
+56. **`deck/tests/verify-skill-probe-redcard-and-waiting.js`**
+   - 断言原话：「src/host/index.js 含 SKILL_PENDING_MAX 等 5 条」
+   - 实得：FAIL；另有 TypeError: dispatch is not a function
+   - 初步根因猜测：红牌/等待链的常量与分支不在实现里（末段夹具也抛错）
+57. **`deck/tests/verify-strict-module-syntax.js`**
+   - 断言原话：「src/client/panelAssembly.js 严格解析」
+   - 实得：Transform failed：<stdin>:209:4 Top-level return cannot be used inside an ECMAScript module
+   - 初步根因猜测：源码里有模块顶层 return
+58. **`deck/tests/verify-t1-getrepokey.js`**
+   - 断言原话：「场景4 snapshot.repo 降级到 gh mock（upstream）」
+   - 实得：实得 null
+   - 初步根因猜测：上游降级路径不再生效
+59. **`deck/tests/verify-t14-detail-badge.js`**
+   - 断言原话：「client.js / package/lib/client.js 提取 T14 渲染块成功」
+   - 实得：FAIL ×2
+   - 初步根因猜测：T14 徽章渲染块在产物里切片失败
+60. **`deck/tests/verify-tabs-narrow.js`**
+   - 断言原话：「tabsRef 出现 2 次（dock + overlay）」
+   - 实得：FAIL（dyn 与 npm 双产物）
+   - 初步根因猜测：tabsRef 的使用点数量与判据不符
+
+### 真漂移里成团的三处（占 19/60）
+
+1. **deps 缺 `identityEnvFor`（3 道：927-gate-injection / log-exec-606 / 963-log-order）**：门禁直连 `createPlatformChannel({...})` 时没给这个新依赖，而 `src/host/platformChannel.js:256` 现在无条件 `await identityEnvFor(...)`。修法是门禁补一个桩（真实装配在 `src/host/index.js` 里是有的）。
+2. **deps 缺 `decideBackend`（13 道：deck-tools / deck-no-hang / deck-tools-matrix / 790 / 829 / 895 / 898 / 929 / 971 / 992 / 784 / deck-thin-reads / deck-parallel）**：`#1003` 单出口之后 `src/shared/deck-tools/shell.js` 的 `pickBackend` 把 `decideBackend` 当必需依赖，缺了就如实回 `unsupported`，后面所有断言跟着空。新一批门禁（947 / 957 / 934-935 / 1003）都传了，这一批没传 —— 是门禁侧欠账。
+3. **宿主装配改了交付口（3 道：panel / detail-fog / detail-levels）**：`deck/host.js` 的 `apply` 现在把电话注册进 `bootBody` 内**自建**的 harness，再经 `ctx.inject` / `ctx.get('dswEndpoints')` 交付；门禁仍按入参 `harness.handle` 捕获 → handlers 为空（本次用独立探针复现了 `handlers: 0`，再调 `h['wf.refresh']` 就是 `not a function`）。
+
+## 接不接进 verify:deck 发版链
+
+**暂不接**：90 道红里 60 道是真漂移（其中 19 道是同一处夹具欠账，可成批修），先清这批再谈接入；接入时应对 27 道环境类写显式前置/跳过（Chromium 通道与 deck 局部 node_modules），否则发版链会被机器环境卡死。
+
+## 这份清单落成票了
+
+分流之后真漂移**各自开票**（本文件是它们的证据来源）：
+
+| 票 | 覆盖面 |
+| --- | --- |
+| [#56](https://github.com/SunsetRNE/dsh-github-resident/issues/56) | 成团·一：13 道夹具缺 `decideBackend` |
+| [#57](https://github.com/SunsetRNE/dsh-github-resident/issues/57) | 成团·二：3 道夹具缺 `identityEnvFor` |
+| [#58](https://github.com/SunsetRNE/dsh-github-resident/issues/58) | 成团·三：3 道按入参 harness 捕获，宿主已改 `bootBody + dswEndpoints` |
+| [#59](https://github.com/SunsetRNE/dsh-github-resident/issues/59) | 其余 41 道 + 待定 3 道（逐条根因收口票） |
+
+环境类 27 道**没有开票**：它们是「跑门禁这台机器缺什么」，归属是 feeder 侧的显式前置/跳过（上面「环境类怎么补 / 怎么跳过」一节），不是源码欠账 —— 开了票也没人接。
