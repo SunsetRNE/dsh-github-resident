@@ -407,3 +407,26 @@
 | [#59](https://github.com/SunsetRNE/dsh-github-resident/issues/59) | 其余 41 道 + 待定 3 道（逐条根因收口票） |
 
 环境类 27 道**没有开票**：它们是「跑门禁这台机器缺什么」，归属是 feeder 侧的显式前置/跳过（上面「环境类怎么补 / 怎么跳过」一节），不是源码欠账 —— 开了票也没人接。
+
+## 复测（2026-10-15 第二轮：清 #56 / #57 / #58 第 1 步）
+
+同一个名单、同一台机器、同一个逐道跑法再量一遍（跑之前先取重活租约，跑完放）：
+
+| 项 | 首测 | 复测 |
+| --- | --- | --- |
+| 绿 | 221 | **237** |
+| 红 | 90 | **74** |
+| 红→绿 | — | **16 道**（#56 的 13 道 + `verify-927-gate-injection` / `verify-log-exec-606` + `verify-963-log-order`） |
+| 绿→红（回归） | — | **0** |
+
+未如期转绿的两道是 [#58](https://github.com/SunsetRNE/dsh-github-resident/issues/58) 名下的 `verify-detail-fog` / `verify-detail-levels`：取件方式改好之后它们**在门禁链的环境里**（PATH 上没有可跑的 `gh`）仍然红 —— 这属于**环境依赖**（要真 `gh`，或给夹具一个明确的前置/跳过），不是端口漂移；`verify-panel` 另剩 2 条与端口无关的判据漂移，开在 [#63](https://github.com/SunsetRNE/dsh-github-resident/issues/63)（#58 `blockedBy` 它）。
+
+第二轮之后新开的票：
+
+| 票 | 覆盖面 |
+| --- | --- |
+| [#62](https://github.com/SunsetRNE/dsh-github-resident/issues/62) | `verify-963-log-order` 的 S4 分档判据停在 1.7.8 之前（probe 样例用了 `auth status`）—— 已修，复测绿 |
+| [#63](https://github.com/SunsetRNE/dsh-github-resident/issues/63) | `verify-panel` 的两条残留漂移：票级 `blocks` 字段 / 已关闭地图的现场比对 |
+| [#61](https://github.com/SunsetRNE/dsh-github-resident/issues/61) | 重活租约扩到 `verify:deck` / `verify:resident`（半重活并跑今天没有护栏）—— 已落地 |
+
+⚠️ **复测的跑法**是用逐道 runner（每条 `cd deck && timeout 65 node tests/<file>`）跑的，**不是** `deck/scripts/verify-chain.js`；两边的 PATH 都是原样，所以数字可比。
