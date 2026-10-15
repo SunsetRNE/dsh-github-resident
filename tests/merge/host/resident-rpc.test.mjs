@@ -57,7 +57,7 @@ await withPlugin(h.home, { path: h.path, env: {
     const changedMethod = await call('ghr.identity.email', { method: 'GET', query: 'email=wrong@example.com' }, 'http://127.0.0.1:3080')
     check(changedMethod.value?.ok === false && /E_RPC_ARGS/.test(changedMethod.value.error), '入参不能覆盖端点方法')
     const proto = await call('ghr.protocol')
-    check(proto.value.spec === 'dsh-github-resident/8', '协议号不变')
+    check(proto.value.spec === 'dsh-github-resident/9', '协议号随 work 段 bump 到 /9')
     // 数量不再写死字面量（加端点时它必然漂移）：判据是「协议里每一个都真的注册着」，外加新端点必须在。
     check(proto.value.http.endpoints.every(e => handlers.has(e.path))
       && proto.value.http.endpoints.some(e => e.path === 'ghr.ensureGh')

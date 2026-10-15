@@ -630,6 +630,34 @@ const RUNTIME_HELPER_FILE = path.join(RUNTIME_DIR, 'git-credential-helper');
 const LOAD_LEASE_FILE = process.env.DSH_GH_LOAD_LEASE || path.join(STATE_DIR, 'github-resident', 'load-lease.json');
 const LOAD_LEASE_DEFAULT_TTL_MS = 30 * 60 * 1000;
 const LOAD_LEASE_HELD_ENV = 'DSH_GH_LOAD_LEASE_HELD';   // 祖先进程已持有时传给子进程的记号（runner 与门禁共用）
+
+// 并发账的落点与形状（协议 `work` 段 / 工具 `gh_work_ledger`，票 55 / #31）—— **只做可见，不做互斥**。
+// 与上面那把租约的分工写死在这里，免得两件事被混成一件事：
+//   · 租约（`load` 段 / `gh_load_lease`）管「重活一次只许一份」—— 会**阻塞**，拿不到就换时间；
+//   · 这本账（`work` 段 / `gh_work_ledger`）只回答「谁在动什么」—— **不阻塞任何东西**，
+//     不给任何「已被占用」的错误。要不要上锁留到有账之后再说（票面边界）。
+// 账文件本身落在 GH_DATA_DIR 下（apply 内定义，跟 DSH_GH_DATA_DIR 同一个习惯）；这里只放与落点无关的形状。
+const WORK_LEDGER_DEFAULT_TTL_MS = 30 * 60 * 1000;   // 心跳超过它就算陈旧（DSH_GH_WORK_TTL_MS 可覆盖）
+const WORK_TARGET_KINDS = ['path', 'ticket', 'other'];
+
+/**
+ * 一条账的字段清单（**一处声明**）：协议 `work.entry` 直接引它，折叠出来的条目也按它的键造
+ *（`blankWorkEntry()`）—— 加字段只需动这一处，协议文档与真条目同时跟上，不会有第二份手抄。
+ */
+const WORK_LEDGER_ENTRY = {
+  id: 'string，稳定 id = "work-" + sha1(sessionId + NUL + target.kind + NUL + target.value)[:12] —— (sessionId, target) 就是 upsert 键',
+  actor: 'string，谁在动：DSH_GH_ACTOR 报的名；没报就用 sessionId；再没有就是 (unknown) —— 不编造',
+  sessionId: 'string，agent 会话（DSH_SESSION_ID）；拿不到就是 (unknown)',
+  pid: 'number，登记时的进程号（读的时候按它判 alive）',
+  target: "{ kind: 'path'|'ticket'|'other', value: string } —— 在哪个路径 / 哪张票上干活",
+  note: 'string|null，这一条的自由备注（后来的 announce 不给 note 时保留上一条）',
+  startedAt: 'string，这一条第一次被登记的时间（ISO8601；后续 announce 只动心跳，不改它）',
+  heartbeatAt: 'string，最近一次心跳（announce）时间（ISO8601）',
+  releasedAt: 'string|null，自己标过 release 的时间；null = 还没放（再 announce 一次会重开这一条）',
+};
+const WORK_LEDGER_ENTRY_KEYS = Object.keys(WORK_LEDGER_ENTRY);
+/** 读时附在条目上的**派生**键（不落盘）：alive / ageMs / stale / released。 */
+const WORK_LEDGER_DERIVED_KEYS = ['alive', 'ageMs', 'stale', 'released'];
 /** 凭据助手的落点（host 作用域）：它**优先于**全局 `credential.helper`；写全局会把所有 host 都劫走。 */
 const CRED_HOST_HELPER_KEY = 'credential.https://' + GH_HOST + '.helper';
 
@@ -904,6 +932,207 @@ const LOAD_LEASE_VIEWS = {
   release: ['ok', 'action', 'released', 'was', 'heldBy', 'note', 'error'],
 };
 const LOAD_LEASE_RETURNS = [...new Set(Object.values(LOAD_LEASE_VIEWS).flat())];
+
+/** `gh_work_ledger` 三个动作各自的回执视图 —— 一处声明：工具目录那行与协议 `work` 段都从这里派生。 */
+const WORK_LEDGER_VIEWS = {
+  // list 是**只读**动作：一个字节都不写（exists=false 就是「还没有账」，不顺手建一份）。
+  list: ['ok', 'action', 'file', 'exists', 'entries', 'active', 'stale', 'missing', 'malformed', 'ttlMs', 'note', 'error'],
+  announce: ['ok', 'action', 'entries', 'note', 'error'],
+  release: ['ok', 'action', 'released', 'entries', 'note', 'error'],
+};
+const WORK_LEDGER_RETURNS = [...new Set(Object.values(WORK_LEDGER_VIEWS).flat())];
+
+// ---------- 并发账：谁在动什么（**只做可见，不做互斥**）----------
+// 存储选型（票面要求写清「选了哪种、丢更新的窗口在哪里、为什么可接受」）：
+//   选的是**追加式 JSONL**（一行一条记录，读时折叠），**不是**「读-改-写整份 JSON + writeJsonAtomic」。
+//   理由：writeJsonAtomic 的原子性只保证「单次写不撕裂」，读-改-写整条路径**有一个丢更新窗口** ——
+//   两个会话同时 announce 时都读到旧内容、各自把自己那条写进自己的副本，后 rename 的那份把先写者刚加的
+//   整条吃掉（静默丢账，正是票面唯一不许的事）。
+//   追加式没有这个窗口：每条记录是 O_APPEND 的单次小写，谁都不会覆盖谁，读的时候按 id 折叠。
+//   残留窗口只有一个、且不静默：某次写被截断 → 那一行解析不动 → 折叠时计入 malformed 如实报出来，
+//   其余记录一条不少。（本账**不是锁**，所以「一条残行」最多让一条记录看不见，不会阻塞任何人。）
+
+/** 要不要按 TTL 判陈旧：`DSH_GH_WORK_TTL_MS` 可覆盖，调用时才读（改环境不用重载插件）。 */
+function workLedgerTtlMs() {
+  const raw = Number(process.env.DSH_GH_WORK_TTL_MS);
+  return Number.isFinite(raw) && raw > 0 ? Math.round(raw) : WORK_LEDGER_DEFAULT_TTL_MS;
+}
+
+/** 一条账的稳定 id：(sessionId, target) 就是 upsert 键（sha1 前 12 位，带人类可读前缀）。 */
+function workEntryId(sessionId, target) {
+  return 'work-' + createHash('sha1')
+    .update(String(sessionId) + '\u0000' + String(target.kind) + '\u0000' + String(target.value))
+    .digest('hex').slice(0, 12);
+}
+
+/** 归一化一个 target：kind 只认三个（其余折 other），value 必须是非空串；不可用回 null。 */
+function workTarget(raw) {
+  const o = raw && typeof raw === 'object' ? raw : {};
+  const kind = WORK_TARGET_KINDS.includes(String(o.kind)) ? String(o.kind) : 'other';
+  const value = String(o.value == null ? '' : o.value).trim();
+  return value ? { kind, value } : null;
+}
+
+/** 新条目的**空壳**：键从 WORK_LEDGER_ENTRY 派生（协议 work.entry 与真条目同一个真源）。 */
+function blankWorkEntry() {
+  const e = {};
+  for (const k of WORK_LEDGER_ENTRY_KEYS) e[k] = null;
+  return e;
+}
+
+/**
+ * 读账文件（**只读**：不存在就回 exists:false，绝不创建）。
+ * 解析不动的行计入 malformed —— 追加写被截断时如实报出来，不假装没发生。
+ */
+async function readWorkLedgerFile(file) {
+  let raw = '';
+  try {
+    raw = await fs.readFile(file, 'utf8');
+  } catch (e) {
+    const missing = e && e.code === 'ENOENT';
+    return { file, exists: false, records: [], malformed: 0, error: missing ? null : String((e && e.message) || e) };
+  }
+  const records = [];
+  let malformed = 0;
+  for (const line of raw.split('\n')) {
+    const t = line.trim();
+    if (!t) continue;
+    try { records.push(JSON.parse(t)); } catch { malformed += 1; }
+  }
+  return { file, exists: true, records, malformed, error: null };
+}
+
+/**
+ * 把记录折叠成条目（读时折叠 —— 追加式没有 RMW 窗口，这里是**唯一的解释权**）。
+ *   · announce 是 upsert:同一 (sessionId,target) 的 id 只保留一条；startedAt 取第一条（后续心跳不改它），
+ *     heartbeatAt 取最新，note 没给就保留上一条；再 announce 一次 = 重开这一条（releasedAt 清回 null）。
+ *   · release 只按 id 标，且记录里的 sessionId/pid 必须与那条账对得上（文件被手改也不替别人放）。
+ */
+function foldWorkLedger(records) {
+  const map = new Map();
+  for (const rec of Array.isArray(records) ? records : []) {
+    if (!rec || typeof rec !== 'object' || !rec.id) continue;
+    const id = String(rec.id);
+    if (rec.type === 'release') {
+      const e = map.get(id);
+      if (e && e.sessionId === rec.sessionId && e.pid === rec.pid) e.releasedAt = rec.at || e.releasedAt;
+      continue;
+    }
+    if (rec.type !== 'announce') continue;
+    const target = workTarget(rec.target);
+    if (!target) continue;
+    const at = String(rec.at || new Date().toISOString());
+    const e = map.get(id) || Object.assign(blankWorkEntry(), { id, target, startedAt: at, heartbeatAt: at });
+    e.actor = rec.actor != null ? String(rec.actor) : e.actor;
+    e.sessionId = rec.sessionId != null ? String(rec.sessionId) : e.sessionId;
+    e.pid = Number.isInteger(rec.pid) ? rec.pid : e.pid;
+    e.target = target;
+    if (rec.note != null) e.note = String(rec.note);
+    e.heartbeatAt = at;
+    e.releasedAt = null;   // 又 announce 了一次 = 又开工了
+    map.set(id, e);
+  }
+  return map;
+}
+
+/** 一条账的**只读视图**：alive（pid 在不在）/ ageMs / stale / released 都是读的时候现算的。 */
+function workEntryView(entry, ttlMs) {
+  const alive = leasePidAlive(entry.pid);            // 复用租约那支 pid 判活（不另写一份）
+  const hb = Date.parse(entry.heartbeatAt);
+  const ageMs = Number.isFinite(hb) ? Math.max(0, Date.now() - hb) : null;
+  const released = Boolean(entry.releasedAt);
+  const stale = !released && (alive === false || (ageMs !== null && ageMs > ttlMs));
+  return { ...entry, alive, ageMs, stale, released };
+}
+
+/**
+ * 三档：active（活着且心跳不旧）/ stale（pid 查不到或心跳超 TTL）/ missing（pid 判不出来）。
+ * 已 release 的不进任何一档；「不知道」（alive === null）**不折成** active 或 stale —— 单独一档如实说。
+ */
+function workLedgerBuckets(views) {
+  const active = [];
+  const stale = [];
+  const missing = [];
+  for (const v of views) {
+    if (v.released) continue;
+    if (v.alive === null) missing.push(v);
+    else if (v.stale) stale.push(v);
+    else active.push(v);
+  }
+  return { active, stale, missing };
+}
+
+/** 只读清单：账文件 + 全部条目 + 三档视图。**一个字节都不写**（不建目录、不建文件）。 */
+async function workLedgerList(file) {
+  const ttlMs = workLedgerTtlMs();
+  const cur = await readWorkLedgerFile(file);
+  const entries = [...foldWorkLedger(cur.records).values()]
+    .map((e) => workEntryView(e, ttlMs))
+    .sort((a, b) => String(a.heartbeatAt).localeCompare(String(b.heartbeatAt)));
+  const { active, stale, missing } = workLedgerBuckets(entries);
+  return { file, exists: cur.exists, entries, active, stale, missing, malformed: cur.malformed, ttlMs, error: cur.error };
+}
+
+/**
+ * 追加一条记录。目录 0700 / 文件 0600；O_APPEND 的单次小写是**并发安全**的那一步
+ *（两个会话同时 announce 时各追加各的，谁都不覆盖谁 —— 见上面选型说明）。
+ */
+async function appendWorkRecord(file, record) {
+  await fs.mkdir(path.dirname(file), { recursive: true, mode: 0o700 });
+  await chmodQuiet(path.dirname(file), 0o700);
+  await fs.appendFile(file, JSON.stringify(record) + '\n', { mode: 0o600 });
+  await chmodQuiet(file, 0o600);
+  return file;
+}
+
+/**
+ * 登记 / 心跳自己那条（按 sessionId + target upsert）。**不查、不拒、不阻塞** ——
+ * 同一条路径上已经有别人也照样成功（本账不做互斥，票面边界）。
+ * 返回写完之后的只读视图（折叠一遍，如实报这一条现在长什么样）。
+ */
+async function announceWork(file, { sessionId, actor, targets, note }) {
+  const wanted = (Array.isArray(targets) && targets.length ? targets : [{ kind: 'other', value: '(未指明)' }]);
+  const seen = new Set();
+  const normalized = [];
+  for (const raw of wanted) {
+    const target = workTarget(raw);
+    if (!target) continue;
+    const id = workEntryId(sessionId, target);
+    if (seen.has(id)) continue;
+    seen.add(id);
+    normalized.push({ id, target });
+  }
+  if (!normalized.length) return { wrote: [], entries: [] };
+  const at = new Date().toISOString();
+  const wrote = [];
+  for (const { id, target } of normalized) {
+    const rec = { v: 1, type: 'announce', id, actor, sessionId, pid: process.pid, target, note: note == null ? null : String(note), at };
+    await appendWorkRecord(file, rec);
+    wrote.push(rec);
+  }
+  const cur = await readWorkLedgerFile(file);
+  const folded = foldWorkLedger(cur.records);
+  const ttlMs = workLedgerTtlMs();
+  const entries = wrote.map((rec) => workEntryView(folded.get(rec.id), ttlMs)).filter(Boolean);
+  return { wrote, entries };
+}
+
+/**
+ * 放自己那条：**只认自己**（sessionId + pid 都对得上的未释放条目），绝不替别人放。
+ * 返回实际被标掉的条数与被标掉的那些条目（视图）。
+ */
+async function releaseWork(file, { sessionId, pid }) {
+  const cur = await readWorkLedgerFile(file);
+  const folded = foldWorkLedger(cur.records);
+  const mine = [...folded.values()].filter((e) => e.sessionId === sessionId && e.pid === pid && !e.releasedAt);
+  const ttlMs = workLedgerTtlMs();
+  const at = new Date().toISOString();
+  for (const e of mine) {
+    await appendWorkRecord(file, { v: 1, type: 'release', id: e.id, sessionId, pid, at });
+    e.releasedAt = at;
+  }
+  return { released: mine.length, entries: mine.map((e) => workEntryView(e, ttlMs)) };
+}
 
 const GH_IDENTITY_VIEWS = {
   audit: ['identity', 'points', 'config', 'summary'],
@@ -1559,7 +1788,10 @@ const PROTOCOL_ID = 'dsh-github-resident';
 // 后果不是「哪一处当场炸」，而是**号不再能当形状的键**：同一个 `/7` 在一段时间里对应过两种协议文档
 //（有 `load` 段之前 / 之后），按 `spec` 判断「这份协议里有没有某段」的消费方、以及按号定位的文档与快照，
 // 拿到的答案取决于它读的是哪一刻 —— 号只涨不跌，防的是这个。
-const PROTOCOL_VERSION = 8;
+// 8 → 9（2026-10-15，票 55 / #31「只读的并发账：谁在动什么」）：新增 `work` 段。
+// 按同一条增量规矩（新增段才 bump）号必须跟上；`tests/merge/host/tool-surface-contract.test.mjs` 里的
+// 段登记表同时加了一行 { version: 9, segments: [... , 'work'] } —— 只涨号不加行 / 只加行不涨号都会被那条判据打红。
+const PROTOCOL_VERSION = 9;
 const PROTOCOL_SPEC = PROTOCOL_ID + '/' + PROTOCOL_VERSION;
 const SERVICE_KEY = 'githubResident';
 
@@ -1590,10 +1822,13 @@ const TOOL_PROTOCOL = [
   // 重活租约（协议 `load` 段）：同一台机器上的全量门禁 / 矩阵一次只许一份 ——
   // 多会话并跑看不见彼此，这个工具是那只能看见全局的眼睛；runner 自己也取同一份锁。
   { name: 'gh_load_lease', kind: 'write', required: [], optional: ['action', 'holder', 'purpose', 'ttl_ms'], returns: LOAD_LEASE_RETURNS },
+  // 并发账（协议 `work` 段）：**只做可见，不做互斥** —— 默认动作 list 一个字节都不写，
+  // 另外两个动作（announce / release）才落账，所以 kind 如实写 write（与 gh_load_lease 同款诚实口径）。
+  { name: 'gh_work_ledger', kind: 'write', required: [], optional: ['action', 'targets', 'note'], returns: WORK_LEDGER_RETURNS },
   { name: 'gh_env_probe', kind: 'read', required: [], optional: ['network_targets', 'attempts', 'timeout_ms'], returns: ['capabilities', 'network', 'proxy', 'dirs', 'summary', 'bounds', 'notes'] },
   { name: 'gh_cli_version', kind: 'write', required: [], optional: ['update', 'force'], returns: ['current', 'latest', 'layer', 'updateAvailable', 'checkedAt', 'updated', 'reason', 'lastUpdate'] },
   { name: 'gh_cache_gc', kind: 'write', required: [], optional: ['dry_run', 'keep_versions'], returns: ['dir', 'removed', 'removedCount', 'freedBytes', 'kept', 'keptVersions'] },
-  { name: 'gh_protocol', kind: 'read', required: [], optional: [], returns: ['id', 'version', 'spec', 'service', 'http', 'envelope', 'tools', 'errors', 'registry', 'identity', 'environment', 'mutations', 'load', 'guarantees'] },
+  { name: 'gh_protocol', kind: 'read', required: [], optional: [], returns: ['id', 'version', 'spec', 'service', 'http', 'envelope', 'tools', 'errors', 'registry', 'identity', 'environment', 'mutations', 'load', 'work', 'guarantees'] },
 ];
 
 /**
@@ -2075,6 +2310,11 @@ export function apply(ctx) {
   const GH_DATA_DIR = process.env.DSH_GH_DATA_DIR || path.join(STATE_DIR, 'gh-cli');
   const GH_BIN = path.join(GH_DATA_DIR, 'bin', 'gh');
   const GH_STATE = path.join(GH_DATA_DIR, 'install.json');
+  // 并发账的落点（协议 `work` 段 / 工具 `gh_work_ledger`）：跟 DSH_GH_DATA_DIR 同一个数据目录习惯。
+  // 文件名按票面定死为 work-ledger.json；**内容是追加式 JSONL**（一行一条记录，读时折叠）——
+  // 为什么不是整份 JSON 的读-改-写：见文件顶部 WORK_LEDGER_VIEWS 旁边那段选型说明（并发 announce 会静默丢账）。
+  // DSH_GH_WORK_LEDGER 单独覆盖路径（门禁隔离用；与 gh_load_lease 的 DSH_GH_LOAD_LEASE 同款）。
+  const WORK_LEDGER_FILE = process.env.DSH_GH_WORK_LEDGER || path.join(GH_DATA_DIR, 'work-ledger.json');
   const DEFAULT_REPO = 'cli/cli';
   const RELEASE_API = process.env.DSH_GH_RELEASE_API
     || 'https://api.github.com/repos/' + DEFAULT_REPO + '/releases/latest';
@@ -3495,6 +3735,36 @@ sys.stdout.flush()
       },
     },
 
+    // 2026-10-15（票 55 / #31「只读的并发账：谁在动什么」）：多会话并跑时彼此看不见 —— 这一本只做**可见**。
+    // 与上面 `load` 段的分工写死：租约管「重活一次只许一份」（会阻塞），这本账只管「谁在动什么」（不阻塞）。
+    work: {
+      what: '并发账：谁（actor / sessionId / pid）在哪个路径或票（target）上干活、什么时候开始的（startedAt）、还活着吗（读的时候按 pid + 心跳现算）。默认动作 list 只读。',
+      why: '多个会话在同一台机器 / 同一个仓库上并行干活时，彼此看不见对方在做什么 —— 没有账，就只能靠猜和撞。本票只做「看得见」。',
+      ledgerFile: WORK_LEDGER_FILE,
+      format: '追加式 JSONL：一行一条记录（announce = 登记 / 心跳，release = 自己标 releasedAt），读时按 id 折叠成条目。文件按票面叫 work-ledger.json，内容是 JSONL 而不是整份 JSON。',
+      // 票面要求写清「并发写选了哪种、丢更新的窗口在哪里、为什么可接受」——原话就放这里，别处不许另说一套。
+      concurrency: '选**追加式**而不是「读-改-写整份 JSON（writeJsonAtomic）」：后者两个会话同时 announce 时，双方都读到旧内容、各自把自己那条写进副本，后 rename 的那份把先写者刚加的**整条吃掉** —— 静默丢账，正是本票唯一不许的事。追加式（O_APPEND 单次小写）没有这个窗口。残留窗口只有一个且不静默：某次写被截断 → 那一行解析不动 → 计入 malformed 如实报出，其余记录一条不少（本账不是锁，一条残行不会阻塞任何人）。',
+      entry: WORK_LEDGER_ENTRY,
+      staleRule: '未 release 的条目：pid 查不到（复用租约那支 leasePidAlive，alive === false）或心跳超过 TTL（DSH_GH_WORK_TTL_MS，默认 ' + WORK_LEDGER_DEFAULT_TTL_MS + 'ms）即视为陈旧；pid 判不出来（alive === null）的自成一档 missing —— 不把「不知道」折成 active 或 stale。',
+      tool: 'gh_work_ledger',
+      env: {
+        file: 'DSH_GH_WORK_LEDGER —— 覆盖账文件路径（默认见 ledgerFile）',
+        ttl: 'DSH_GH_WORK_TTL_MS —— 心跳超过它算陈旧（默认 ' + WORK_LEDGER_DEFAULT_TTL_MS + 'ms）',
+        actor: 'DSH_GH_ACTOR —— actor 那一格报的名；没报就用 DSH_SESSION_ID；再没有就是 (unknown)',
+        session: 'DSH_SESSION_ID —— sessionId（与 gh_load_lease 的 holder 同一个来源习惯）；拿不到就是 (unknown)，不编造',
+      },
+      fieldsFrom: 'gh_work_ledger',
+      views: WORK_LEDGER_VIEWS,
+      readers: {
+        '任何要动手的 agent': '开工前先 gh_work_ledger {action:"list"}：看同一台机器 / 同一个仓库上还有谁在动什么（active / stale / missing 三档）。**它只回答事实，不会拦你**。',
+        '面板 / 设置页': '按 entries 逐条渲染「谁 / 在哪 / 多久没心跳了」；alive=false 或 stale=true 的那些照实标灰。',
+        '诊断 agent': 'stale 与 missing 分开读：stale = pid 查不到或心跳超时（可以当它不在了），missing = pid 判不出来（**不知道**，别当结论）。',
+        '本包维护者': '改字段属**接口变更**：先改 WORK_LEDGER_ENTRY / WORK_LEDGER_VIEWS（工具目录那行、协议本段、门禁都从这两处派生），别手抄第二份。',
+      },
+      // 边界这一句是票面要求**写死**的，别软化：
+      boundary: '**不做互斥、不阻塞任何人**：本段不提供任何「已被占用」的错误，也永远不会拒绝一次 announce / release —— 它只报事实，要不要上锁留到有账之后再说。要互斥用 gh_load_lease（那是 load 段，另一件事）。',
+    },
+
     guarantees: {
       masking: '任何输出都不含 token 原文，只出现掩码',
       loopbackOnly: '不自开监听；所有面板能力走宿主已认证的 RPC 通道',
@@ -4344,6 +4614,90 @@ sys.stdout.flush()
       if (r.heldBy) out.heldBy = r.heldBy;
       out.note = r.ok ? (r.released ? '放了' : r.note) : r.note;
       return out;
+    },
+  }));
+
+  /**
+   * 并发账（协议 `work` 段，票 55 / #31）：**只做可见，不做互斥**。
+   *
+   * 为什么是个工具而不是只写一条文档：多会话并跑时各自的 agent 看不见别人在动什么 —— 这个工具是那只眼睛。
+   * 它与 `gh_load_lease` 是**两件事**：租约管「重活一次只许一份」（会阻塞），这本账只管「谁在动什么」，
+   * 不提供任何「已被占用」的错误、永远不拒绝一次 announce / release。要不要上锁留到有账之后再说。
+   * 默认动作 `list` **一个字节都不写**（不建目录、不建文件）；只有 announce / release 才落账。
+   */
+  ctx.tools.register(textTool({
+    toolName: 'gh_work_ledger',
+    description: 'Read-only concurrency ledger for this machine: who (actor / sessionId / pid) is working on which path or ticket (target), since when, and whether they are still alive (judged at read time by pid + heartbeat). action:"list" (default, read-only, writes nothing at all) returns every entry with alive / ageMs / stale plus the active / stale / missing buckets; action:"announce" registers or heartbeats your own entry, upserted by sessionId + target (targets:[{kind:"path"|"ticket"|"other", value}], note optional); action:"release" marks only your own entries releasedAt — it never releases entries that belong to somebody else. It is NOT a mutex: it never blocks and never returns an "already taken" error; use gh_load_lease when you actually need mutual exclusion. The ledger lives in the plugin data dir (0600, DSH_GH_WORK_LEDGER overrides the path; DSH_GH_WORK_TTL_MS overrides the 30-minute stale TTL); no host config, no network, no consent needed.',
+    parameters: {
+      action: { type: 'string', enum: ['list', 'announce', 'release'], description: 'list (default, read-only: writes nothing at all) | announce (register / heartbeat my own entry, upserted by sessionId + target) | release (mark only my own entries releasedAt).' },
+      targets: {
+        type: 'array',
+        description: 'Where this session is working: [{kind:"path"|"ticket"|"other", value}]. announce only; omitted = one entry with target {kind:"other", value:"(未指明)"}.',
+        items: {
+          type: 'object',
+          properties: {
+            kind: { type: 'string', enum: ['path', 'ticket', 'other'] },
+            value: { type: 'string' },
+          },
+          required: ['value'],
+        },
+      },
+      note: { type: 'string', description: 'Free-text note for my entry. A later heartbeat that omits it keeps the previous note.' },
+    },
+    readOnly: false,
+    execute: async (args = {}) => {
+      const action = String(args.action || 'list');
+      if (!Object.prototype.hasOwnProperty.call(WORK_LEDGER_VIEWS, action)) {
+        return { ok: false, action, error: 'action 只支持 list / announce / release（缺省＝list）' };
+      }
+      // 「谁」分三层，全部从环境如实取，拿不到就是 (unknown) —— **不编造**（与 gh_load_lease 的 holder 同一个习惯）。
+      const sessionId = String(process.env.DSH_SESSION_ID || '(unknown)');
+      const actor = String(process.env.DSH_GH_ACTOR || process.env.DSH_SESSION_ID || '(unknown)');
+      if (action === 'list') {
+        const listed = await workLedgerList(WORK_LEDGER_FILE);
+        // 读不动（权限 / IO 错）**不折成「还没有账」**：未知不是没有（本仓一贯口径）。
+        if (listed.error) {
+          return {
+            ok: false, action, file: listed.file, exists: listed.exists, entries: [],
+            active: [], stale: [], missing: [], malformed: listed.malformed, ttlMs: listed.ttlMs,
+            error: listed.error,
+            note: '账文件读不动：不把它折成「还没有账」—— 未知不是没有',
+          };
+        }
+        const { active, stale, missing } = workLedgerBuckets(listed.entries);
+        return {
+          ok: true, action, file: listed.file, exists: listed.exists,
+          entries: listed.entries, active, stale, missing,
+          malformed: listed.malformed, ttlMs: listed.ttlMs,
+          note: listed.exists
+            ? (active.length
+              ? '有人在动：' + active.length + ' 条活着的账（本账不阻塞任何东西，只是让你看见）'
+              : '账在，但此刻没有活着的条目（stale / missing 见回执）')
+            : '还没有账（还没有人 announce 过）—— list 不会把文件建出来',
+        };
+      }
+      if (action === 'announce') {
+        const provided = Array.isArray(args.targets) && args.targets.length > 0;
+        const announced = await announceWork(WORK_LEDGER_FILE, {
+          sessionId, actor,
+          targets: args.targets,
+          note: args.note == null ? null : String(args.note),
+        });
+        if (provided && announced.entries.length === 0) {
+          return { ok: false, action, error: 'targets 里没有一个可用的条目（每项要有非空的 value）' };
+        }
+        return {
+          ok: true, action, entries: announced.entries,
+          note: '已登记 / 已心跳（按 sessionId + target upsert）—— 同一条路径上有别人也照样成功：本账不做互斥',
+        };
+      }
+      const released = await releaseWork(WORK_LEDGER_FILE, { sessionId, pid: process.pid });
+      return {
+        ok: true, action, released: released.released, entries: released.entries,
+        note: released.released
+          ? '放了自己 ' + released.released + ' 条（只认自己：别人的一条都没动）'
+          : '没有属于你自己的未释放条目（不替别人放）',
+      };
     },
   }));
 

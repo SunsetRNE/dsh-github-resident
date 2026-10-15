@@ -33,7 +33,7 @@ async function verifyOfflineHomeIsolation() {
   const endpointNames = ['state', 'version', 'update', 'protocol', 'registry', 'registry.list',
     'registry.plan', 'registry.build', 'registry.verify', 'registry.revoke', 'registry.purge',
     'authStart', 'ensureGh', 'logout', 'identity.email']
-  const protocol = { version: 8, spec: 'dsh-github-resident/8', tools: [{ name: 'fixture' }],
+  const protocol = { version: 9, spec: 'dsh-github-resident/9', tools: [{ name: 'fixture' }],
     http: { base: '/api/dsws', loopbackOnly: false,
       endpoints: endpointNames.map((name) => ({ method: 'POST', path: 'ghr.' + name })) } }
   const state = { gh: { installed: null, layer: 'checking' }, authenticated: null,
@@ -116,10 +116,10 @@ try {
   const offline = await diagnoseOffline(REPO_ROOT)
   check(offline.ok === true && offline.mode === 'offline', '默认档真正调用 githubResident 服务并拿到 protocol/state')
   // 端点数不写死：判据是「与协议里声明的一致」，加端点时不会漂。
-  check(offline.protocol.spec === 'dsh-github-resident/8'
+  check(offline.protocol.spec === 'dsh-github-resident/9'
     && offline.protocol.http.endpoints.length === offline.protocol.http.endpoints.length
     && offline.protocol.http.endpoints.every((e) => e.method === 'POST' && String(e.path).startsWith('ghr.')),
-    '离线回执是 /8 协议，且列出的 ' + offline.protocol.http.endpoints.length + ' 个端点都是 POST ghr.*')
+    '离线回执是 /9 协议，且列出的 ' + offline.protocol.http.endpoints.length + ' 个端点都是 POST ghr.*')
   check(offline.state.authenticated === null && offline.state.cached === false,
     '假 HOME 尚无账号快照，未知态不伪造为已登录/未登录')
   check(process.env === before.env && globalThis.fetch === before.fetch && Socket.prototype.connect === before.connect,

@@ -212,8 +212,9 @@ section('四、identity / environment 两段 ↔ 工具真返回（合成环境�
 // 本行跟着 `plugin.js` 的 `PROTOCOL_VERSION` 一起补上。
 // 说清这条字面量**管什么、不管什么**：它管的是**两份副本彼此一致**（`plugin.js` 的号 ↔ 这里钉的号），
 // 只改一处会红；它**抓不到**「加了段忘了 bump」—— 那次两份副本一起停在 `/7`，这条判据照样绿，正是本票的来由。
-// 后一种判据另有其人：《协议「新增段忘了 bump」要有一条机器判据（本轮靠人肉才发现）》，不在本票边界内。
-const EXPECT_SPEC = 'dsh-github-resident/8'
+// 后一种判据另有其人（下面那张 SEGMENT_REGISTRY，票 55 / #40 已落地）。
+// 8 → 9（2026-10-15，票 55 / #31「只读的并发账」）：协议新增 `work` 段 → 号跟着涨到 /9。
+const EXPECT_SPEC = 'dsh-github-resident/9'
 
 /** 双向漂移：declaredOnly = 协议写了但工具没有；actualOnly = 工具有了协议没写。 */
 const drift = (declared, actual) => ({
@@ -358,6 +359,8 @@ if (surface) {
   const SEGMENT_REGISTRY = [
     { version: 7, segments: ['environment', 'identity'] },
     { version: 8, segments: ['environment', 'identity', 'load', 'mutations'] },
+    // 票 55 / #31：新增 `work` 段（只读的并发账）→ 号 bump 到 /9，这一行与 plugin.js 的 PROTOCOL_VERSION 一起动。
+    { version: 9, segments: ['environment', 'identity', 'load', 'mutations', 'work'] },
   ]
   // 骨架键：协议里**不是段**的那些顶层键（结构 / 契约本身）。清单显式写下，下面自证它没写错。
   const PROTOCOL_SKELETON_KEYS = [

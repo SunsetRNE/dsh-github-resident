@@ -31,9 +31,9 @@ export function guiOrigin(value = process.env.DSH_GUI || 'http://127.0.0.1:3080'
 }
 
 export function validateProtocol(protocol) {
-  if (!object(protocol) || protocol.ok === false || protocol.spec !== 'dsh-github-resident/8'
-      || protocol.version !== 8 || !Array.isArray(protocol.tools) || !protocol.tools.length) {
-    fail('PROTOCOL_SHAPE', 'ghr.protocol 未返回 Resident /8 协议和工具清单。')
+  if (!object(protocol) || protocol.ok === false || protocol.spec !== 'dsh-github-resident/9'
+      || protocol.version !== 9 || !Array.isArray(protocol.tools) || !protocol.tools.length) {
+    fail('PROTOCOL_SHAPE', 'ghr.protocol 未返回 Resident /9 协议和工具清单。')
   }
   const http = protocol.http
   if (!object(http) || http.base !== '/api/dsws' || http.loopbackOnly !== false
