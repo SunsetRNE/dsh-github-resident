@@ -196,28 +196,44 @@ process.env.DSH_GH_DATA_DIR = path.join(HOME, '.dsh', 'gh-cli');
 const mod = await import(process.env.PLUGIN_URL);
 const tools = new Map();
 mod.apply({ tools: { register: (t) => tools.set(t.name, t) }, provide: () => {}, effect: (fn) => { try { fn(); } catch {} } });
-const out = { dataDir: process.env.DSH_GH_DATA_DIR, env: { noBoot: process.env.DSH_GH_NO_BOOTSTRAP, mode: process.env.CHILD_MODE } };
+const out = { dataDir: process.env.DSH_GH_DATA_DIR, env: { noBoot: process.env.DSH_GH_NO_BOOTSTRAP || null, mode: process.env.CHILD_MODE || null } };
 const early = await tools.get('gh_cli_resolve').execute({}, {});
 out.early = early.resolved;
 if (process.env.CHILD_MODE === 'fetch') {
   out.install = await tools.get('gh_cli_install').execute({ force: true }, {});
 } else {
   // 开关打开时不落地，所以不能死等 install.json —— 只等一个固定窗口再报账。
+  // 等「加载期接管落定」（takeover 非空）而不是只等文件：确认分支（缓存已在）也要覆盖到。
   const waitMs = Number(process.env.CHILD_WAIT_MS || 20000);
   const deadline = Date.now() + waitMs;
+  let resolveOut = null;
   while (Date.now() < deadline) {
-    try { await fs.stat(path.join(out.dataDir, 'install.json')); break; } catch { await new Promise((r) => setTimeout(r, 400)); }
+    resolveOut = await tools.get('gh_cli_resolve').execute({}, {});
+    if (resolveOut.takeover) break;
+    await new Promise((r) => setTimeout(r, 300));
   }
-  const resolveOut = await tools.get('gh_cli_resolve').execute({}, {});
+  if (!resolveOut) resolveOut = await tools.get('gh_cli_resolve').execute({}, {});
   let landed = false;
   try { await fs.stat(path.join(out.dataDir, 'install.json')); landed = true; } catch { landed = false; }
   out.resolve = { ...resolveOut, landedDuringWindow: landed };
   out.earlyAfter = (await tools.get('gh_cli_resolve').execute({}, {})).resolved;
 }
+// 回执的**无损 JSON** 体检：宿主就是这么判的 —— 一个 undefined / NaN 就够让整件工具报错。
+// 这里在子进程里走一遍，把非法路径带回父进程（JSON.stringify 会把 undefined 静默丢掉，父进程看不见）。
+var badPaths = []; var seenObjs = new Set();
+(function walk(x, p) {
+  if (x === undefined) { badPaths.push(p); return; }
+  var t = typeof x;
+  if (t === 'function' || t === 'symbol' || t === 'bigint') { badPaths.push(p + ':' + t); return; }
+  if (t === 'number' && !Number.isFinite(x)) { badPaths.push(p + ':' + String(x)); return; }
+  if (x && t === 'object') { if (seenObjs.has(x)) return; seenObjs.add(x); for (var k of Object.keys(x)) walk(x[k], p + '.' + k); }
+})(out, 'out');
+out.badPaths = badPaths;
 console.log('__CHILD__' + JSON.stringify(out));
 `;
-async function runChild(mode, extraEnv) {
-  const childHome = await fs.mkdtemp(path.join(os.tmpdir(), 'ghboot-child-'));
+async function runChild(mode, extraEnv, opts) {
+  const reuseHome = opts && opts.home ? opts.home : null;
+  const childHome = reuseHome || await fs.mkdtemp(path.join(os.tmpdir(), 'ghboot-child-'));
   const childFake = await fs.mkdtemp(path.join(os.tmpdir(), 'ghboot-cpath-'));
   await fs.writeFile(path.join(childFake, 'gh'), '#!/bin/sh\nexit 127\n', { mode: 0o755 });
   // 父进程要的是子进程**打印的那份报告**，不是它的退出码 —— 所以读到 `__CHILD__` 就结算，
@@ -259,9 +275,9 @@ async function runChild(mode, extraEnv) {
   const line = r.out.split('\n').find((l) => l.startsWith('__CHILD__')) || '';
   if (!line) console.error('[child ' + mode + '] via=' + r.via + ' code=' + r.code + ' out=' + r.out.slice(0, 300) + ' err=' + r.err.slice(0, 300));
   const parsed = line ? JSON.parse(line.slice(9)) : null;
-  await fs.rm(childHome, { recursive: true, force: true });
+  if (!reuseHome) await fs.rm(childHome, { recursive: true, force: true });
   await fs.rm(childFake, { recursive: true, force: true });
-  return { ...r, parsed };
+  return { ...r, parsed, childHome };
 }
 
 // 子进程 + 临时目录的清理有竞态，偶发一次假失败；重试 3 次，仍失败才记 FAIL，
@@ -285,6 +301,7 @@ if (g.parsed) {
   if (g.parsed.install.installed !== true) console.error('[G detail] ' + JSON.stringify(g.parsed.install).slice(0, 500));
   check('G fetch 路径落地成功', g.parsed.install.installed === true && a.ok === true, g.parsed.install);
   check('G 下载走的是 fetch（不是 curl）', a.ok === true, { method: a.method, entry: a.entry });
+  check('G 回执是无损 JSON（没有 undefined / NaN）', (g.parsed.badPaths || []).length === 0, g.parsed.badPaths);
 }
 
 phase('H：子进程加载期自动落地（最多 3 次）')
@@ -293,7 +310,31 @@ check('H 子进程跑通（加载期自动落地）', h.code === 0 && Boolean(h.
 if (h.parsed) {
   check('H 未调用任何工具就已落地 gh', h.parsed.resolve.resolved === 'plugin-cache', h.parsed.resolve.resolved);
   check('H 落地报告标记为自动', (h.parsed.resolve.lastInstall && h.parsed.resolve.lastInstall.version) || '', h.parsed.resolve.lastInstall);
+  check('H 回执是无损 JSON（没有 undefined / NaN）', (h.parsed.badPaths || []).length === 0, h.parsed.badPaths);
 }
+
+// ---- I. 缓存已在时的第二次加载 → 加载期接管走「确认」分支，回执仍必须是无损 JSON ----
+// 为什么专门加这一段（2026-10-15 本机实测）：确认/接管分支的结果里没有 arch，于是
+//   gh_cli_resolve 回的那个 lastEnsure.arch 是 undefined —— 宿主对工具回执做无损 JSON 检查，
+//   一个 undefined 就让整件工具报 "value is not lossless JSON"（gh 就绪之后反而不能用）。
+//   本段把「缓存已在 → 确认」那条路真的走一遍，并在子进程里逐字段体检。
+phase('I：缓存已在时再加载一次（确认分支的无损 JSON 体检）')
+const seedHome = await fs.mkdtemp(path.join(os.tmpdir(), 'ghboot-confirm-'));
+const seedData = path.join(seedHome, '.dsh', 'gh-cli');
+await fs.mkdir(path.join(seedData, 'bin'), { recursive: true });
+await fs.copyFile(FAKE_GH_BIN, path.join(seedData, 'bin', 'gh'));
+await fs.copyFile(path.join(DATA_DIR, 'install.json'), path.join(seedData, 'install.json'));
+const i = await runChild('boot', { DSH_GH_NO_BOOTSTRAP: '0', CHILD_WAIT_MS: '15000' }, { home: seedHome });
+check('I 子进程跑通（缓存已在）', i.code === 0 && Boolean(i.parsed), { code: i.code, err: i.err.slice(0, 200) });
+if (i.parsed) {
+  // 换了个 HOME 时路径对不上记录 → 'adopted'（重新接管一次）；同一个 HOME 下才是 'confirmed'。
+  //   两条路都走的是「已有一份能跑的 gh」那个分支 —— 本段要覆盖的正是它。
+  check('I 走的是「已有一份能跑的」分支（confirmed / adopted）',
+    ['confirmed', 'adopted'].includes((i.parsed.resolve.takeover || {}).action) && (i.parsed.resolve.takeover || {}).ok === true,
+    i.parsed.resolve.takeover);
+  check('I 回执是无损 JSON（没有 undefined / NaN）', (i.parsed.badPaths || []).length === 0, i.parsed.badPaths);
+}
+await fs.rm(seedHome, { recursive: true, force: true });
 
 phase('H2：子进程关闭开关后不落地')
 const n = await runChildUntilPass('boot', { DSH_GH_NO_BOOTSTRAP: '1', CHILD_WAIT_MS: '3000' });

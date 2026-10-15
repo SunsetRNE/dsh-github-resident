@@ -2965,7 +2965,15 @@ sys.stdout.flush()
               version: lastTakeover.version || null, pendingAt: lastTakeover.pendingAt || null,
               attempts: Array.isArray(lastTakeover.attempts) ? lastTakeover.attempts.length : null, note: lastTakeover.note || null }
           : null,
-        lastEnsure: lastEnsure ? { ok: lastEnsure.ok, pending: lastEnsure.pending === true, layer: lastEnsure.layer, arch: lastEnsure.arch, attempts: lastEnsure.attempts } : null,
+        // 投影必须是**全量**的：这批字段来自三种形状（落地结果 / 确认结果 / 熔断或报错结果），
+        //   缺一个 undefined 就会让整件工具被宿主的无损 JSON 检查判死。缺就回 null，别漏出去。
+        lastEnsure: lastEnsure ? {
+          ok: Boolean(lastEnsure.ok),
+          pending: lastEnsure.pending === true,
+          layer: lastEnsure.layer || null,
+          arch: lastEnsure.arch || null,
+          attempts: Array.isArray(lastEnsure.attempts) ? lastEnsure.attempts : null,
+        } : null,
       };
     },
   }));
@@ -4823,7 +4831,10 @@ sys.stdout.flush()
           takeover: { at: new Date().toISOString(), by: 'adopt', layer: g.layer, path: g.path, version: g.version, size: facts.size, sha256: facts.sha256, ok: true },
         });
       }
-      return { ok: true, action: same ? 'confirmed' : 'adopted', layer: g.layer, path: g.path, version: g.version, attempts: [] };
+      // arch 必须在这条路上也给：确认/接管分支此前没有它，于是 lastEnsure.arch === undefined，
+      //   而宿主对工具回执做的是**无损 JSON** 检查 —— 一个 undefined 就能让整件工具报
+      //   "value is not lossless JSON"（2026-10-15 本机实测：gh 就绪之后 gh_cli_resolve 直接不可用）。
+      return { ok: true, action: same ? 'confirmed' : 'adopted', layer: g.layer, path: g.path, version: g.version, arch: GH_ARCH, attempts: [] };
     }
     if (st.pending) {
       return {
