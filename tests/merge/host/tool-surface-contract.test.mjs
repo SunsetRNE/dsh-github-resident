@@ -417,6 +417,22 @@ if (surface) {
   note('段登记表只对**当前版本那一行**与真文档做双向比对；历史行是记录、不参与比对 —— 它是判据自己的副本，不是第二份真源。')
   note('「段」按显式骨架键清单判定（不做形状嗅探）：不带 fieldsFrom / readers 的新段照样会被抓出来。')
 
+  // -------------------------------------------------------------------------
+  // 文档里那句协议号也是**副本**，而副本会漂（/8 → /9 这次就是人手改的）
+  // -------------------------------------------------------------------------
+  // 能派生就派生、能指向真源就别抄：README 里**不许**写死协议号，只许指向 gh_protocol 的 spec 字段。
+  // 真源是 p.spec（协议文档自己报的那一个）—— 这份门禁不记「当前是几」，所以它不会变成第二份真源。
+  // 同一条病还有一处：README.en 那句原来写着「all 14 existing capabilities」，端点早就 15 个了。
+  const DOC_SPEC_PIN_FILES = ['README.md', 'README.en.md']
+  const specPinsIn = (text) => [...String(text || '').matchAll(/dsh-github-resident\/(\d+)/g)].map((m) => Number(m[1]))
+  const pinnedDocs = DOC_SPEC_PIN_FILES.flatMap((rel) => {
+    try { return specPinsIn(readText(rel)).map((n) => rel + ' → dsh-github-resident/' + n) } catch { return [] }
+  })
+  check(pinnedDocs.length === 0,
+    'README 里没有写死的协议号副本（要写就指向 gh_protocol 的 spec 字段；写死的：' + JSON.stringify(pinnedDocs) + '）')
+  check(specPinsIn('…协议 spec 是 dsh-github-resident/7 …').join() === '7' && specPinsIn('这段话一个号码都没写').length === 0,
+    '判据自证：写死的协议号抓得到；不写就一条都不报（否则它只是「读不到」而不是「没有」）')
+
   note('本段只覆盖**能在合成环境里离线跑**的工具与动作（gh_protocol / gh_identity 五动作 / gh_env_probe）：')
   note('需要出网的工具跑不了离线，这条判据不覆盖它们 —— 不假装覆盖。')
   note('gh_pr 自《gh_pr 共用解析器 + 回落 gh pr create》起两条路都能离线实跑（REST 换掉 fetch、回落走 gh 桩），'

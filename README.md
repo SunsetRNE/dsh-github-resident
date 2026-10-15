@@ -257,7 +257,7 @@ node verify-real-artifact.mjs  # 拿官方 release 真包验抽取器（断网�
 
 ## 面板与机器调用
 
-面板通过宿主 `connection.rpc.call('/api', 'dsws', { method: 'ghr.state', payload: { query: 'cached=1' } })` 读取状态；其余能力见 `gh_protocol.http.endpoints`。原独立回环端口已退役，`DSH_GH_API_PORT` 与页面 API 地址覆盖不再生效；协议 `spec` 保持 `dsh-github-resident/8`。
+面板通过宿主 `connection.rpc.call('/api', 'dsws', { method: 'ghr.state', payload: { query: 'cached=1' } })` 读取状态；其余能力见 `gh_protocol.http.endpoints`。原独立回环端口已退役，`DSH_GH_API_PORT` 与页面 API 地址覆盖不再生效；协议号以 `gh_protocol` 的 `spec` 字段为准（**别在这里抄一份** —— 抄了迟早漂，`tool-surface-contract` 门禁钉着这一条）。
 
 宿主仍提供 `githubResident` 服务位，工具、服务与面板共用实现。机器写操作沿用 `gh_*` 工具的同意/确认契约；页面写操作保留真实同源来源检查。`bash verify-bundle.sh` 默认只验证假 HOME 下的服务位；在线只读诊断用 `DSH_GUI_HEADERS_FILE=/path/to/headers bash tools/account-ui-check.sh`，凭据只从 header 文件读取。
 

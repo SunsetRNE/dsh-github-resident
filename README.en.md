@@ -12,7 +12,7 @@ A resident GitHub identity bundle for [DeepSeek Harness](https://github.com/deep
 
 ## Panel transport
 
-The settings panel uses the host connection RPC at `/api/dsws` with `ghr.*` endpoint names. The independent loopback listener and its port/address overrides are retired. `gh_protocol.http.endpoints` lists all 14 existing capabilities; the protocol spec remains `dsh-github-resident/8`. Tools and RPC share the same host implementation. Page writes retain same-origin checks and explicit consent/confirmation; machine writes use the `gh_*` tools.
+The settings panel uses the host connection RPC at `/api/dsws` with `ghr.*` endpoint names. The independent loopback listener and its port/address overrides are retired. `gh_protocol.http.endpoints` lists every existing capability; the protocol version is whatever `gh_protocol`'s `spec` field reports (do **not** copy the number here — copies drift, and `tool-surface-contract` pins this rule). Tools and RPC share the same host implementation. Page writes retain same-origin checks and explicit consent/confirmation; machine writes use the `gh_*` tools.
 
 `bash verify-bundle.sh` checks the service in an isolated HOME by default. Live read-only diagnostics use `DSH_GUI_HEADERS_FILE=/path/to/headers bash tools/account-ui-check.sh`; credentials are read from that file, never passed in a URL.
 
