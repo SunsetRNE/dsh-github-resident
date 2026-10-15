@@ -13,6 +13,7 @@ import { readFileSync } from 'node:fs'
 import { pathToFileURL } from 'node:url'
 import { createPlatformChannel } from '../src/host/platformChannel.js'
 import { createRepoKeys } from '../src/host/repoKeys.js'
+import { identityEnvForStub } from './lib/identity-env-stub.js'
 
 const ROOT = nodePath.resolve(nodePath.dirname(new URL(import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, '$1')), '..')
 let failed = 0
@@ -58,7 +59,7 @@ function mkGate() {
   let gateNow = null
   const pc = createPlatformChannel({
     ctx: {}, subprocess: mkSubprocess(), timer: neverTimer, fs: null, DEFAULT_CWD: '.', TIMEOUT_MS: 5000,
-    getMattSkillProbeNames: async () => [], probeSkill: async () => null, logCtx: null,
+    getMattSkillProbeNames: async () => [], probeSkill: async () => null, identityEnvFor: identityEnvForStub, logCtx: null,
     getGate: function () { return gateNow },
   })
   await pc.detectionExec('gh', ['api', 'repos/o/r/issues'], { cwd: '.' }, 'gate-injection-probe')
@@ -84,7 +85,7 @@ function mkGate() {
     getPlatform: async () => ({ resolveExecutable: async () => 'gh' }),
     getWorkspaceStore: async () => null, setCache: function () {}, clearWorkspaceStore: function () {},
     namingSweepSoon: function () {}, getChainBackoff: function () { return {} },
-    parseGithubRepo: function () { return null }, logCtx: null,
+    parseGithubRepo: function () { return null }, identityEnvFor: identityEnvForStub, logCtx: null,
     getGate: function () { return gateNow },
   })
   const before = await rk.runGh(['api', 'repos/o/r/issues'], '.')
@@ -162,7 +163,7 @@ function mkGate() {
   gate.setWorkspace('/ws', { active: true })
   const pc = createPlatformChannel({
     ctx: {}, subprocess: mkSubprocess(), timer: neverTimer, fs: null, DEFAULT_CWD: '.', TIMEOUT_MS: 5000,
-    getMattSkillProbeNames: async () => [], probeSkill: async () => null, logCtx: null,
+    getMattSkillProbeNames: async () => [], probeSkill: async () => null, identityEnvFor: identityEnvForStub, logCtx: null,
     getGate: function () { return gate },
   })
   const panelExec = function (c, a, o) {

@@ -20,6 +20,7 @@ import nodeFs from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { pathToFileURL, fileURLToPath } from 'node:url'
 import { compileFn } from './lib/eval-probe.js'
+import { identityEnvForStub } from './lib/identity-env-stub.js'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 let failed = false
 let total = 0
@@ -87,13 +88,13 @@ async function main() {
     const subprocess = makeSubprocess('ok')
     const plat = platMod.createPlatformChannel({
       ctx: { get: () => null }, subprocess, timer: makeTimer(), fs: {}, DEFAULT_CWD: CWD, TIMEOUT_MS: 30000,
-      getMattSkillProbeNames: async () => [], probeSkill: async () => ({ level: 'ok' }), logCtx,
+      getMattSkillProbeNames: async () => [], probeSkill: async () => ({ level: 'ok' }), identityEnvFor: identityEnvForStub, logCtx,
     })
     const repo = repoMod.createRepoKeys({
       subprocess, timer: makeTimer(), fs: {}, DEFAULT_CWD: CWD, TIMEOUT_MS: 30000,
       repoKeys: {}, repoRoots: {}, getGhPath: () => null, setGhPath: () => {}, getGhLastError: () => null, setGhLastError: () => {},
       getPlatform: async () => null, getWorkspaceStore: async () => null, setCache: () => {}, clearWorkspaceStore: () => {},
-      namingSweepSoon: () => {}, parseGithubRepo: () => null, logCtx,
+      namingSweepSoon: () => {}, parseGithubRepo: () => null, identityEnvFor: identityEnvForStub, logCtx,
     })
 
     // 四条命令：前两条是不同程序（gh、git），后两条是同一条命令挂在不同链上 ——
@@ -152,7 +153,7 @@ async function main() {
       subprocess, timer: makeTimer(), fs: {}, DEFAULT_CWD: CWD, TIMEOUT_MS: 30000,
       repoKeys: {}, repoRoots: {}, getGhPath: () => null, setGhPath: () => {}, getGhLastError: () => null, setGhLastError: () => {},
       getPlatform: async () => null, getWorkspaceStore: async () => null, setCache: () => {}, clearWorkspaceStore: () => {},
-      namingSweepSoon: () => {}, parseGithubRepo: () => null, logCtx,
+      namingSweepSoon: () => {}, parseGithubRepo: () => null, identityEnvFor: identityEnvForStub, logCtx,
     })
     await repo.execProc(['git', 'status'], CWD)
     check(logCtx.lines.length === 1 && logCtx.lines[0].fields.exitCode === 3, '失败的命令同样计数，退出码如实记 3（实得 ' + (logCtx.lines[0] ? logCtx.lines[0].fields.exitCode : '无') + '）')
@@ -164,7 +165,7 @@ async function main() {
     const slow = makeSubprocess('ok', 0, 30)
     const plat = platMod.createPlatformChannel({
       ctx: { get: () => null }, subprocess: slow, timer: makeTimer(), fs: {}, DEFAULT_CWD: CWD, TIMEOUT_MS: 30000,
-      getMattSkillProbeNames: async () => [], probeSkill: async () => ({ level: 'ok' }), logCtx,
+      getMattSkillProbeNames: async () => [], probeSkill: async () => ({ level: 'ok' }), identityEnvFor: identityEnvForStub, logCtx,
     })
     await plat.detectionExec('gh', ['api', 'user'], { cwd: CWD, timeout: 30000 })
     const ms = logCtx.lines[0] ? logCtx.lines[0].fields.latencyMs : -1
@@ -178,13 +179,13 @@ async function main() {
     // 故意让外部命令本身不读时钟（假子进程与假计时器都不读），这样窗口内数到的 Date.now 只可能来自日志点。
     const plat = platMod.createPlatformChannel({
       ctx: { get: () => null }, subprocess, timer: makeTimer(), fs: {}, DEFAULT_CWD: CWD, TIMEOUT_MS: 30000,
-      getMattSkillProbeNames: async () => [], probeSkill: async () => ({ level: 'ok' }), logCtx,
+      getMattSkillProbeNames: async () => [], probeSkill: async () => ({ level: 'ok' }), identityEnvFor: identityEnvForStub, logCtx,
     })
     const repo = repoMod.createRepoKeys({
       subprocess, timer: makeTimer(), fs: {}, DEFAULT_CWD: CWD, TIMEOUT_MS: 30000,
       repoKeys: {}, repoRoots: {}, getGhPath: () => null, setGhPath: () => {}, getGhLastError: () => null, setGhLastError: () => {},
       getPlatform: async () => null, getWorkspaceStore: async () => null, setCache: () => {}, clearWorkspaceStore: () => {},
-      namingSweepSoon: () => {}, parseGithubRepo: () => null, logCtx,
+      namingSweepSoon: () => {}, parseGithubRepo: () => null, identityEnvFor: identityEnvForStub, logCtx,
     })
     const rounds = 5
     const nowCalls = await countDateNow(async () => {
@@ -224,7 +225,7 @@ async function main() {
     const slow = makeSubprocess('ok', 0, 20)
     const plat = platMod.createPlatformChannel({
       ctx: { get: () => null }, subprocess: slow, timer: makeTimer(), fs: {}, DEFAULT_CWD: CWD, TIMEOUT_MS: 30000,
-      getMattSkillProbeNames: async () => [], probeSkill: async () => ({ level: 'ok' }), logCtx,
+      getMattSkillProbeNames: async () => [], probeSkill: async () => ({ level: 'ok' }), identityEnvFor: identityEnvForStub, logCtx,
     })
     const rounds = 3
     // 三次都起同一条命令，但挂三条不同的链 —— 落盘之后从文件里就能读出「命令名一样、归属不一样」。
