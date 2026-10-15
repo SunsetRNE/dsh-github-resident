@@ -32,12 +32,25 @@ window.__ModuleLoader__.load({
      * 由 shim 供给，**不是 window 上的全局** —— 我们的客户端半边能拿到它时不假思索地用，拿不到时就整块面板不可用。
      * 端口外壳仍在（票 51 第 3 步才删），所以退回端口这条老路至少在端口可达的机器上照常能干活。
      */
-    const call = (method, args) => {
-      if (typeof host !== 'undefined' && host && typeof host.call === 'function') return host.call(method, args || {});
+    const callViaPort = (method, args) => {
       const path = ENDPOINT_PATH[method] || ('/registry/' + String(method).replace(/^ghr\.registry\./, ''));
       const q = args && args.query ? '?' + args.query : '';
       return fetch(API + path + q, { method: 'POST', signal: AbortSignal.timeout(45000) })
         .then((r) => (r.ok ? r.json() : Promise.reject(new Error('HTTP ' + r.status))));
+    };
+    /**
+     * 面板的唯一出口：**宿主 RPC 优先、失败即回落端口**。
+     * 2026-10-14 两次实测教训（都记在票 52）：
+     *   ① Deck 客户端的 `host` 是它那套「规范方言」的自由变量、由 shim 供给，**不是 window 上的全局** —— 不能假定它在；
+     *   ② 但它在的时候**也未必认我们的端点**（`host.call('ghr.state')` 会被 dsws 通道**拒绝**）——
+     *      所以回落必须兜「**没有**这条通道」与「**调了但被拒**」两种，否则面板会在有 host 的机器上直接变成不可用。
+     */
+    const call = (method, args) => {
+      const canHost = (typeof host !== 'undefined') && host && typeof host.call === 'function';
+      if (!canHost) return callViaPort(method, args);
+      return Promise.resolve()
+        .then(() => host.call(method, args || {}))
+        .catch(() => callViaPort(method, args));
     };
     const DEVICE_URL = 'https://github.com/login/device';
     const STEPS = [
