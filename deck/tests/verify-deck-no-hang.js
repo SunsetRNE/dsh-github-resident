@@ -14,6 +14,7 @@
 // 本文件不联网：后端全是桩，只量“回不回、快不快、判得对不对”。
 import path from 'node:path'
 import { pathToFileURL, fileURLToPath } from 'node:url'
+import { decideBackend } from '../src/host/tracker/detection/backendDecision.js'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
@@ -64,6 +65,7 @@ function baseDeps(over) {
     workspaceKeyOf: (cwd) => 'ws-test',
     toolTimeoutMs: 2000,
     toolMarginMs: 500,
+    decideBackend: decideBackend,
   }, o)
 }
 

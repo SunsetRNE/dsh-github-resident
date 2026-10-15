@@ -104,9 +104,11 @@ async function main() {
     const disp = registry.register(stubReadFail)
     const handle = { cwd: '/ws/829', refId: 'o/r' }
     registry.bind(handle, 'stub-829-readfail')
+    const decMod = await imp('src/host/tracker/detection/backendDecision.js')
     const deps = {
       gate, registry, budget, estimate: toolCost.estimateToolCost, costInputFrom: toolCost.toolCostInputFrom,
       handleFor: () => handle, backendCtx: {}, now: () => clock, log: { fire: () => {} }, invalidate: () => {},
+      decideBackend: decMod.decideBackend,
     }
     const linkMod = await imp('src/host/tools/deckMapLink.js')
     const link = linkMod.createDeckMapLink(deps)

@@ -100,8 +100,9 @@ async function main() {
     const table = new Map()
     return { durable: true, load(id) { return table.get(String(id)) || null }, save(id, s) { table.set(String(id), s) } }
   })()
+  const decMod = await imp('src/host/tracker/detection/backendDecision.js')
   const deps = {
-    gate: gate, registry: registry, budget: budget,
+    gate: gate, registry: registry, budget: budget, decideBackend: decMod.decideBackend,
     estimate: toolCost.estimateToolCost, costInputFrom: toolCost.toolCostInputFrom,
     backendCtx: ws.ctx, handleFor: () => handle,
     log: { fire: (level, event, fields) => logs.push({ level: level, event: event, fields: fields }) },

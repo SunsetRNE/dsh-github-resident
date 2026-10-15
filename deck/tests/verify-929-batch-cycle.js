@@ -33,6 +33,7 @@ const githubModule = (await imp('src/host/tracker/backends/github/index.js')).gi
 const linkMod = await imp('src/host/tools/deckMapLink.js')
 const budget = await imp('src/shared/refresh/budget.js')
 const toolCost = await imp('src/shared/refresh/tool-cost.js')
+const decMod = await imp('src/host/tracker/detection/backendDecision.js')
 
 /** 一套真件环境：真 github 房 + 真注册表 + 真 deck_map_link，只把 gh 传输层换成脚本化的假「服务端」。 */
 function makeEnv(opts) {
@@ -64,9 +65,9 @@ function makeEnv(opts) {
   function toolDeps() {
     return {
       gate: { admitAiTool: () => ({ admitted: true }), send: async (req, fn) => { await fn(); return { sent: true, requests: 1, points: 0, remaining: 100, tier: 'ai' } } },
-      registry: { select: async () => ({ backendId: 'github', source: 'test', ref: { backend: 'github', refId: 'acme/demo', name: 'demo', url: '' } }), get: () => tracker },
+      registry: { select: async () => ({ backendId: 'github', source: 'test', ref: { backend: 'github', refId: 'acme/demo', name: 'demo', url: '' } }), get: () => tracker, has: () => true },
       budget, estimate: toolCost.estimateToolCost, costInputFrom: toolCost.toolCostInputFrom,
-      backendCtx, now: Date.now, hourUsage: () => ({}),
+      backendCtx, now: Date.now, hourUsage: () => ({}), decideBackend: decMod.decideBackend,
     }
   }
   return { gh, sink, events, exec, backendCtx, tracker, toolDeps, ctl }

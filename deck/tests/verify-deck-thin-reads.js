@@ -10,6 +10,7 @@
 // 本文件不联网：后端全是桩，只验“调没调、记没记、数对不对”。
 import path from 'node:path'
 import { pathToFileURL, fileURLToPath } from 'node:url'
+import { decideBackend } from '../src/host/tracker/detection/backendDecision.js'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
@@ -40,6 +41,7 @@ function baseDeps(gate, registry, budget, over) {
     workspaceKeyOf: () => 'ws-test',
     toolTimeoutMs: 60000,
     toolMarginMs: 5000,
+    decideBackend: decideBackend,
   }, over || {})
 }
 

@@ -138,8 +138,9 @@ async function main() {
   const laneOf = (id) => lanes.find((l) => l.id === id)
 
   let currentLane = null
+  const decMod = await imp('src/host/tracker/detection/backendDecision.js')
   const deps = {
-    gate: gate, registry: registry, budget: budget,
+    gate: gate, registry: registry, budget: budget, decideBackend: decMod.decideBackend,
     estimate: toolCost.estimateToolCost, costInputFrom: toolCost.toolCostInputFrom,
     handleFor: (s) => (byCwd.get(s.cwd) || {}).handle,
     // 三个车道的现场（platform / fs / exec）不同：壳每次调用时现取当前车道的那一份。

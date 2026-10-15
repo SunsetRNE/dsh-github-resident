@@ -10,6 +10,7 @@
 // 本文件不联网：后端全是桩，只验“丢不丢、堵不堵、诚实不诚实”。
 import path from 'node:path'
 import { pathToFileURL, fileURLToPath } from 'node:url'
+import { decideBackend } from '../src/host/tracker/detection/backendDecision.js'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
@@ -64,6 +65,7 @@ function baseDeps(over) {
     workspaceKeyOf: (cwd) => 'ws-test',
     toolTimeoutMs: 60000,
     toolMarginMs: 5000,
+    decideBackend: decideBackend,
   }, over || {})
 }
 

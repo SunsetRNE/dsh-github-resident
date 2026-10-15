@@ -9,6 +9,7 @@
 // 用法：在插件根目录执行 node tests/verify-898-block-merge.js，可独立运行。
 import path from 'node:path'
 import { pathToFileURL, fileURLToPath } from 'node:url'
+import { decideBackend } from '../src/host/tracker/detection/backendDecision.js'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
@@ -117,11 +118,11 @@ async function main() {
   const planMod = await imp('src/host/tools/deckMapPlanCreate.js')
   const linkMod = await imp('src/host/tools/deckMapLink.js')
   function shellDeps(tracker, extra) {
-    const registry = { select: async () => ({ backendId: 'stub', source: 'test' }), get: () => tracker }
+    const registry = { select: async () => ({ backendId: 'stub', source: 'test' }), get: () => tracker, has: () => true }
     return Object.assign({
       gate: stubGate(), registry: registry, budget: budget,
       estimate: toolCost.estimateToolCost, costInputFrom: toolCost.toolCostInputFrom,
-      now: Date.now, hourUsage: () => ({}),
+      now: Date.now, hourUsage: () => ({}), decideBackend: decideBackend,
     }, extra || {})
   }
 

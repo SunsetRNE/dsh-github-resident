@@ -172,7 +172,8 @@ async function main() {
     const disp = registry.register(mkStub(true))
     const handle = { cwd: '/ws/992', refId: 'o/r' }
     registry.bind(handle, 'stub-992-err')
-    const deps = { gate, registry, budget, estimate: toolCost.estimateToolCost, costInputFrom: toolCost.toolCostInputFrom, handleFor: () => handle, backendCtx: {}, now: () => clock, log: { fire: () => {} }, invalidate: () => {} }
+    const decMod = await imp('src/host/tracker/detection/backendDecision.js')
+    const deps = { gate, registry, budget, estimate: toolCost.estimateToolCost, costInputFrom: toolCost.toolCostInputFrom, handleFor: () => handle, backendCtx: {}, now: () => clock, log: { fire: () => {} }, invalidate: () => {}, decideBackend: decMod.decideBackend }
     const createMod = await imp('src/host/tools/deckIssueCreate.js')
     const tool = createMod.createDeckIssueCreate(deps)
     const exec = { agent: { session: { id: 's-992', cwd: '/ws/992' } } }
@@ -255,7 +256,8 @@ async function main() {
       const disp = registry.register(stub)
       const handle = { cwd: '/ws/992', refId: 'o/r' }
       registry.bind(handle, stubId)
-      const deps = { gate, registry, budget, estimate: toolCost.estimateToolCost, costInputFrom: toolCost.toolCostInputFrom, handleFor: () => handle, backendCtx: {}, now: () => clock, log: { fire: () => {} }, invalidate: () => {} }
+      const decMod = await imp('src/host/tracker/detection/backendDecision.js')
+      const deps = { gate, registry, budget, estimate: toolCost.estimateToolCost, costInputFrom: toolCost.toolCostInputFrom, handleFor: () => handle, backendCtx: {}, now: () => clock, log: { fire: () => {} }, invalidate: () => {}, decideBackend: decMod.decideBackend }
       const tool = ctxMod.createDeckContext(deps)
       const out = await tool.run({ agent: { session: { id: 's-992', cwd: '/ws/992' } } }, {})
       disp.dispose()

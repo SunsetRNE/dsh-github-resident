@@ -61,8 +61,9 @@ async function main() {
   registry.bind(handleA, 'markdown')
   ledger.syncServer({ rest: { limit: 5000, remaining: 5000, reset: clock + 3600000 }, graphql: { limit: 5000, remaining: 5000, reset: clock + 3600000 } }, clock)
 
+  const decMod = await imp('src/host/tracker/detection/backendDecision.js')
   const deps = {
-    gate: gate, registry: registry, budget: budget,
+    gate: gate, registry: registry, budget: budget, decideBackend: decMod.decideBackend,
     estimate: toolCost.estimateToolCost, costInputFrom: toolCost.toolCostInputFrom,
     backendCtx: ctxA, handleFor: () => handleA,
     log: { fire: () => {} }, now: () => clock,

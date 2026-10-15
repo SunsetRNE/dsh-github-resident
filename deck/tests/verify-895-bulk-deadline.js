@@ -13,6 +13,7 @@ import path from 'node:path'
 import fs from 'node:fs'
 import os from 'node:os'
 import { pathToFileURL, fileURLToPath } from 'node:url'
+import { decideBackend } from '../src/host/tracker/detection/backendDecision.js'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
@@ -154,11 +155,11 @@ async function main() {
   check(typeof storeMod.createFilePlanStore === 'function' && typeof storeMod.createMemoryPlanStore === 'function', '落盘与内存游标工厂存在')
 
   function shellDeps(tracker, extra) {
-    const registry = { select: async () => ({ backendId: 'stub', source: 'test' }), get: () => tracker }
+    const registry = { select: async () => ({ backendId: 'stub', source: 'test' }), get: () => tracker, has: () => true }
     return Object.assign({
       gate: stubGate(), registry: registry, budget: budget,
       estimate: toolCost.estimateToolCost, costInputFrom: toolCost.toolCostInputFrom,
-      now: Date.now, hourUsage: () => ({}),
+      now: Date.now, hourUsage: () => ({}), decideBackend: decideBackend,
     }, extra || {})
   }
 
