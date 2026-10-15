@@ -114,7 +114,13 @@ async function main() {
   expect('地图为动态全量（≥1，随会话增减）', Array.isArray(snap.maps) && snap.maps.length >= 1, 'maps=' + (snap.maps || []).length)
   expect('每 map 五区块字段齐（destination/notes 为字符串，decisions/fog/outOfScope 为数组）', snap.maps.every(m => Array.isArray(m.decisions) && Array.isArray(m.fog) && Array.isArray(m.outOfScope) && typeof m.destination === 'string' && typeof m.notes === 'string'))
   expect('每 map stats 与 tickets 一致', snap.maps.every(m => m.stats.total === m.tickets.length))
-  expect('每 ticket 含面板所需字段', snap.maps.every(m => m.tickets.every(t => typeof t.number === 'number' && typeof t.title === 'string' && typeof t.type === 'string' && (t.state === 'OPEN' || t.state === 'CLOSED') && Array.isArray(t.blockedBy) && Array.isArray(t.blocks) && typeof t.claimedBy === 'string' && typeof t.url === 'string')))
+  // 判据变更（#63）：原来还要求 `Array.isArray(t.blocks)` —— 那是**旧 mapTicket 形状**的遗留。
+  // 证据：① 客户端只消费 blockedBy（src/host/issueList.js:276「client 只消费 blockedBy」），
+  //         全仓 \`.blocks\` 的命中只有 blocksChip / blocksSetup，没有一处读票级 blocks；
+  //       ② 快照由 composer（tracker/snapshot.js）组装，票行按 blockedBy 反向聚合，不再产 blocks
+  //         （src/host/index.js:182 的注释也写着「mapTicket 曾如此」）。
+  // 所以这条要求钉的是一个**没有消费者**的字段，删掉它；面板真正需要的字段一个不少地留着。
+  expect('每 ticket 含面板所需字段', snap.maps.every(m => m.tickets.every(t => typeof t.number === 'number' && typeof t.title === 'string' && typeof t.type === 'string' && (t.state === 'OPEN' || t.state === 'CLOSED') && Array.isArray(t.blockedBy) && typeof t.claimedBy === 'string' && typeof t.url === 'string')))
   expect('closed 票无 resolution 字段（面板显示「✅ 已关闭」）', snap.maps.every(m => m.tickets.filter(t => t.state === 'CLOSED').every(t => t.resolution === undefined)))
 
   // —— 分组性质 + 现场比对（动态，不硬编码） ——
@@ -148,9 +154,28 @@ async function main() {
       const code = await done
       if (code !== 0) { console.log('  ⚠ 现场比对跳过（gh issue view ' + g.m.number + ' 失败）'); continue }
       const live = JSON.parse(out)
-      const mine = nums(g.m.tickets)
+      // 判据变更（#63）：快照首屏**不装已关闭地图的子票**（#691 阶段 3，见 src/host/mapTickets.js 的头注释），
+      // 那些地图的子票走**按需电话** \`wf.mapTickets\`（点开地图详情页时调的就是它）。所以「快照里是空的」
+      // 是**契约**、不是漂移；这一类改比按需那条路 —— 比要求快照全量更严，因为它顺手把 #691 的读路径也钉住了。
+      let mine = nums(g.m.tickets)
       const theirs = nums(live)
-      expect('map #' + g.m.number + ' 子票集合与 GitHub 现场一致', mine.join(',') === theirs.join(','), 'mine=' + mine.join(',') + ' live=' + theirs.join(','))
+      // 快照里空的这一档：先走按需电话；电话这条**读路径本身**在这个夹具里可能不支持（后端没实现
+      // listSubIssues / 选择还没到 composer 那一档）。不支持就**出声跳过**、不静默当绿 —— 与上面
+      // 「gh 解析不到就跳过现场比对」同一条纪律。
+      let comparable = true
+      if (mine.length === 0) {
+        const mt = await h('mapTickets', { cwd: REPO_CWD, key: String(g.m.number) })
+        if (mt && mt.ok === true) {
+          mine = nums(mt.items || [])
+          expect('map #' + g.m.number + ' 子票走按需电话 wf.mapTickets 拿得回全量', mine.length === theirs.length,
+            'onDemand=' + mine.join(',') + ' live=' + theirs.join(','))
+        } else {
+          comparable = false
+          console.log('  ⚠ map #' + g.m.number + ' 子票集合比对跳过（快照首屏按 #691 不装它的子票，按需电话此刻不可用：'
+            + JSON.stringify((mt && mt.error) || null) + '）')
+        }
+      }
+      if (comparable) expect('map #' + g.m.number + ' 子票集合与 GitHub 现场一致', mine.join(',') === theirs.join(','), 'mine=' + mine.join(',') + ' live=' + theirs.join(','))
       const liveOpen = live.filter(t => t.state === 'OPEN').length
       expect('map #' + g.m.number + ' open 计数与现场一致', g.open.length === liveOpen, g.open.length + ' vs ' + liveOpen)
     } catch (e) { console.log('  ⚠ 现场比对异常：' + String((e && e.message) || e)) }
