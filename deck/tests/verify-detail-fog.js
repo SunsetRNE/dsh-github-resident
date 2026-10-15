@@ -96,6 +96,17 @@ function actionOf(t) {
 }
 
 async function main() {
+  // 前置（#58 收尾 / 与 #63 同批）：这条门禁**要真 gh** —— 快照里的迷雾与层级都是从真 GitHub 读回来的，
+  // 没有 gh 就没有数据可核（spawn gh --version 直接 ENOENT，还会以未捕获的 'error' 事件炸掉整个进程）。
+  // 处置按环境类那一档（与清单里 27 道同源，见 docs/agents/deck-gate-triage.md）：**出声跳过、不计红**；
+  // 但它只是「这台机器跑不了」，不是「这条判据不存在」—— 有 gh 时它必须真绿，跳过不是挡箭牌。
+  let ghResolvable = true
+  try { await subprocess.resolveExecutable('gh') } catch (e) { ghResolvable = false }
+  if (!ghResolvable) {
+    console.log('SKIP 前置缺失：PATH 上没有可跑的 gh（这条门禁要真 gh 才能核迷雾 / 层级）')
+    console.log('     要真跑：把 gh 放进 PATH（本机自带那份在 ~/.dsh/gh-cli/bin/gh），或先跑 gh_cli_install')
+    process.exit(0)
+  }
   const checks = []
   const expect = (name, cond, extra) => {
     checks.push({ name, pass: !!cond, extra: extra || '' })
