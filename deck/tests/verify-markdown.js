@@ -52,7 +52,15 @@ check(!mdPkg.includes('dangerouslySetInnerHTML'), 'package 渲染器不使用 da
 // 双源体量一致性已移除（T5 #98：一源两物，src 为真源；渲染器体量一致由 build 保证）
 
 // ── 行为级：用 stub h() 执行真实渲染器，断言输出结构 ──
+// #65：被测渲染器（mdToHtml 的图片分支 makeImg）构造 `h(Tip, { content: … , key }, img)`。
+//   Tip 是同一个闭包里的悬停提示包装组件（build 时与渲染器拼在同一段文本里，看得到），渲染时只包一层提示、
+//   不改变子节点。原来的探针只喂了 h，求值到图片分支就 ReferenceError: Tip is not defined ——
+//   图片那几条断言一条都跑不到。这是**探针缺桩**，不是被测代码多了不该有的依赖：Tip 与 h 同为闭包邻居。
+//   桩如实照真件语义：提示文字走 content、子节点原样交给渲染（此处的子节点已是 h('img', …) 造好的字符串）。
+const stubTip = (props, children) => children
 const stubH = (tag, props, children) => {
+  // 函数组件按 React 的调用形状求值到它的子节点；DOM 标签仍走下面的字符串构造。
+  if (typeof tag === 'function') return tag(props, children)
   const attr = props ? Object.keys(props).filter(k => !['key', 'style', 'className', 'title', 'onClick'].includes(k) && props[k] !== null && props[k] !== undefined && props[k] !== false && typeof props[k] !== 'function')
     .map(k => ' ' + k + '="' + String(props[k]).replace(/"/g, '&quot;') + '"').join('') : ''
   const ch = Array.isArray(children) ? children.map(c => c == null ? '' : c).join('') : (children == null ? '' : children)
@@ -60,8 +68,8 @@ const stubH = (tag, props, children) => {
   return '<' + tag + attr + '>' + ch + '</' + tag + '>'
 }
 const run = (src, md) => {
-  const fn = compileFn(['h'], src + '\nreturn { mdToHtml }')
-  const out = fn(stubH).mdToHtml(md)
+  const fn = compileFn(['h', 'Tip'], src + '\nreturn { mdToHtml }')
+  const out = fn(stubH, stubTip).mdToHtml(md)
   return (Array.isArray(out) ? out : [out]).join('')
 }
 const rCli = (md) => run(mdCli, md)

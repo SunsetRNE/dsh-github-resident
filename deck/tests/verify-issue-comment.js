@@ -6,6 +6,8 @@
 // 用法: node tests/verify-issue-comment.js
 import fs from 'node:fs'
 import { compileFn } from './lib/eval-probe.js'
+// #65：下面求值切出的 diffSnapshots 依赖同闭包邻居 idOf；喂这里的真源，而不是门禁里另写一份副本。
+import { idOf } from '../src/shared/tracker/constants.js'
 let failed = false
 const check = (ok, msg) => { console.log((ok ? '  PASS ' : '  FAIL ') + msg); if (!ok) failed = true }
 
@@ -37,7 +39,15 @@ check(detailSrc.includes('submitIssueComment'), 'IssueDetail 调 submitIssueComm
 check(detailSrc.includes('metaKey || ev.ctrlKey') || detailSrc.includes('metaKey||ev.ctrlKey'), '支持 ⌘+Enter / Ctrl+Enter 快捷发送')
 check(detailSrc.includes('disabled: !(st.cmtDraft'), '空内容发送按钮 disabled')
 check(detailSrc.includes("st.cmtSending = true"), '提交态置位（防重复提交）')
-check(detailSrc.includes("readOnlyKnown ? h('span'"), '只读提示条件化（只在确实不能评论时才提示；#693 起「还没拿到评论」不再冒充「只读」）')
+// #65 判据改写理由：原判据把条件渲染写死成字面量 `readOnlyKnown ? h('span'`。产品 #763 把底部只读提示
+//   从单个 span 换成容器 div（里面仍是同一句 tr('detail.readOnlyHint')），条件与提示都没丢 ——
+//   钉死 DOM 标签的是判据，不是产品漂移。改为断言「同一条件分支里渲染同一句提示键」：条件不在就不渲染，
+//   且提示键必须落在这个受条件保护的分支内（判据不减弱，只把无关的标签形状摘掉）。
+{
+  const roIdx = detailSrc.indexOf('readOnlyKnown ? h(')
+  const roBranch = roIdx >= 0 ? detailSrc.slice(roIdx, roIdx + 600) : ''
+  check(roIdx >= 0 && roBranch.includes("tr('detail.readOnlyHint')"), '只读提示条件化（只在确实不能评论时才提示；#693 起「还没拿到评论」不再冒充「只读」）')
+}
 check(detailSrc.includes("placeholder: tr('detail.cmtPlaceholder')"), 'Markdown 提示占位符接入 locale')
 ;['detail.cmtAuthFail', 'detail.cmtRateLimit', 'detail.cmtGeneric'].forEach(k => check(detailSrc.includes("'" + k + "'"), '分流文案键 ' + k))
 
@@ -80,12 +90,20 @@ let diffBehavior = false, orphans = false, ticketUpd = false, shortCircuit = fal
 if (dStart > 0 && dEnd > dStart) {
   try {
     const fnText = pcli.slice(dStart, dEnd).replace('export ', '').replace('const diffSnapshots', 'diffSnapshots')
-    // 从产物里切出的整段 diffSnapshots 求值：改走共用入口 compileFn，这段源码不需要外部变量，参数表传空数组。
-    const sandboxFn = compileFn([], fnText + '\nreturn diffSnapshots;')
-    const diffSnapshots = sandboxFn()
+    // 从产物里切出的整段 diffSnapshots 求值：改走共用入口 compileFn。
+    // #65：这段源码**不是**自足的 —— 它按票身份建索引（m[idOf(x)] / ix[idOf(i)] / ia[idOf(i)]），
+    //   而 idOf 是同一闭包里的邻居函数（产物自己的注释：「hexA / emit / timer / idOf 都是同一个闭包里的邻居」），
+    //   单独切出这一段后闭包没了 → 求值当场 ReferenceError: idOf is not defined，下面四条断言全部落空。
+    //   这是**门禁切片边界漏了依赖**，不是产品坏。补法：喂真源函数（shared/tracker/constants.js 的 idOf，
+    //   与产物闭包内那一份同源），不在门禁里另写私有副本（本文件前面那条纪律：杜绝测试私有副本漂移）。
+    const sandboxFn = compileFn(['idOf'], fnText + '\nreturn diffSnapshots;')
+    const diffSnapshots = sandboxFn(idOf)
+    // #65：真实快照行逐行带身份字段 key（宿主快照见 src/host/tracker/snapshot.js 的 poolIdOf：effortOf + key；
+    //   夹具原来只手写 number，idOf 取不到 key 会把所有行折成同一个空身份）。这里把夹具补齐成真实形状，
+    //   四个断言一字未改 —— 补的是数据形状，不是判据。
     const base = { ok: true, version: 'v1', generatedMs: 1,
-      maps: [{ number: 248, title: 'Map', state: 'OPEN', labels: ['wayfinder:map'], tickets: [{ number: 253, state: 'CLOSED', progress: '100%', claimedBy: 'me', labels: [], updatedAt: 't1' }] }],
-      issues: [{ number: 255, title: 'Spec', state: 'OPEN', labels: ['ready-for-agent'], updatedAt: 'u1' }] }
+      maps: [{ number: 248, key: '248', title: 'Map', state: 'OPEN', labels: ['wayfinder:map'], tickets: [{ number: 253, key: '253', state: 'CLOSED', progress: '100%', claimedBy: 'me', labels: [], updatedAt: 't1' }] }],
+      issues: [{ number: 255, key: '255', title: 'Spec', state: 'OPEN', labels: ['ready-for-agent'], updatedAt: 'u1' }] }
     // 真实快照的 version 为内容哈希：任何字段变化 ⇒ 版本必变，否则短路合法吞掉差异。
     // ① 子票纯评论变化（updatedAt bump + 版本推进）→ issueFlash.changed
     const tick = JSON.parse(JSON.stringify(base))
@@ -98,7 +116,10 @@ if (dStart > 0 && dEnd > dStart) {
     const r2base = JSON.parse(JSON.stringify(base)); const r2new = JSON.parse(JSON.stringify(base))
     r2new.generatedMs = 3; r2new.version = 'v3'; r2new.issues[0].updatedAt = 'u9'
     const r2 = diffSnapshots(r2base, r2new)
-    orphans = Array.isArray(r2.changed) && r2.changed.indexOf(255) >= 0
+    // #65：changed 装的是索引键（idOf 产出、进对象后即字符串），不是数字票据号 ——
+    //   消费侧 probe-select.js 直接 st.rowFlash[n] = 'changed'，对象索引下 '255' 与 255 等价。
+    //   原判据拿数字 indexOf(255) 比字符串数组，恒为 -1。改成按产出侧的键空间比，身份仍限定为「255 那张根票」。
+    orphans = Array.isArray(r2.changed) && r2.changed.map(String).indexOf('255') >= 0
     // ③ 内容全同但版本推进 → 空差异（不误闪）
     const r3base = JSON.parse(JSON.stringify(base)); const r3new = JSON.parse(JSON.stringify(base))
     r3new.generatedMs = 4; r3new.version = 'v4'

@@ -12,6 +12,11 @@ import path from 'node:path'
 import { pathToFileURL, fileURLToPath } from 'node:url'
 import { compileFn } from './lib/eval-probe.js'
 import { renderToStaticMarkup } from 'react-dom/server'
+// #65：本文件是 ESM（package.json "type": "module"），原来在 main 与 J 组里用 require() 取 React / JSDOM / renderToStaticMarkup，
+//   在 ESM 下直接 ReferenceError: require is not defined（脚本第 1183 行），整道门禁一行断言都跑不到。
+//   改成与同门禁族（tests/verify-818-version-control-view.js）一样的顶层 ESM 取件；判断内容一字未动。
+import React from 'react'
+import * as JsdomMod from 'jsdom'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
@@ -665,8 +670,7 @@ function writePresetHtml(React, DswsCtx, TipStub, IcStub, screen, write) {
   })
 }
 function domText(html) {
-  const { JSDOM } = require('jsdom')
-  const dom = new JSDOM('<div id="m">' + html + '</div>')
+  const dom = new JsdomMod.JSDOM('<div id="m">' + html + '</div>')
   const root = dom.window.document.getElementById('m')
   const pick = function (sel) { const el = root.querySelector(sel); return el ? String(el.textContent || '') : '' }
   return {
@@ -732,7 +736,7 @@ function groupJ(React, DswsCtx, TipStub, IcStub) {
   const diffRender = renderTab(React, DswsCtx, TipStub, IcStub, diffReads, function (s) {
     return s.replace("openDiff: '', openCommit: '', view:", "openDiff: 'staged' + String.fromCharCode(0) + 'a.txt', openCommit: '', view:")
   })
-  const doc9 = new (require('jsdom').JSDOM)('<div id="m">' + diffRender.html + '</div>').window.document
+  const doc9 = new (JsdomMod.JSDOM)('<div id="m">' + diffRender.html + '</div>').window.document
   const card = doc9.querySelector('[data-vc-diff="lines"]')
   check(!!card && String(card.className).indexOf('dsws-vc-card') >= 0 && card.textContent.indexOf('新行') >= 0 && card.textContent.indexOf('旧行') >= 0,
     'J9 真渲染·补丁块：卡片类与差异行都在（class=' + (card ? card.className : '缺') + '，渲染错=' + (diffRender.err || '无') + '）')
@@ -751,10 +755,10 @@ function groupJ(React, DswsCtx, TipStub, IcStub) {
       out = out.replace(uiSeed, 'openDiff: ' + JSON.stringify(key) + ", openCommit: '', view:")
       return patchExtra ? patchExtra(out) : out
     }, React, DswsCtx, TipStub, IcStub, reads, [], trZh)
-    try { return require('react-dom/server').renderToStaticMarkup(React.createElement(v.VersionControlTab, { st: { cwd: 'D:/w/repo' } })) } catch (e) { return '' }
+    try { return renderToStaticMarkup(React.createElement(v.VersionControlTab, { st: { cwd: 'D:/w/repo' } })) } catch (e) { return '' }
   }
   const rowsWithCard = function (html) {
-    const doc = new (require('jsdom').JSDOM)('<div id="m">' + html + '</div>').window.document
+    const doc = new (JsdomMod.JSDOM)('<div id="m">' + html + '</div>').window.document
     const out = []
     Array.prototype.slice.call(doc.querySelectorAll('[data-vc-file]')).forEach(function (el) {
       if (el.querySelector('[data-vc-diff]')) out.push(String(el.textContent || '').slice(0, 20))
@@ -771,7 +775,7 @@ function groupJ(React, DswsCtx, TipStub, IcStub) {
   const dualReads = Object.assign({}, readsOf(dual), { diffs: { 'x.txt': { state: 'ok', lines: [{ kind: 'add', text: '+新行' }], reason: 'ok', truncated: false, error: null } } })
   const dualOpen = rowsWithCard(renderOpen(openKey('staged', 'x.txt'), dualReads))
   const dualBoth = rowsWithCard(renderOpen(openKey('unstaged', 'x.txt'), dualReads))
-  const dualDoc = new (require('jsdom').JSDOM)('<div id="m">' + renderOpen(openKey('staged', 'x.txt'), dualReads) + '</div>').window.document
+  const dualDoc = new (JsdomMod.JSDOM)('<div id="m">' + renderOpen(openKey('staged', 'x.txt'), dualReads) + '</div>').window.document
   const dualRows = Array.prototype.slice.call(dualDoc.querySelectorAll('[data-vc-file]'))
   const onlyFirst = dualRows.length === 2 && !!dualRows[0].querySelector('[data-vc-diff]') && !dualRows[1].querySelector('[data-vc-diff]')
   check(dualOpen.length === 1 && dualBoth.length === 1 && onlyFirst, 'J12 #850·同一路径在两组时互不串：展开键带分组，一次只开一行（已暂存键=' + JSON.stringify(dualOpen) + '，未暂存键=' + JSON.stringify(dualBoth) + '，只有第一行开=' + onlyFirst + '）')
@@ -783,14 +787,14 @@ function groupJ(React, DswsCtx, TipStub, IcStub) {
 
   const loadingReads = Object.assign({}, readsOf(screen), { diffs: { 'a.txt': { state: 'loading', lines: null, reason: '', truncated: false, error: null } } })
   const loadingHtml = renderOpen(openKey('staged', 'a.txt'), loadingReads)
-  const loadingDoc = new (require('jsdom').JSDOM)('<div id="m">' + loadingHtml + '</div>').window.document
+  const loadingDoc = new (JsdomMod.JSDOM)('<div id="m">' + loadingHtml + '</div>').window.document
   const loadingBlock = loadingDoc.querySelector('[data-vc-diff="loading"]')
   const loadingBars = loadingBlock ? loadingBlock.querySelectorAll('[data-vc-skel="1"]') : []
   check(!!loadingBlock && loadingBars.length >= 3 && loadingBlock.textContent.trim() === '' && loadingHtml.indexOf('正在读改动') < 0, 'J14 #857·读取中的差异画骨架条，不画会跳动的文字（骨架条 ' + loadingBars.length + ' 条）')
 
-  const failDoc = new (require('jsdom').JSDOM)('<div id="m">' + fails.html + '</div>').window.document
+  const failDoc = new (JsdomMod.JSDOM)('<div id="m">' + fails.html + '</div>').window.document
   const failAi = failDoc.querySelector('[data-vc-op-result] [data-vc-ai="write-fail"]')
-  const doneDoc = new (require('jsdom').JSDOM)('<div id="m">' + dones.html + '</div>').window.document
+  const doneDoc = new (JsdomMod.JSDOM)('<div id="m">' + dones.html + '</div>').window.document
   check(!!failAi && failAi.textContent === trZh('vc.action.aiHandoff') && !doneDoc.querySelector('[data-vc-op-result] [data-vc-ai]'), 'J15 #854·没做成的横幅旁边有「让 AI 帮我解决」，做完了没有（按钮=' + (failAi ? '有' : '无') + '）')
 }
 
@@ -812,9 +816,9 @@ function groupL(view, React, DswsCtx, TipStub, IcStub) {
       let out = s.replace('React.useState(function () { return vcCacheSeedOf(cwd) || vcNewReads() })', 'React.useState(function () { return seedReads })')
       return patch ? patch(out) : out
     }, React, DswsCtx, TipStub, IcStub, readsOf(screen), [], trZh)
-    try { return require('react-dom/server').renderToStaticMarkup(React.createElement(v.VersionControlTab, { st: { cwd: 'D:/w/repo' } })) } catch (e) { return '' }
+    try { return renderToStaticMarkup(React.createElement(v.VersionControlTab, { st: { cwd: 'D:/w/repo' } })) } catch (e) { return '' }
   }
-  const docOf = function (html) { return new (require('jsdom').JSDOM)('<div id="m">' + html + '</div>').window.document.getElementById('m') }
+  const docOf = function (html) { return new (JsdomMod.JSDOM)('<div id="m">' + html + '</div>').window.document.getElementById('m') }
   const letters = ['added', 'modified', 'deleted', 'renamed', 'typechange', 'untracked'].map(function (c) { return view.vcBadgeLetterOf(c) }).join('')
   const badgeOk = function (doc) {
     const b = doc.querySelector('[data-vc-badge]')
@@ -1180,7 +1184,6 @@ async function main() {
   const planMod = await import(pathToFileURL(path.join(ROOT, 'src', 'shared', 'version-control', 'push-plan.js')).href)
   const cmdMod = await import(pathToFileURL(path.join(ROOT, 'src', 'shared', 'version-control', 'commands.js')).href)
 
-  const React = require('react')
   const DswsCtx = React.createContext(null)
   const TipStub = function (props) { return props && props.children ? props.children : null }
   const IcStub = function () { return null }
