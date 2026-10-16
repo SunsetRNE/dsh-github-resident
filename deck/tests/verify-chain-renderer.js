@@ -84,7 +84,9 @@ try{
 console.log('')
 console.log('-- 4) Form 渲染位置与校验（#308：横幅不再内嵌，改走 modal-seat 弹窗） --')
 check(cr.includes('schema'), 'ChainForm 含 schema')
-check(cr.includes('required') && cr.includes('必填'), 'ChainForm 含 required 校验')
+// 2026-10-16 合并整改：校验逻辑仍是 f.required，提示词按词条表走（env.formRequired）——
+//   「必填」两个字住在 locale 表里、不再出现在本文件；判据改量「必填这件事」的两端。
+check(cr.includes('f.required') && cr.includes('env.formRequired'), 'ChainForm 含 required 校验')
 check(cr.includes('pattern') && cr.includes('RegExp'), 'ChainForm 含 pattern 校验')
 check(cr.includes('submitAction') , 'ChainForm 含 submitAction')
 check(cr.includes('onSubmit'), 'ChainForm 含 onSubmit')
@@ -103,7 +105,9 @@ console.log('')
 console.log('-- 5) gh 登录黄条 inject-prompt 替换 openUrl（#308 修陈旧断言：bc72e16 迁移至后端 fixes） --')
 const prompts = file('src/client/kernel/prompts.js')
 check(prompts.includes('ghAuthLogin'), 'prompts 含 ghAuthLogin 模板')
-check(prompts.includes('gh auth login'), 'ghAuthLogin 含 gh auth login 文案')
+// 2026-10-16 合并整改：#716 起登录引导文案里不留任何具体命令（{cli}/{cliBrand} 由后端声明注入），
+//   字面量 'gh auth login' 是**被有意去掉的**；判据跟着钉「登录命令按占位符参数化」这件事。
+check(/\{cli\}\s*auth\s*login/.test(prompts), 'ghAuthLogin 的登录命令按 {cli} 占位符参数化（#716 有意变更）')
 // #308 修陈旧断言：bc72e16 后修复指引迁入后端 fixes（host/index.js 不再硬编码 prompt:ghAuthLogin，ChecksTab 不再硬编码 promptText 调用）
 const checksTab = file('src/client/views/ChecksTab.js')
 check(checksTab.includes('hintTextOf') && checksTab.includes('resolvePrompt'), 'ChecksTab 走通用 hint 解析（不再硬编码 ghAuthLogin，承接 fixContract）')
@@ -137,9 +141,12 @@ check(probe.includes('loadChain'), 'probe 含 loadChain')
 check(probe.includes('wf.chain'), 'probe 调用 wf.chain')
 check(probe.includes('loadChain(st, true') , 'refreshAll 联动 loadChain')
 const host2 = file('src/host/index.js')
+// 2026-10-16 合并整改：链求值的实现搬进 src/host/detectChain.js（index.js 只剩注册），
+//   这两条判据跟着实现走（通用谓词注册器本体住在 tracker/generic.js）。
+const hostChain = file('src/host/detectChain.js')
 check(host2.includes("harness.handle('wf.chain'"), 'host 含 wf.chain handler')
-check(host2.includes('resolveGenericChain'), 'host chain 使用 resolveGenericChain')
-check(host2.includes('registerGenericPredicates'), 'host chain 注册通用谓词')
+check(hostChain.includes('resolveGenericChain'), 'host chain 使用 resolveGenericChain（承载模块 detectChain.js）')
+check(hostChain.includes('registerGenericPredicates'), 'host chain 注册通用谓词（承载模块 detectChain.js）')
 
 console.log('')
 console.log('-- 8) jsdom 横幅/表单冒烟 --')

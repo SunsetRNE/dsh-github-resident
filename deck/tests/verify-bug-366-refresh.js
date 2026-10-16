@@ -11,7 +11,11 @@ check(probe.includes('#366'), 'probe contains #366 marker');
 check(probe.includes('强制刷新后扇出到同工作区全组'), 'refreshAll contains fan-out');
 check(probe.includes('diffSnapshots(st2.snapshot, newSnap)'), 'fan-out computes diff');
 check(probe.includes('st2.snapshot = newSnap') && probe.includes('emit(st2)'), 'fan-out copies snapshot');
-const host = fs.readFileSync('src/host/index.js', 'utf8');
+// H5/H6：快照那条链的实现已搬进 sessionSnapshot.js / sessionRefresh.js（index.js 只剩注册与转发）。
+// 2026-10-16 合并整改：把承载模块并进「host 文本」再量，断言与阈值一字未改。
+const host = fs.readFileSync('src/host/index.js', 'utf8') + '\n'
+  + fs.readFileSync('src/host/sessionSnapshot.js', 'utf8') + '\n'
+  + fs.readFileSync('src/host/sessionRefresh.js', 'utf8');
 const pattern = 'const diskb = await readDiskCache(repo0b)';
 const count = (host.match(new RegExp(pattern.replace(/[.*+?^$\{|}()[\]]/g, '\\$&'), 'g')) || []).length;
 check(count === 1, 'host disk cache check appears once, found ' + count);

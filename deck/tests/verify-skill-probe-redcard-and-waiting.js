@@ -49,7 +49,10 @@ console.log('== #281 红牌分拣与等待合同门禁（#284 迁移：断言经
 // ---------- 1. 源码门禁 ----------
 console.log('\n— 验收1：源码门禁（纪律与线索） —')
 {
-  const hostSrc = readFileSync('src/host/index.js', 'utf8')
+  // H4 #448：技能探测那一族的实现搬进 src/host/skillProbe.js（index.js 只剩转发）。
+  // 2026-10-16 合并整改：纪律类断言按「入口 + 承载模块」拼合量，意图与判据集合一字未改。
+  const hostSrc = readFileSync('src/host/index.js', 'utf8') + '\n' + readFileSync('src/host/skillProbe.js', 'utf8')
+  const skillSrc = readFileSync('src/host/skillProbe.js', 'utf8')
   check(hostSrc.includes('SKILL_PENDING_MAX'), 'src/host/index.js 含 SKILL_PENDING_MAX（有界等待）')
   check(hostSrc.includes('lightProbeReason'), '含 lightProbeReason（轻探分拣）')
   check(hostSrc.includes('isSkillCardValid'), '含 isSkillCardValid（名片校验）')
@@ -61,7 +64,7 @@ console.log('\n— 验收1：源码门禁（纪律与线索） —')
   check(hostSrc.includes('probeCardViaDirect'), '#296: host 含直读探卡（probeCardViaDirect）')
   check(hostSrc.includes('evidenceSummary'), '#296: host 含判据摘要（evidenceSummary）')
   // 轻探仅涉标准根
-  const lightProbeSnippet = hostSrc.slice(hostSrc.indexOf('async function lightProbeReason'))
+  const lightProbeSnippet = skillSrc.slice(skillSrc.indexOf('async function lightProbeReason'))   // 轻探正身住在承载力模块里（index.js 那行只是转发）
   check(lightProbeSnippet.includes('.agents') && lightProbeSnippet.includes('SKILL.md'), '轻探仅涉标准根 SKILL.md')
   check(!lightProbeSnippet.includes('.claude') && !lightProbeSnippet.includes('.minimax'), '轻探不含 .claude/.minimax（已退役）')
 }
@@ -99,7 +102,8 @@ console.log('\n— 验收1：源码门禁（纪律与线索） —')
     const pkgLog = 'package/lib/index.js'
     check(existsSync(pkgLog), '构建产物存在：' + pkgLog)
     if (existsSync(pkgLog)) {
-      const lib = readFileSync(pkgLog, 'utf8')
+      // 同上一处：产物侧也拼上承载模块（package/lib/skillProbe.js 由 build 逐字节复制）
+      const lib = readFileSync(pkgLog, 'utf8') + '\n' + readFileSync('package/lib/skillProbe.js', 'utf8')
       check(lib.includes('SKILL_PENDING_MAX'), 'pkg 产物含 SKILL_PENDING_MAX（产物不陈旧）')
       check(lib.includes('lightProbeReason'), 'pkg 产物含 lightProbeReason')
       check(lib.includes('probeFsExists'), 'pkg 产物含 probeFsExists（path-shaped 纪律）')

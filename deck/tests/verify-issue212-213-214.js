@@ -28,8 +28,9 @@ const skillProbeChunk = txt.slice(skillProbeIdx, skillProbeEnd + 200);
 assert(!skillProbeChunk.includes('backendModules'), '#214: skillProbe must NOT contain backendModules (was mis-scoped cause of ReferenceError)');
 
 // buildSnapshot must contain let backendModules
-// H2 #446：buildSnapshot 已搬到 src/host/issueDetail.js（行为零变化），断言跟随代码位置，意图不变。
-const bsSrc = fs.readFileSync(path.join(__dirname, '../src/host/issueDetail.js'), 'utf8').replace(/\r\n/g, '\n');
+// H2 #446：buildSnapshot 先搬到 issueDetail.js；2026-10-16 合并整改：它已再往下搬进 src/host/snapshotBuild.js
+//   （index.js 只剩一行转发）。断言按承载模块量，三句与阈值一字未改。
+const bsSrc = fs.readFileSync(path.join(__dirname, '../src/host/snapshotBuild.js'), 'utf8').replace(/\r\n/g, '\n');
 const bsIdx = bsSrc.indexOf('async function buildSnapshot');
 const bsEnd = bsSrc.indexOf('return {\n        ok: true,', bsIdx);
 const bsChunk = bsSrc.slice(bsIdx, bsEnd + 5000);
@@ -61,7 +62,11 @@ assert(issueIndexChanged(before, afterWithUpdate) === true, '#213: issueIndexCha
 assert(issueIndexChanged(before, before) === false, '#213: issueIndexChanged no false positive when unchanged');
 
 // Check client probe interval exists and is 60s (or less) and cache invalidation on changed
-assert(txt.includes("if (changed) cache = { ts: 0, snapshot: null"), '#213: probe must invalidate cache on changed (enables auto refresh)');
+// 2026-10-16 合并整改：probe 的实现搬进 src/host/commentThreads.js，判据改在「入口 + 承载模块」上量。
+const probeHostSrc = txt + '\n' + fs.readFileSync(path.join(__dirname, '../src/host/commentThreads.js'), 'utf8').replace(/\r\n/g, '\n');
+// 写法换代：旧实现写局部变量 cache = { ts: 0, snapshot: null }；现经 setCache({ ts: 0, snapshot: null, error: null, cwd }) 作废同一份缓存。
+// 判据改成量「changed 之后确实把 ts 归零并把 snapshot 置空」这件事，意图不变。
+assert(probeHostSrc.includes('if (changed) setCache({ ts: 0, snapshot: null'), '#213: probe must invalidate cache on changed (enables auto refresh)');
 assert(txt.includes("harness.handle('wf.probe'"), '#213: wf.probe handler exists');
 
 // Client side check

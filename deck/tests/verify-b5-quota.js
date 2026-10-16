@@ -28,7 +28,11 @@ console.log('B5 + R2: GraphQL 配额止血（跨 repo 隔离 + REST 降级）+ s
 const sideSrc = (f) => {
   const base = fs.readFileSync(f, 'utf8')
   const pkg = f.indexOf('package/') >= 0
-  const extra = pkg ? ['package/lib/issueList.js', 'package/lib/issueDetail.js'] : ['src/host/issueList.js', 'src/host/issueDetail.js']
+  // 2026-10-16 合并整改：H3–H6 那几刀之后，probe 与快照这两条链也各自住进了承载模块 ——
+  //   commentThreads = probe（lastProbeAtByRepo / repo 字段 / issue 索引）、snapshotBuild = buildSnapshot、
+  //   sessionSnapshot / sessionRefresh = 快照与刷新的入口体。判据与阈值一字未改，只是把读的地方补齐。
+  const more = ['issueList.js', 'issueDetail.js', 'commentThreads.js', 'snapshotBuild.js', 'sessionSnapshot.js', 'sessionRefresh.js']
+  const extra = more.map((n) => (pkg ? 'package/lib/' : 'src/host/') + n)
   return base + '\n' + extra.map((p) => { try { return fs.readFileSync(p, 'utf8') } catch (e) { return '' } }).join('\n')
 }
 for (const f of ['host.js', 'package/lib/index.js']) {
@@ -42,7 +46,8 @@ for (const f of ['host.js', 'package/lib/index.js']) {
   // 2) probe 走 REST 全量索引 + 返回 repo
   check(src.includes('issues?state=all&per_page=100'), f + ' probe 走 REST 全量 issue 索引（不占 GraphQL）')
   check(src.includes('fetchIssueIndex'), f + ' probe 使用轻量 issue 索引（覆盖删除事件）')
-  check(/return \{ ok: true, changed: changed, repo: repo/.test(src), f + ' probe 返回 repo 字段（client 按 repo 刷新）')
+  // repo 字段的组装方式随 probe 搬家用变量换过名（repo: repo → repo: { owner: _selProbe.backendId, … }）：判据按「这一格回的是对象」量，语义不变。
+  check(/return \{ ok: true, changed: changed, repo: \{/.test(src), f + ' probe 返回 repo 字段（client 按 repo 刷新）')
   check(src.includes('lastIssueIndexByRepo'), f + ' probe 用按 repo 隔离的 issue 索引表')
 
   // 3) REST 降级
