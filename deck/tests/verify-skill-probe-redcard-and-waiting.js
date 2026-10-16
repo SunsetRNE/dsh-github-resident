@@ -45,7 +45,22 @@ const callChain = async (dispatch, payload) => {
   const req = {
     method: 'POST',
     url: 'http://127.0.0.1/api/dsws',
-    json: async () => ({ type: 'client-request', rpcId: 'rpc-skill-probe', payload: { method: 'chain', payload: Object.assign({}, payload, { force: true }) } }),
+    // 2026-10-16 合并整改：每次都要算「人亲手点的那一次重查」—— 只给 force 不够：链刚失败过会被退避挡下，
+    //   直接回上一份快照（实测：第二个场景 fs 探 0 次、skills.get 问 0 次，判据拿到的是上一个场景的结论）。
+    //   带 trigger:'user-recheck' 才是「人的动作永不降档」（见 src/host/detectChain.js 的 chainSource 那一段）。
+    json: async () => ({ type: 'client-request', rpcId: 'rpc-skill-probe', payload: { method: 'chain', payload: Object.assign({}, payload, { force: true, trigger: 'user-recheck' }) } }),
+  }
+  const res = await dispatch(req)
+  const body = await res.json()
+  return chainToRow(body && body.result ? body.result : body)
+}
+// 不带 force / trigger 的那条路（事件驱动那几段量的正是「无 force 也会绿」）：信封照真形状，只是不带这两个标记。
+const callChainPlain = async (dispatch, payload) => {
+  if (typeof dispatch !== 'function') return { checks: [] }
+  const req = {
+    method: 'POST',
+    url: 'http://127.0.0.1/api/dsws',
+    json: async () => ({ type: 'client-request', rpcId: 'rpc-skill-probe-plain', payload: { method: 'chain', payload: Object.assign({}, payload) } }),
   }
   const res = await dispatch(req)
   const body = await res.json()
@@ -190,8 +205,10 @@ console.log('\n— 验收2：轻探分拣 缺失 vs 名片无效（永不绿） 
   // skills mock：始终未命中（供轻探分拣）
   let skillsShouldThrow = false
   let invalidateHandler = null
+  let skillGetCalls = 0
   const skillsMock = {
     async get(name) {
+      skillGetCalls += 1
       if (skillsShouldThrow) throw new Error('service down: skills unavailable')
       return null
     },
@@ -221,6 +238,7 @@ console.log('\n— 验收2：轻探分拣 缺失 vs 名片无效（永不绿） 
     fetch: { register: (route) => { capturedRoute = route && route.fetch ? route.fetch : null; return () => { capturedRoute = null } } },
   }
   const handlers = {}
+  let route = null
   const ctx = {
     get(k) {
       if (k === 'skills') return skillsMock
@@ -279,6 +297,8 @@ console.log('\n— 验收2：轻探分拣 缺失 vs 名片无效（永不绿） 
     // 也标记目录存在
     files.set(join(tmpHome, '.agents', 'skills', 'wayfinder') + '/.dir', 'dir')
     let statusB = null
+    const _askedBeforeB = fsAsked.length
+    const _getsBeforeB = skillGetCalls
     {
       // 每个场景都先让 skills 失效，逼探测真去读盘（否则上一场景的 pending/缺失判定会被复用，
       //   坏名片场景照样回「缺失」—— 实测就是这样）。
@@ -291,7 +311,7 @@ console.log('\n— 验收2：轻探分拣 缺失 vs 名片无效（永不绿） 
       check(!!rowWayB, '找到 wayfinder 检查行（坏名片场景）')
       if (rowWayB) {
         check(rowWayB.level==='bad', '坏名片场景 wayfinder 为 bad', JSON.stringify(rowWayB))
-        check(rowWayB.detail.includes('无效') || rowWayB.detail.includes('Invalid'), '坏名片 detail 含“无效”', rowWayB.detail + ' ／ 探过的路径：' + fsAsked.slice(-14).join(' ; '))
+        check(rowWayB.detail.includes('无效') || rowWayB.detail.includes('Invalid'), '坏名片 detail 含“无效”', rowWayB.detail + ' ／ B 场景：fs 探了 ' + (fsAsked.length - _askedBeforeB) + ' 次、skills.get 问了 ' + (skillGetCalls - _getsBeforeB) + ' 次；探过的路径（本次新增）：' + fsAsked.slice(_askedBeforeB).slice(0, 10).join(' ; '))
         check(rowWayB.detail !== statusA.checks.find(c=> c.key==='skill:wayfinder').detail, '坏名片与缺失的 detail 不混同')
       }
     } else {
@@ -383,6 +403,7 @@ console.log('\n— 验收3：标准根外有效副本 绿+来源行 —')
   const subprocess2 = { async resolveExecutable(){return null}, spawn(){ return { done: Promise.resolve({exitCode:0}), collected:{stdout:{readFrom:()=>({text:''})}, stderr:{readFrom:()=>({text:''})}}, terminate(){} } } }
   const timer2 = { timeout: (a,b)=> (typeof a==='function'? setTimeout(a,b): new Promise(r=>setTimeout(r,a))) }
   const handlers2 = {}
+  let route2 = null
   const ctx2 = {
     get(k){
       if(k==='skills') return skillsOffMock
@@ -390,7 +411,7 @@ console.log('\n— 验收3：标准根外有效副本 绿+来源行 —')
       if(k==='platform') return platformStub2
       if(k==='subprocess') return subprocess2
       if(k==='timer') return timer2
-      if(k==='connection') return { rpc: { handle: (p,fn)=>{handlers2[p]=fn} } }
+      if(k==='connection') return { rpc: { handle: (p,fn)=>{handlers2[p]=fn} }, fetch: { register: (r)=>{ route2 = r && r.fetch ? r.fetch : null; return ()=>{} } } }
       if(k==='sessions') return { get: ()=>null }
       return undefined
     },
@@ -404,7 +425,7 @@ console.log('\n— 验收3：标准根外有效副本 绿+来源行 —')
   await new Promise(r=> setTimeout(r,50))
   let statusOff = null
   {
-    const dispatch = handlers2['/dsws']
+    const dispatch = route2
     statusOff = await callChain(dispatch, { cwd: tmpHome2, lang: 'zh' })
   }
   if (statusOff && Array.isArray(statusOff.checks)) {
@@ -474,6 +495,7 @@ console.log('\n— 验收3.5：多通道并联 — 注册表未命中时任一�
   const subprocess5 = { async resolveExecutable(){return null}, spawn(){ return { done: Promise.resolve({exitCode:0}), collected:{stdout:{readFrom:()=>({text:''})}, stderr:{readFrom:()=>({text:''})}}, terminate(){} } } }
   const timer5 = { timeout: (a,b)=> (typeof a==='function'? setTimeout(a,b): new Promise(r=>setTimeout(r,a))) }
   const handlers5 = {}
+  let route5 = null
   const ctx5 = {
     get(k){
       if(k==='skills') return skillsOffMiss5
@@ -481,7 +503,7 @@ console.log('\n— 验收3.5：多通道并联 — 注册表未命中时任一�
       if(k==='platform') return platformStub5
       if(k==='subprocess') return subprocess5
       if(k==='timer') return timer5
-      if(k==='connection') return { rpc: { handle: (p,fn)=>{handlers5[p]=fn} } }
+      if(k==='connection') return { rpc: { handle: (p,fn)=>{handlers5[p]=fn} }, fetch: { register: (r)=>{ route5 = r && r.fetch ? r.fetch : null; return ()=>{} } } }
       if(k==='sessions') return { get: ()=>null }
       return undefined
     },
@@ -494,13 +516,12 @@ console.log('\n— 验收3.5：多通道并联 — 注册表未命中时任一�
   try{ (mod5.apply ?? mod5).call(null, ctx5) } catch{}
   await new Promise(r=> setTimeout(r,50))
   const call5 = async () => {
-    const dispatch = handlers5['/dsws']
+    const dispatch = route5
     return await callChain(dispatch, { cwd: tmpHome5, lang: 'zh' })
   }
   const call5Plain = async () => {
-    const dispatch = handlers5['/dsws']
-    const res = await dispatch('chain', { cwd: tmpHome5, lang: 'zh' })
-    return chainToRow(res)
+    const dispatch = route5
+    return callChainPlain(dispatch, { cwd: tmpHome5, lang: 'zh' })
   }
   // 5a：fs 通道可读的合法名片（mock 内存文件；真实盘上此刻已有同路径文件 → 任一命中即可）→ 绿 + 来源
   const cardKey = join(tmpHome5, '.agents', 'skills', 'wayfinder', 'SKILL.md')
@@ -519,6 +540,8 @@ console.log('\n— 验收3.5：多通道并联 — 注册表未命中时任一�
   // 5c：移走真实文件 → 全通道空 → 红·缺失（回退成立）
   rmSync(realSkillDir, { recursive: true, force: true })
   blocked5.delete(cardKey)
+  // 2026-10-16 合并整改：5b 刚判过绿，短时记住还在 —— 不移除它，这一步会直接拿上一轮的绿，量不到「全通道空」。
+  try { skillsOffMiss5.trigger() } catch (eT) {}
   let s5c = await call5()
   const row5c = s5c && s5c.checks ? s5c.checks.find(c=> c.key==='skill:wayfinder') : null
   check(row5c && row5c.level==='bad', '全通道空 → 红·缺失（回退成立）', JSON.stringify(row5c))
@@ -595,6 +618,7 @@ console.log('\n— 验收3.6：BOM 名片 — Windows 编辑器另存的合法�
   const subprocess6 = { async resolveExecutable(){return null}, spawn(){ return { done: Promise.resolve({exitCode:0}), collected:{stdout:{readFrom:()=>({text:''})}, stderr:{readFrom:()=>({text:''})}}, terminate(){} } } }
   const timer6 = { timeout: (a,b)=> (typeof a==='function'? setTimeout(a,b): new Promise(r=>setTimeout(r,a))) }
   const handlers6 = {}
+  let route6 = null
   const ctx6 = {
     get(k){
       if(k==='skills') return skillsMiss6
@@ -602,7 +626,7 @@ console.log('\n— 验收3.6：BOM 名片 — Windows 编辑器另存的合法�
       if(k==='platform') return platformStub6
       if(k==='subprocess') return subprocess6
       if(k==='timer') return timer6
-      if(k==='connection') return { rpc: { handle: (p,fn)=>{handlers6[p]=fn} } }
+      if(k==='connection') return { rpc: { handle: (p,fn)=>{handlers6[p]=fn} }, fetch: { register: (r)=>{ route6 = r && r.fetch ? r.fetch : null; return ()=>{} } } }
       if(k==='sessions') return { get: ()=>null }
       return undefined
     },
@@ -615,7 +639,7 @@ console.log('\n— 验收3.6：BOM 名片 — Windows 编辑器另存的合法�
   try{ (mod6.apply ?? mod6).call(null, ctx6) } catch{}
   await new Promise(r=> setTimeout(r,50))
   const call6 = async () => {
-    const dispatch = handlers6['/dsws']
+    const dispatch = route6
     return await callChain(dispatch, { cwd: tmpHome6, lang: 'zh' })
   }
   // 6a：fs 通道读 BOM 名片 → 绿（旧代码此处误判「名片无效 · frontmatter invalid」）
@@ -676,6 +700,7 @@ console.log('\n— 验收4：等待态 有界推进 + 失效广播 + 封顶失�
     trigger(){ if(capturedHandler) capturedHandler() }
   }
   const handlers3 = {}
+  let route3 = null
   const ctx3 = {
     get(k){
       if(k==='skills') return skillsMock3
@@ -683,7 +708,7 @@ console.log('\n— 验收4：等待态 有界推进 + 失效广播 + 封顶失�
       if(k==='platform') return platformStub3
       if(k==='subprocess') return { async resolveExecutable(){return null}, spawn(){ return { done: Promise.resolve({exitCode:0}), collected:{stdout:{readFrom:()=>({text:''})}, stderr:{readFrom:()=>({text:''})}}, terminate(){} } } }
       if(k==='timer') return { timeout: (a,b)=> (typeof a==='function'? setTimeout(a,b): new Promise(r=>setTimeout(r,a))) }
-      if(k==='connection') return { rpc: { handle: (p,fn)=>{handlers3[p]=fn} } }
+      if(k==='connection') return { rpc: { handle: (p,fn)=>{handlers3[p]=fn} }, fetch: { register: (r)=>{ route3 = r && r.fetch ? r.fetch : null; return ()=>{} } } }
       if(k==='sessions') return { get: ()=>null }
       return undefined
     },
@@ -697,16 +722,15 @@ console.log('\n— 验收4：等待态 有界推进 + 失效广播 + 封顶失�
   await new Promise(r=> setTimeout(r,50))
   // 连续 force 调用 4 次，验证前 3 pending，第 4 bad 且携带原文
   const getStatus = async () => {
-    const dispatch = handlers3['/dsws']
+    const dispatch = route3
     if (!dispatch) return null
     return await callChain(dispatch, { cwd: tmpHome3, lang: 'zh' })
   }
   // #284 断链回归：广播后【无 force】一次 chain 亦须全量重判（callChain 固定 force 仅用于显式刷新路径；此处直接 dispatch）
   const getStatusPlain = async () => {
-    const dispatch = handlers3['/dsws']
+    const dispatch = route3
     if (!dispatch) return null
-    const res = await dispatch('chain', { cwd: tmpHome3, lang: 'zh' })
-    return chainToRow(res)
+    return callChainPlain(dispatch, { cwd: tmpHome3, lang: 'zh' })
   }
   let s1 = await getStatus()
   let s2 = await getStatus()

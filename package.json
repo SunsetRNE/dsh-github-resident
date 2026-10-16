@@ -1,6 +1,6 @@
 {
   "name": "@sunsetrne/dsh-github-resident-v2",
-  "version": "1.11.2",
+  "version": "1.11.3",
   "type": "module",
   "main": "./dist/host.js",
   "description": "常驻 GitHub 身份与多仓库提交/推送/PR 工具；**接管 gh CLI 的完整生命周期**（检查 / 安装 / 更新 / 修改，含系统级 gh —— 升级系统层走系统包管理器，需一次显式同意，带台账与可撤），含需用户同意的仓库登记文件库，并内置 Matt Skills Deck 的 issue / map 管理工具、随包 27 个技能、右侧栏面板与合并后的设置页。装之前请看 README 的「本插件会动 gh 的什么」。",

@@ -231,7 +231,14 @@ export function createSkillProbe(deps) {
         try { resetSkillPendingState(skillName) } catch {}
         return { ok: true, level: 'ok', detail, hint, sourcePath: foundPath || undefined, repo: null, channels: [{ channel: 'registry', root: 'registry', result: 'hit', detail: foundPath || '' }] }
       }
-      if (skillsError) {
+      // #296（并 2026-10-16 修，门禁 verify-skill-probe-redcard-and-waiting 的「广播后无 force 转绿」量的就是这一条）：
+      //   通道是**并集** —— 技能服务掉了（ECONNREFUSED / 服务位缺席）不代表盘上没有那份名片。
+      //   从前的写法是「服务一错就早早回 pending/bad」，把 fs 与直读两条通道整个跳过，
+      //   于是「服务暂时不可用 + 名片就在标准根上」这种真机很常见的形态被判成红。
+      //   现在先把盘上事实量出来：真有合法名片就照下面那条老路判绿（附来源），盘上也空才按「服务不可用」出声。
+      const hostFsEarly = safeHostFs()
+      const reasonEarly = await lightProbeReason(skillName, lang, cwd, { curFs: hostFsEarly, getPlatform: getPlatform })
+      if (skillsError && !(reasonEarly && reasonEarly.kind === 'ok')) {
         const st = getOrCreatePendingState(skillName)
         st.attempts += 1
         st.lastError = skillsError
@@ -241,8 +248,7 @@ export function createSkillProbe(deps) {
           return { ok: false, level: 'bad', detail: (lang === 'en') ? 'Skills service unavailable: ' + skillsError : '技能服务不可用：' + skillsError, hint: 'prompt:installSkills', repo: null, error: skillsError }
         }
       }
-      const hostFs = safeHostFs()
-      const reason = await lightProbeReason(skillName, lang, cwd, { curFs: hostFs, getPlatform: getPlatform })
+      const reason = reasonEarly   // 上面那一趟已经量过盘上事实（服务掉线时也要量），这里不重复探
       try { resetSkillPendingState(skillName) } catch {}
       const allCh = [{ channel: 'registry', root: 'registry', result: 'miss', detail: '' }].concat(reason.channels || [])
       const ev = evidenceSummary(allCh, lang)
