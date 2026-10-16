@@ -5,6 +5,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { createRequire } from 'node:module'   // #69：更新包住在根 node_modules，按 Node 的向上解析找它
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
@@ -50,6 +51,13 @@ const PHONES = [
   // #927 只读一条：闸的三个累计数（撞限流 / 记账对不上 / 绕闸）的观察口，现役 54 → 55；
   // 它不新开事件，成功一行沿用既有常驻 #26 host.call（电话名写在 method 字段，kind 记 gate-stats）。
   'wf.gateStats',
+  // 2026-10-12 身份融合（233cb1f）新增一条只读电话，现役 55 → 56：向宿主要「现在装着的这一份」的
+  //   name / version / repository（落点 src/host/index.js 的 harness.handle('wf.pluginIdentity')，
+  //   客户端调用点在 src/client/panelAssembly.js 的 probePluginIdentity）。它不新开事件，记行沿用既有
+  //   常驻 #26 host.call（电话名写在 method 字段，kind 记 plugin-identity）—— 这一行落在**客户端调用点**
+  //   而不是宿主侧，因为那条注册是裸的 harness.handle（既没走 loggedPhone，也不该为一个显示用探针另起一套）。
+  //   身份融合那次漏了本表与附录 1.7 的登记（同批漏记的 same-layer 扇入边已由 0c0d4e7 补上），#69 按注册实数补齐。
+  'wf.pluginIdentity',
 ]
 // #875 薄接线：新增取更新日志电话 1 条，现役 53 → 54；增删电话同步改本表（附录 1.7 退役表不动）。
 const RETIRED = ['wf.ping', 'wf.claim']
@@ -112,10 +120,25 @@ const CALLEE_COVERS = [
   // #875 薄接线：四个更新电话的记行收进更新包（loggedPhone 按电话名记 host.call/host.call.fail，pluginId 隔离），
   // 本仓胶水只读电话名表。这里认两条：胶水从包读电话名（接线证明）加包内有按电话记行的发射（包内证明）。
   const DELEGATED_TO_PACKAGE = ['wf.updateStatus', 'wf.updateCheck', 'wf.updateInstall', 'wf.updateChangelog']
+  // 2026-10-15（#69）：包住在**根** node_modules —— deck/package.json 根本没有依赖段，根 pnpm-workspace.yaml
+  //   写得很明白：「它需要的包（esbuild/typescript/dsh-log/dsh-plugin-update…）由根 devDependencies/dependencies
+  //   提供，deck 内的 createRequire 会向上解析到根 node_modules」。从前硬拼 path.join(ROOT,'node_modules',…)
+  //   找的是 deck/node_modules —— 本仓压根不建它，于是 readFileSync 抛、catch 成 false，四条更新电话恒红
+  //   （红的是取件路径，不是「包里没记行」）。改成按 Node 的向上解析定位包：解析不到仍旧如实回 false。
   let pkgHost = null
+  let pkgHostPath = null
+  const pkgHostFile = () => {
+    if (pkgHostPath === null) {
+      try { pkgHostPath = createRequire(import.meta.url).resolve('dsh-plugin-update') }   // exports '.' → dist/host.js
+      catch (e) { pkgHostPath = '' }
+    }
+    return pkgHostPath
+  }
   const pkgLogsPhone = (p) => {
     try {
-      if (pkgHost === null) pkgHost = fs.readFileSync(path.join(ROOT, 'node_modules', 'dsh-plugin-update', 'dist', 'host.js'), 'utf8')
+      const f = pkgHostFile()
+      if (!f) return false
+      if (pkgHost === null) pkgHost = fs.readFileSync(f, 'utf8')
       const action = p.split('.')[1]
       return pkgHost.includes('loggedPhone(phoneNames.' + action) || pkgHost.includes('loggedChangelogPhone(phoneNames.' + action)
     } catch { return false }

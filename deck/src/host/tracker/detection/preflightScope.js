@@ -67,11 +67,19 @@ export function isPreflightCommand(cmd, args) {
 }
 
 /** 这条调用的身份键：只取决定「问的是不是同一件事」的那几个字段，绝不含工作区路径原文。
- *  等多久（timeout）不算“哪件事”：同一轮里探活与谓词各自带的超时不同，带着它两边认不出同一条，白问两遍（#963）。 */
+ *  等多久（timeout）不算“哪件事”：同一轮里探活与谓词各自带的超时不同，带着它两边认不出同一条，白问两遍（#963）。
+ *  程序名要归一（2026-10-15 · #69 实测）：同一条 `gh auth status` 在两条出站路上带的名字**不一样** ——
+ *  探测级联那条（github 房的 ghClient.execGh）传的是解析出来的完整路径（repoKeys 的 resolveGh 回的 ghPath，
+ *  真机上是 /usr/bin/gh 那样的绝对路径），后端链的谓词那条传的是裸名 'gh'（detectChain 的两处 ghAsk）。
+ *  原样把 cmd 拼进键，这两条永远认不成同一条 —— 复用位形同虚设：一次评估仍问两遍登录态（门禁实测 4 条 REST，
+ *  票面要的是 3 条）。归一成 'gh' 与上面 isPreflightCommand 的判据同一口径（它本来就「带路径也认」），
+ *  参数与工作目录照旧逐字比：归一只发生在程序名这一格，且只对成名的环境预检这一族（本函数只被它调）。
+ *  为什么不是让调用方改传裸名：那要动两条出站路的签名，且 #15 明确要求执行点用解析出来的那个 ghPath。
+ *  程序名归一只影响「是不是同一条」的判断，不影响真起进程时用哪一个路径（runGh 自己解析，不看这里）。 */
 function keyOf(cmd, args, opts) {
   const o = opts || {}
   const parts = [
-    String(cmd || ''),
+    isGh(cmd) ? 'gh' : String(cmd || ''),
     (args || []).map(String).join(' '),
     String(o.cwd || ''),
   ]

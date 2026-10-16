@@ -22,6 +22,12 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, dirname, relative, sep } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+// 夹具桩：起外部命令的那几个出口（repoKeys / platformChannel / versionControl）现在都**无条件** await
+// identityEnvFor 取「这一笔以谁的身份跑」（2026-10-14《Deck 半边接消费面（执行环境由消费面供给）》）。
+// 门禁直连 createRepoKeys 时没传这一格，spawn 那一句当场抛「identityEnvFor is not a function」，
+// 被 runGh 的 catch 收成 kind=spawn 的失败 —— 于是这一轮链一条 REST 都没发出去（实得 0 条）。
+// 桩按 #57 的先例共用同一份（服务位缺席 → 原样回底座，与真件同一条规矩）。
+import { identityEnvForStub } from './lib/identity-env-stub.js'
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..')
 
@@ -420,6 +426,7 @@ console.log('\n— 一次评估里环境预检只花一次（断言取数路径�
         const m = /github\.com[:/]([^/]+)\/([^/#?]+)/i.exec(String(s || ''))
         return m ? { owner: m[1], name: m[2].replace(/\.git$/, '') } : null
       },
+      identityEnvFor: identityEnvForStub,
       logCtx: null,
     })
     // 第二条出口的形状与 platformChannel 的 detectionExec 一致（都从 subprocess.spawn 起 gh）。

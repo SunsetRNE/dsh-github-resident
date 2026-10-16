@@ -46,8 +46,11 @@ check(/promptText\('switchAlign'|switchAlignPrompt\(/.test(sw), '已初始化那
 check(nr.includes('consumePendingSetup(st)'), '旧红卡建成后消费标记')
 check(mv.includes('consumePendingSetup(st)'), '向导建成后消费标记')
 // 5) 日志：只记分支不记隐私，永不抛（#698：决策那两句留在 prompts.js，执行那一句跟着决策器搬去了 prompts-setup.js）
+//    2026-10-12 身份融合（233cb1f）：日志前缀从 [MattSkillsDeck] 整份改成 [GitHub 常驻]（全仓 5 处一起换）。
+//    本行原先钉的是旧前缀字面量，改名之后恒为 0 —— 三处日志点一直都在，是判据没跟上那次有意变更，所以按新前缀量。
+//    判据本身不放宽：仍旧要求这三处（决策 blocked / 决策 fallback / 补发）都在，阈值仍是 3。
 const logAll = setupDec + '\n' + prompts
-const logs = (logAll.match(/\[MattSkillsDeck\] setup-inject/g) || []).length
+const logs = (logAll.match(/\[GitHub 常驻\] setup-inject/g) || []).length
 check(logs >= 3, '决策/执行/补发三处日志（实 ' + logs + '）')
 check(!setupDec.includes('st.cwd +') && !setupDec.includes('+ st.cwd'), '日志不记工作区路径等隐私')
 if (failed) { console.log('\n存在失败'); process.exit(1) }

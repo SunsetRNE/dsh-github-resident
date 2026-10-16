@@ -124,7 +124,11 @@ async function clickDebugSwitch(setSwitchReply) {
     window.document.body.appendChild(container)
     const root = ReactDOMClient.createRoot(container)
     await React.act(async () => {
-      root.render(React.createElement(settingsComp, { sessionId: 'sid-597' }))
+      // 宿主渲染这一格是 renderSlot('settings.plugins.tab', {}, { only: … }) —— 入参是空对象，没有 sessionId
+      // （dsh-client-ui-settings-plugins/lib/client.js 第 68 / 124 行那两处）。夹具从前自己塞了一个 sessionId，
+      // 于是页面读的是「每会话 store」，而诊断分区（DeckDiagnosticsSection）把提示 flash 进 shared 那份 store，
+      // 那条提示在这段夹具下永远渲染不出来（9 项红）。这里按宿主的真实入参渲染，判据一条不减。
+      root.render(React.createElement(settingsComp, {}))
       await new Promise((r) => setTimeout(r, 50))
     })
 

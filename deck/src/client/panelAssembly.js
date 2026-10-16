@@ -92,7 +92,13 @@
     const probePluginIdentity = function () {
       try {
         if (typeof host === 'undefined' || !host || typeof host.call !== 'function') return
+        const t0 = Date.now()
         Promise.resolve(host.call('wf.pluginIdentity', {})).then(function (res) {
+          // #69（2026-10-15）：这一处跨边界调用从前一条日志都没有 —— 宿主侧是裸的 harness.handle 注册，
+          //   客户端这边也不记，于是覆盖门禁的「调用点可追踪」失追在这一行。按既有口径就地补一行：
+          //   电话名写在 method 字段，只记耗时与这一问成没成（kind 记 plugin-identity）；
+          //   版本号与仓库地址是身份原文，一个字都不进日志。
+          try { log('info', 'host.call', { method: 'wf.pluginIdentity', latencyMs: Date.now() - t0, ok: !!(res && res.ok !== false), kind: 'plugin-identity' }) } catch (eL) {}
           try {
             const v = res && res.ok !== false ? res : null
             if (!v) return

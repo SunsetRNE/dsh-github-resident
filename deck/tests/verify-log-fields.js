@@ -7,6 +7,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { createRequire } from 'node:module'   // #69：更新包住在根 node_modules，按 Node 的向上解析找它
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
 let failed = false
@@ -175,6 +176,12 @@ const ALLOWED = {
   'git.exec.fail': ['argv0', 'cwdHash', 'via', 'timeoutMs', 'errorHash'],
   // #864 进出缓存：命中、未命中、淘汰三归宿同一事件（只记短散列、枚举与数字；工作区原文、读数内容一律不记）。
   'vc.cache.screen': ['cwdHash', 'outcome', 'ageMs'],
+  // 2026-10-15（#69）登记收口：2026-10-12 身份融合（233cb1f）新增的客户端一次性迁移 —— 把本地存着的旧身份
+  //   （老 kind 名）读旧写新。它当时只落了发射、附录与白名单都没跟上，本票照 2026-09-25 #709「登记收口」的先例
+  //   （代码里早就发出去、只是登记没跟上）如实补登记，不改发射处。三个键都是短的：`changed` 这次动了几处、
+  //   `scanned` 扫了几处、`fields` 动了哪几个字段（字段**名**的逗号串，不是字段值）—— 不记任何标识原文，不记路径。
+  //   为什么归按需：它是一次性迁移，正常用户一辈子只发生一次；发射处已在外层判 changed > 0，不刷屏。
+  'identity.migrate': ['changed', 'scanned', 'fields'],
   // 自监控 4 条（#499，附录 1.6 节；#46 走宿主防火发射器 fireLog，调用形状不在本门禁扫描口径内，由 verify-log-selfmon.js 覆盖）。
   'log.persist.fail': ['op', 'reason', 'dirHash'],
   'log.forward.summary': ['droppedDelta', 'totalDropped', 'reason', 'windowMs'],
@@ -312,20 +319,35 @@ const names = Object.keys(found).sort()
 // 一、允许表里每个事件都有埋点落点（83 个事件里自监控 #46 由 verify-log-selfmon.js 覆盖，退役的 3 个不在源码里）。
 // #875 薄接线：update.install.exec 的发射器已收进已安装的更新包（事件保留、字段不变，落点改到包内编译产物）。
 // 本仓 src 里不再有它的落点，这里到包内发射处核对事件名与五个字段，找不到仍红。
+// 2026-10-15（#69）：包住在**根** node_modules —— deck/package.json 没有依赖段，根 pnpm-workspace.yaml 写明
+//   「它需要的包由根 devDependencies/dependencies 提供，deck 内的 createRequire 会向上解析到根 node_modules」。
+//   从前硬拼 ROOT/node_modules（= deck/node_modules，本仓不建它）读两份产物，readFileSync 抛、catch 吞掉，
+//   于是这一格恒判「全仓未找到」—— 红的是取件路径，不是「包内没有这个事件」。改按 Node 的向上解析定位包，
+//   解析不到仍旧算没找到（不静默放行）。
+function packageDistFile(name) {
+  try {
+    const entry = createRequire(import.meta.url).resolve('dsh-plugin-update')   // exports '.' → dist/host.js
+    return path.join(path.dirname(entry), name)
+  } catch (e) { return '' }
+}
 if (!found['update.install.exec']) {
   try {
-    const evtDef = fs.readFileSync(path.join(ROOT, 'node_modules', 'dsh-plugin-update', 'dist', 'log-events.js'), 'utf8')
-    const store = fs.readFileSync(path.join(ROOT, 'node_modules', 'dsh-plugin-update', 'dist', 'store.js'), 'utf8')
+    const evtPath = packageDistFile('log-events.js')
+    const storePath = packageDistFile('store.js')
+    const evtDef = evtPath ? fs.readFileSync(evtPath, 'utf8') : ''
+    const store = storePath ? fs.readFileSync(storePath, 'utf8') : ''
     const named = evtDef.includes('"update.install.exec"')
     const at = store.indexOf('LOG_EVENT_INSTALL_EXEC, {')
     const near = at >= 0 ? store.slice(at, at + 900) : ''
     const fieldsOk = ['route', 'ok', 'exitCode', 'durationMs', 'pluginId'].every((k) => near.includes(k))
     if (named && at >= 0 && fieldsOk) found['update.install.exec'] = { keys: { route: 1, ok: 1, exitCode: 1, durationMs: 1, pluginId: 1 }, sites: ['node_modules/dsh-plugin-update/dist/store.js（包内发射，常量名 LOG_EVENT_INSTALL_EXEC）'] }
   } catch {}
+}
+// 2026-10-15（#69）：这一条循环从前被错关在上面那个 if 的花括号里面 —— 于是「update.install.exec 在包内找到了」
+//   的那一天，全部「事件有埋点落点」断言会一起被跳过（门禁悄悄变松）。它本来就该无条件跑：
+//   if 只管「去包内找落点」这一步。这里只把花括号摆回原位，断言一条没加、没减、没放宽。
 for (const name of Object.keys(ALLOWED).sort()) {
   check(!!found[name], '事件有埋点落点 ' + name + (found[name] ? '（' + found[name].sites.length + ' 处）' : '（全仓未找到）'))
-}
-
 }
 for (const name of names) {
   if (!ALLOWED[name]) check(false, '未知事件名须先更新附录与本门禁 ' + name + ' @ ' + found[name].sites.slice(0, 3).join('、'))
