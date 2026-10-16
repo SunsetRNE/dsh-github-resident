@@ -16,6 +16,7 @@ import path from 'node:path'
 import { spawn, spawnSync } from 'node:child_process'
 import os from 'node:os'
 const ghCalls = []
+const allSpawns = []   // 诊断用：本轮真起过的所有进程（含非 gh），判「到底有没有起 gh repo view」
 /** 这条命令是不是被 mock 的那条 gh：宿主在不同链上写的是 'gh'，解析出来的可能是 MOCK_GH 或真路径。 */
 function isGhArgv(arg0) {
   const s = String(arg0 || '')
@@ -64,6 +65,7 @@ const subprocess = {
   },
   spawn(spec) {
     const argv = spec.argv
+    try { allSpawns.push(argv.map(String).join(' ')) } catch (eS) {}
     if (isGhArgv(argv[0])) {
       ghCalls.push({ argv: argv.slice(1), cwd: spec.cwd })
       // mock gh 行为：cwd 必须是 git 仓库才返回成功（否则 fail like real gh "fatal: not a git repository"）
@@ -198,7 +200,12 @@ async function main() {
   const h4 = await loadPlugin({ subprocess, timer, fs: fsSvc, skills: makeSkills() })
   ghCalls.length = 0
   const snap4 = await h4('snapshot', { cwd: noOriginDir })
-  expect('场景4 · snapshot.repo 降级到 gh mock（upstream）', snap4.repo && snap4.repo.owner === 'upstream-org' && snap4.repo.name === 'upstream-repo', JSON.stringify(snap4.repo))
+  // 诊断：链那条路上（repoRemote 谓词）到底解析成了谁、有没有真去问 gh —— 判「阶梯还在不在」用这一行，不用猜。
+  ghCalls.length = 0
+  const chain4 = await h4('chain', { cwd: noOriginDir, force: true })
+  const step4 = (((chain4 || {}).fullSnapshot || {}).steps || []).filter(function (s) { return s && s.id === 'gh:remote' })[0]
+  console.log('  [诊断·场景4] 链里 gh:remote = ' + JSON.stringify(step4 && (step4.show || {}).desc) + ' ／ 链这一轮起的 gh：' + JSON.stringify(ghCalls.map(function (c) { return c.argv.join(' ') }).slice(0, 5)) + ' ／ 真起过的进程（末 6 条）：' + JSON.stringify(allSpawns.slice(-6)))
+  expect('场景4 · snapshot.repo 降级到 gh mock（upstream）', snap4.repo && snap4.repo.owner === 'upstream-org' && snap4.repo.name === 'upstream-repo', JSON.stringify(snap4.repo) + ' ／ 这一轮起过的 gh：' + JSON.stringify(ghCalls.map(function (c) { return c.argv.join(' ') }).slice(0, 5)) + ' ／ refId=' + JSON.stringify(snap4.refId || null))
 
   // ============ 场景 5：缓存按 cwd 隔离 — Tier 1 命中后 repoKeys[cwd] 缓存 ============
   console.log('--- 场景 5：同 cwd 第二次 → repoKeys 缓存命中 ---')
