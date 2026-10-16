@@ -153,5 +153,19 @@ export function createChainBackoff(deps) {
     return st ? st.step : 0
   }
 
-  return { verdict, note, noteWriteActivity, cached, allGreenTtlMs, stepOf, isAllGreen, doneCountOf }
+  /**
+   * 丢掉这个键上的退避态（含它自己留的那份快照）。给「失效广播」用：技能一变，那一桶的结论立刻作废，
+   *   下一次【无 force】的求值必须真重算 —— 从前只清了链快照缓存，退避这边还揣着上一份，于是照旧被挡下、
+   *   把人上一轮的结论回给你（门禁 verify-skill-probe-redcard-and-waiting 的「广播后无 force 即绿」量到了这一条）。
+   * 传 key 只丢那一桶（与 invalidateChainCacheForKey 同口径：key 本身或 'key|' 前缀）；不传则全丢。
+   */
+  function reset(key) {
+    try {
+      if (!key) { _stateByKey.clear(); return }
+      const k0 = String(key)
+      const prefix = k0 + '|'
+      for (const k of Array.from(_stateByKey.keys())) { if (k === k0 || k.indexOf(prefix) === 0) _stateByKey.delete(k) }
+    } catch (e) {}
+  }
+  return { verdict, note, noteWriteActivity, cached, allGreenTtlMs, stepOf, isAllGreen, doneCountOf, reset }
 }

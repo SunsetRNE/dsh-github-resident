@@ -5,7 +5,7 @@
 // skillCacheTtlMs（问到的结果记住多久，缺省 30 秒，与检测级联缓存同档）。
 import { isSkillCardValid, probeFsExists, directSkillCardRead, directPathExists, findProjectRootDir, probeCardViaFs, probeCardViaDirect, evidenceSummary, lightProbeReason } from '../shared/skill-probe-channels.js'
 export function createSkillProbe(deps) {
-  const { ctx, getPlatform, getWorkspaceStore, resetChainCache, resetChainCacheForKey, logCtx } = deps
+  const { ctx, getPlatform, getWorkspaceStore, resetChainCache, resetChainCacheForKey, resetChainBackoff, logCtx } = deps
     // 工作区与技能名只记短指纹，不记原始路径（日志白名单纪律，与仓里别处同一种取法）。
     function hash8(s) { try { const t = String(s || ''); let h = 5381; for (let i = 0; i < t.length; i++) h = (((h << 5) + h + t.charCodeAt(i)) >>> 0); return ('0000000' + h.toString(16)).slice(-8) } catch { return '00000000' } }
     // #968 问到的结果短时记住多久（毫秒）。问不到（红）与没问出来（等待）永远不记，只记问到的（绿）。
@@ -89,6 +89,8 @@ export function createSkillProbe(deps) {
       try {
         if (scopeKey && typeof resetChainCacheForKey === 'function') resetChainCacheForKey(scopeKey)
         else resetChainCache()
+        // 退避那一份也要丢：它自己揣着上一份快照，只清链缓存的话下一次【无 force】仍会被挡下、回旧结论。
+        if (typeof resetChainBackoff === 'function') resetChainBackoff(scopeKey)
       } catch {}
       try {
         getWorkspaceStore().then(function (ws) {

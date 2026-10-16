@@ -157,7 +157,7 @@ export default {
     let _remotePredP = null
     function _remotePred() { if (!_remotePredP) _remotePredP = import('./remotePredicates.js').then(function(m){ return m.createRemotePredicates() }); return _remotePredP }
     let _skillProbeP = null
-    function _skillProbe() { if (!_skillProbeP) _skillProbeP = (async function(){ const mod = await import('./skillProbe.js'); return mod.createSkillProbe({ ctx: ctx, getPlatform: function(){ return getPlatform.apply(null, arguments) }, getWorkspaceStore: function(){ return getWorkspaceStore.apply(null, arguments) }, resetChainCache: function(){ chainByKey.clear() } /* #696 不带工作区的技能广播才清全部链 */, resetChainCacheForKey: function(key){ invalidateChainCacheForKey(key) } /* #968 带工作区的广播只清那一桶 */, logCtx: logCtx }) })(); return _skillProbeP }
+    function _skillProbe() { if (!_skillProbeP) _skillProbeP = (async function(){ const mod = await import('./skillProbe.js'); return mod.createSkillProbe({ ctx: ctx, getPlatform: function(){ return getPlatform.apply(null, arguments) }, getWorkspaceStore: function(){ return getWorkspaceStore.apply(null, arguments) }, resetChainCache: function(){ chainByKey.clear() } /* #696 不带工作区的技能广播才清全部链 */, resetChainCacheForKey: function(key){ invalidateChainCacheForKey(key) }, resetChainBackoff: function(key){ try { getChainBackoff().then(function(b){ if (b && typeof b.reset === 'function') b.reset(key) }).catch(function(){}) } catch (e) {} } /* #968 带工作区的广播只清那一桶 */, logCtx: logCtx }) })(); return _skillProbeP }
     let _detectChainP = null
     // #709（T5）：检查链退避的宿主薄壳（懒加载一次，之后复用）。它自己不排任何定时器。
     function getChainBackoff() {
