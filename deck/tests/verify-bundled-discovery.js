@@ -309,7 +309,10 @@ async function main() {
       const plugin = hostMod.default || hostMod
       if (plugin && typeof plugin.apply === 'function') {
         plugin.apply(mockCtx)
-        await new Promise(r=>setTimeout(r, 400))
+        // 2026-10-16 合并整改：宿主装配改成经 bootBody + 动态 import ./bootstrap.js 挂 bundled provider（H1 #445），
+        //   挂上来的时刻不再由 apply 同步返回 —— 原来那句固定 400ms 等待就成了掷骰子。这里改成**有上界的轮询**：
+        //   每 100ms 看一眼，最多 5 秒；断言本身（必须挂上、必须能 list 出 27 项）一条没放宽。
+        for (let _w = 0; _w < 50 && !capturedProviderFactory; _w++) await new Promise(r=>setTimeout(r, 100))
         check(!!capturedProviderFactory, 'host apply 已调用 registerProvider（捕获工厂） evidence bundled registerProvider')
         if (capturedProviderFactory) {
           hostProbePass = true

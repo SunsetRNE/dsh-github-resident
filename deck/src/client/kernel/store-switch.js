@@ -73,7 +73,11 @@
     export const DEFAULT_SWITCH_PROMPT_ZH = '现有 issues 保留在原后端，切换后不可见，切回可见'
     // #191 · targetId=null 进入"目标待选"态（仓库名右侧按钮直弹 Modal，target 由 Modal 内 radio 选）
     export const openSwitchConfirm = function (st, targetId) {
-      const cur = st.selection ? st.selection.backendId : null
+      // #669 修（2026-10-16）：当前后端按「store 上的选择，退回快照里的选择」取 —— 面板头部那颗图标
+      //   （Dock 那行）本来就是这么读的（s.selection || s.snapshot.selection），而这里从前只看 st.selection：
+      //   快照已到、选择还没落到 store 上时，点那颗图标会在这里被 `cur == null` 挡掉、窗永远不开。
+      const _selNow = st.selection || (st.snapshot && st.snapshot.selection) || null
+      const cur = _selNow ? _selNow.backendId : null
       if (cur == null) return false
       if (targetId != null && cur === targetId) return false
       // #698 第四步（同一时刻只允许一张这样的卡在屏幕上）：那张布局小卡开着时不许再开这个窗。
@@ -97,8 +101,32 @@
         confirming: false,
       }
       emit(st)
+      // #669 修（2026-10-16）：这条路的开窗人只有「面板头部那颗切换图标」，而目标清单（s.backendModules）
+      //   从前只有 Dock/Overlay 那两条开窗路径会去问 wf.registry —— 走这条路进来时它常常是空的，
+      //   于是窗开了、一个目标也点不了（门禁 verify-669-switch-visible 的 B 段就是在这上面崩的）。
+      //   这里补一次同形状取数：问到就填上并广播，问不到不阻断（窗照开，只是清单空着）。
+      try { if (typeof ensureBackendModules === 'function') ensureBackendModules(st) } catch (eM) {}
       if (typeof loadSwitchCri === 'function') loadSwitchCri(st)
       return true
+    }
+    /** 目标清单取数（与 Dock 的开窗路径同形状：wf.registry → s.backendModules + 配色表）。已有就不重复问。 */
+    export const ensureBackendModules = function (st) {
+      try {
+        if (st && Array.isArray(st.backendModules) && st.backendModules.length) return
+        if (typeof host === 'undefined' || !host || typeof host.call !== 'function') return
+        host.call('wf.registry', { cwd: (st && st.cwd) || '' }).then(function (r) {
+          try {
+            let m = null
+            if (r && r.ok && Array.isArray(r.modules)) m = r.modules
+            else if (r && Array.isArray(r.modules)) m = r.modules
+            else if (r && r.value && Array.isArray(r.value.modules)) m = r.value.modules
+            if (!Array.isArray(m) || !m.length) return
+            st.backendModules = m
+            try { if (typeof setPresentationMap === 'function') setPresentationMap(m) } catch (eP) {}
+            emit(st)
+          } catch (eIn) {}
+        }).catch(function () {})
+      } catch (e) {}
     }
     export const closeSwitchConfirm = function (st) {
       if (!st.switchConfirm) return

@@ -64,7 +64,10 @@ console.log('\n— 验收1：源码门禁（纪律与线索） —')
   check(hostSrc.includes('probeCardViaDirect'), '#296: host 含直读探卡（probeCardViaDirect）')
   check(hostSrc.includes('evidenceSummary'), '#296: host 含判据摘要（evidenceSummary）')
   // 轻探仅涉标准根
-  const lightProbeSnippet = skillSrc.slice(skillSrc.indexOf('async function lightProbeReason'))   // 轻探正身住在承载力模块里（index.js 那行只是转发）
+  // 轻探正身住在共享叶子 src/shared/skill-probe-channels.js（skillProbe.js 只 import 进来用）——切片按它切。
+  const chanSrc = readFileSync('src/shared/skill-probe-channels.js', 'utf8')
+  const _lpFrom = chanSrc.indexOf('export async function lightProbeReason')
+  const lightProbeSnippet = _lpFrom >= 0 ? chanSrc.slice(_lpFrom) : ''
   check(lightProbeSnippet.includes('.agents') && lightProbeSnippet.includes('SKILL.md'), '轻探仅涉标准根 SKILL.md')
   check(!lightProbeSnippet.includes('.claude') && !lightProbeSnippet.includes('.minimax'), '轻探不含 .claude/.minimax（已退役）')
 }

@@ -78,6 +78,11 @@ function makeRealSubprocess(log) {
       const child = cp.spawn(spec.argv[0], spec.argv.slice(1), {
         cwd: spec.cwd, env: buildEnv(spec.env), windowsHide: true,
         stdio: ['ignore', 'pipe', 'pipe'],
+        // 2026-10-16 合并整改：真件（DSH 的子进程服务）被强杀时**连整棵树一起拆**，而这一格从前在 POSIX 上
+        //   只 kill 直接子进程 —— 假 ssh 那个孙进程还活着、还握着管道，close 事件永远不来，于是 ⑦ 那一段
+        //   await 卡死（150s 上限都没退，日志停在 ⑥ 最后一条）。按真件语义补上：POSIX 起独立进程组、
+        //   强杀时杀整组（Windows 走 taskkill /T，本来就是整棵树）。门禁的判据一条未改。
+        detached: process.platform !== 'win32',
       })
       const out = makeCollector(spec.stdio.stdout.maxBytes)
       const err = makeCollector(spec.stdio.stderr.maxBytes)
@@ -91,7 +96,7 @@ function makeRealSubprocess(log) {
           log.terminations += 1
           try {
             if (process.platform === 'win32') cp.spawnSync('taskkill', ['/PID', String(child.pid), '/T', '/F'], { windowsHide: true })
-            else child.kill('SIGKILL')
+            else { try { process.kill(-child.pid, 'SIGKILL') } catch (eG) { try { child.kill('SIGKILL') } catch (eK) {} } }
           } catch (e) {}
         },
       }
@@ -127,8 +132,13 @@ function makeLab() {
   const sshJs = path.join(dir, 'fake-ssh.mjs')
   const pidFile = path.join(dir, 'fake-ssh.pid')
   fs.writeFileSync(sshJs, "import { writeFileSync } from 'node:fs'\nwriteFileSync(" + JSON.stringify(pidFile) + ", String(process.pid))\nsetTimeout(function () { process.exit(1) }, 30000)\n", 'utf8')
-  const sshCmd = path.join(dir, 'fake-ssh.cmd')
-  fs.writeFileSync(sshCmd, '@echo off\r\n"' + process.execPath + '" "' + sshJs + '" %*\r\n', 'utf8')
+  // 2026-10-16 合并整改：假 ssh 从前只写了一份 **Windows 批处理**（.cmd）。GIT_SSH_COMMAND 指向一个批处理文件时，
+  //   POSIX 的 git 根本执行不起来 —— 于是 ⑦ 那一段在这台机器上必然「git 立刻失败」（实得 other、pid 文件不存在），
+  //   而它自己期望的是「假 ssh 被起起来 → 预算到点强杀」。按平台各写一份：Windows 仍是 .cmd，POSIX 是可执行的 sh。
+  const isWin = process.platform === 'win32'
+  const sshCmd = path.join(dir, isWin ? 'fake-ssh.cmd' : 'fake-ssh.sh')
+  if (isWin) fs.writeFileSync(sshCmd, '@echo off\r\n"' + process.execPath + '" "' + sshJs + '" %*\r\n', 'utf8')
+  else { fs.writeFileSync(sshCmd, '#!/bin/sh\nexec "' + process.execPath + '" "' + sshJs + '" "$@"\n', 'utf8'); fs.chmodSync(sshCmd, 0o755) }
   return { dir: dir, sshCmd: slash(sshCmd), sshPidFile: pidFile, helperSnippet: '!f() { echo username=u839; echo password=p839; }; f' }
 }
 
