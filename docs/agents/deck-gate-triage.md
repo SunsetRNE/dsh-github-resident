@@ -440,3 +440,7 @@
 | [#62](https://github.com/SunsetRNE/dsh-github-resident/issues/62) | `verify-963-log-order` 的 S4 分档判据停在 1.7.8 之前 —— 已修 |
 | [#63](https://github.com/SunsetRNE/dsh-github-resident/issues/63) | `verify-panel` 的两条残留漂移（票级 `blocks` / 已关闭地图的现场比对）—— 已判已修 |
 | [#64](https://github.com/SunsetRNE/dsh-github-resident/issues/64) – [#71](https://github.com/SunsetRNE/dsh-github-resident/issues/71) | [#59](https://github.com/SunsetRNE/dsh-github-resident/issues/59) 拆出来的 8 张根因族子票（产物/切片 · 门禁自身缺陷 · 发布链 · 结构红线 · 语义不变式 · 日志埋点 · 宿主行为 · 待定 3） |
+
+**第五笔增量（2026-10-15 晚）**：[#65](https://github.com/SunsetRNE/dsh-github-resident/issues/65) 的三道（门禁自身缺陷）已修 —— `verify-842-version-control-write-view` / `verify-issue-comment` / `verify-markdown`，提交 `65ab947`，父 agent 实跑三道 `exit 0`；那一族 **44 → 41**。
+
+**这次没再跑一遍全链复测**，理由写在这里免得下次有人以为是漏了：改动只落在 3 个**彼此独立**的门禁文件（各自一个 node 进程、互不 import），全链复测不会给出新信息；要跑就用上面那套逐道 runner（跑之前自己 `gh_load_lease` 取锁）。
