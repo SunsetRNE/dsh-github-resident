@@ -456,4 +456,12 @@
 
   第五轮全链复测（同一逐道 runner、跑前 `gh_load_lease` 取锁）：**311 道 221 绿 → 256 绿 / 55 红**；唯一新红是既有已知的 `verify-artifact-freshness` mtime 抖动（有门禁跑动会刷新 `deck/src/**` 的 mtime 而不重建 dist），跑一次根 `npm run build` 后转绿 —— 即 **257 绿 / 54 红**。`verify-671` 修好后 B 组仍真渲染出 `.dsws-modal`（父节点 `document.body`、一层壳、零面板容器），确认行为没丢。
 
+**第八笔增量（2026-10-16）**：[#66](https://github.com/SunsetRNE/dsh-github-resident/issues/66) 的四道（发布链与仓库元文件）已修 —— `verify-market-tarball` / `verify-release-template` / `verify-config-store-package` / `verify-release-contract`，提交 `37ed8aa`，逐道修前红 / 修后绿；那一族 **26 → 22**。
+
+  判定类别：**四道都是「判据过期」**（发布入口与清单口径在身份融合后换了真源），其中 `verify-release-contract` 顺带补齐了门禁暴露的**两处真实缺口**。逐道：
+
+  - `verify-market-tarball` / `verify-release-template`：上游 deck 独立仓那套（`release-tarball.yml` 在 published 时附**固定名**资产、发布议题网页卡）在本仓既不存在也不该补 —— 合并仓的发布入口是**仓库根** `.github/workflows/release.yml`（tag/dispatch → `npm pack` → 建 Release 并 `gh release upload --clobber`），资产名是 npm pack 的 `<包名>-<版本>.tgz`，根 README 教的是**带版本**的 Release tgz 装法。当面裁决（本票评论）：**不保留固定资产名链接 / 不要网页卡**；两道门禁改钉根发布链与「退役是事实」。
+  - `verify-config-store-package` / `verify-release-contract`：清单与版本断言一律改读**仓库根** `package.json`（真正发布的包）；`release-contract` 的目标版本、身份投影（生成的 `package/README.md` banner、两份产物的版本注入）改钉根身份，变更历史出口改钉根 workflow 的 `--generate-notes`（deck/CHANGELOG.md 追的是「合并包 1.8.x」里程碑，与根版本不同源）；包白名单改成读 `files` 声明 —— 在仓库根跑 `npm pack --dry-run` 实测 **60 秒**，超门禁链每道 65 秒预算（解包与装载的真验证在根侧 `verify-bundle.sh` / `verify-real-artifact.mjs`）。顺带补齐两处真实缺口：根 `package.json` 补 `keywords`、根 README 安装示例版本对齐现状（`1.8.2` → `1.11.0`）。
+  - **零新增回归**：全链 311 道复测 **256 绿 → 258 绿 / 53 红**；`verify-898-block-merge` 单跑 60.5s 绿、`verify-847-stall-watch` 单跑 15s 绿（两道都是这轮扫出的抖动 / 临近 65s 上限，非本轮改动），`verify-artifact-freshness` 仍是既有 mtime 抖动（跑一次根 `npm run build` 即绿）。`node deck/scripts/verify-chain.js` 仍止于环境类 `verify-423-title-clamp-browser`，四道各自 `--only` 全部 `CHAIN_EXIT=0`；`node tests/merge/run.mjs` **41 通过 / 0 失败**。
+
 **这次（#67 那批）没再跑一遍全链复测**，理由写在这里免得下次有人以为是漏了：改动只落在 3 个**彼此独立**的门禁文件（各自一个 node 进程、互不 import），全链复测不会给出新信息；要跑就用上面那套逐道 runner（跑之前自己 `gh_load_lease` 取锁）。
