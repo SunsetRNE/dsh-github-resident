@@ -29,8 +29,9 @@ import { JSDOM } from 'jsdom'
 import React from 'react'
 import ReactDOMClient from 'react-dom/client'
 import { act } from 'react'
-import { chromium } from 'playwright'
 import { compileFn, evalWithScope, evalInWindow } from './lib/eval-probe.js'
+// 2026-10-16 合并整改：真浏览器统一走共用通道（本容器没有 /dev/shm，playwright 默认那一版 revision 也对不上）。
+import { launchChromium, describeChannel } from './lib/chromium-channel.js'
 import { fileURLToPath } from 'node:url'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(__dirname, '..')
@@ -100,6 +101,10 @@ const mountModal = async function () {
       if (method === 'snapshot' || method === 'refresh') return { ok: true, value: SNAP('github') }
       if (method === 'chain') return { ok: true, value: { ok: true, backendId: 'github', fullSnapshot: { steps: [{ id: 'gh:remote', status: 'done' }] } } }
       if (method === 'registry') return { ok: true, value: { ok: true, modules: MODULES } }
+      // 2026-10-16 合并整改：这条电话不答，会话就拿不到自己的目录（st.cwd），而 #1003 的空目录闸会因此**不发**任何取数
+      //   —— 快照永远不来，头部那颗「切换后端」图标也就永远不渲染（B 段 60 轮等不到 [data-repo-switch]，
+      //   崩在 null.dispatchEvent 上）。真宿主这条电话本来就回 cwd + workspaceRoot，这里照真形状答。
+      if (method === 'cwd') return { ok: true, value: { ok: true, cwd: WS, workspaceRoot: WS } }
       return { ok: true, value: { ok: true } }
     } } },
     locale: { register: (ns, d) => { Object.assign(dict, d.zh || {}, d.en || {}); return () => {} }, bind: () => trFn },
@@ -143,7 +148,14 @@ const mounted = await mountModal()
 check(mounted.overlayHTML.length > 500 && mounted.cardHTML.length > 500, '取到了弹窗真身（覆盖层 ' + mounted.overlayHTML.length + ' 字 / 卡片 ' + mounted.cardHTML.length + ' 字）')
 check(mounted.css.indexOf('.dsws-btn') >= 0, '取到了产物自己的样式表（含 .dsws-btn）')
 {
-  const browser = await chromium.launch({ headless: true })
+  // 「本机没有可用浏览器」做成**显式前置且出声**（与 verify-640 同一条规矩）：
+  //   出声 SKIP 掉那两段几何判据；要防假绿就设 DSH_TEST_REQUIRE_BROWSER=1，那时这一段算失败。
+  let browser = null
+  try { browser = await launchChromium(); console.log('  浏览器通道：' + describeChannel()) } catch (eB) {
+    if (process.env.DSH_TEST_REQUIRE_BROWSER === '1') check(false, '真 Chromium 段：本机没有可用浏览器 —— ' + String((eB && eB.message) || eB).slice(0, 160))
+    else console.log('  SKIP 真 Chromium 段（窄面板几何）：本机没有可用浏览器 —— 补法：npx playwright install chromium，或 DSH_TEST_CHROMIUM=<可执行文件> 指一份现成的。\n        原因：' + String((eB && eB.message) || eB).slice(0, 200))
+  }
+  if (browser) {
   const measure = async function (width, html, css) {
     const p = await browser.newPage({ viewport: { width: width + 40, height: 900 } })
     await p.setContent('<!doctype html><html><head><meta charset=utf-8><style>html,body{margin:0;background:#0a0a0a}body{padding:20px}#stage{position:relative;width:' + width + 'px;height:820px}' + css + '</style></head><body><div id="stage"></div></body></html>')
@@ -192,6 +204,7 @@ check(mounted.css.indexOf('.dsws-btn') >= 0, '取到了产物自己的样式表�
   const vb = verdict(mb)
   check(!vb.ok, '反证 B 成立：放进长标签之后 380 宽度当场量不通过（竖排按钮 ' + vb.tall.length + ' 颗、越出卡片 ' + vb.over.length + ' 颗、卡片 ' + JSON.stringify(vb.card) + '）')
   await browser.close()
+  }
 }
 
 console.log('')
@@ -312,7 +325,12 @@ const runScenarios = async function (srcText) {
 const real = await runScenarios(snapSrc)
 console.log('  [现场 1 发出去的请求] ' + JSON.stringify(real.debug))
 check(real.switchSentTwo === 2, '现场 1：切换前那次在途不吞掉切换后那次 —— 两个后端各自真发了一次请求（实得 ' + real.switchSentTwo + ' 次）')
-check(real.secondCarriesNewBackend, '现场 1：第二次请求带的是切换后的后端（实得 ' + JSON.stringify(real.debug && real.debug[1]) + '）')
+// 2026-10-16 合并整改（判据过期）：这一条原本要求「第二次请求带上切换后的后端」，而客户端早就不这么做了 ——
+//   #1003 把「亲手标记」整条退役（store-prefs.js 的 userHintOf 现在是空实现，源码注释原话：
+//   「#1003 退役：亲手标记已无生产者，合并时不再留标记，直接用宿主回包」），请求里从此不带 backendId。
+//   当前真源是**宿主回包 + 装载守卫**：下面两条（切换后装进去的是新后端那一份、旧的那份晚回来不倒回）才是它要保证的事。
+//   这里如实钉住退役事实（防有人把 hint 又接回来当第二条判据），行为断言一条没减。
+check(real.debug.length === 2 && real.debug.every((d) => /\|-$/.test(d)), '现场 1：请求不再带后端 hint（#1003 退役「亲手标记」，后端由宿主回包决定）—— 实得 ' + JSON.stringify(real.debug))
 check(real.afterSwitch === '切换后那一份', '现场 1：切换后装进去的是新后端那一份（实得「' + real.afterSwitch + '」）')
 check(real.selectionAfterSwitch === 'markdown', '现场 1：切换前那份晚回来之后，会话里的后端仍是切换后的那一个（实得「' + real.selectionAfterSwitch + '」）')
 check(real.sameBackendReuse === 1, '现场 2（回归）：同一个后端上第二次强制重取照旧复用第一次、只发一次（实得 ' + real.sameBackendReuse + ' 次）')
