@@ -195,17 +195,27 @@ async function main() {
   expect('场景3 · snapshot.repo 命中 SSH Fork', snap3.repo && snap3.repo.owner === 'SSHOwner' && snap3.repo.name === 'SSHRepo', JSON.stringify(snap3.repo))
 
   // ============ 场景 4：origin 缺失（仅 upstream）→ Tier 1/2 失败 → Tier 3 gh mock 返回 upstream ============
-  console.log('--- 场景 4：origin 缺失 → 降级到 gh mock ---')
+  console.log('--- 场景 4：origin 缺失（仅 upstream）→ 如实 null，不拿 gh 兜身份 ---')
   const noOriginDir = await setupGitRepo([{ name: 'upstream', url: 'https://github.com/OnlyUpstream/OnlyUpstreamRepo.git' }])
   const h4 = await loadPlugin({ subprocess, timer, fs: fsSvc, skills: makeSkills() })
   ghCalls.length = 0
   const snap4 = await h4('snapshot', { cwd: noOriginDir })
-  // 诊断：链那条路上（repoRemote 谓词）到底解析成了谁、有没有真去问 gh —— 判「阶梯还在不在」用这一行，不用猜。
+  // 2026-10-16 合并整改（判据过期）：这一条原话是「snapshot.repo 降级到 gh mock（upstream）」，属「Tier 3 = gh repo view 兜底」
+  //   那个年代。后来定版的是**本文件场景 10** 那条规矩（原话：「snapshot.repo 如实为 null（不拿 gh 兜一个身份出来）」），
+  //   两条直接冲突。实测（诊断记的进程账）：这一路真起过的只有 `gh --version`（resolveGh 探针）与
+  //   `git … remote get-url origin`（Tier 1），`gh repo view` **从未起过** —— 今天的行为站在场景 10 那一边。
+  //   判据因此改成钉住现行契约：有别的远端、但没有 origin 时，快照宁可如实为 null，也不拿 gh 的答案充身份；
+  //   链那一格也如实说「未找到 GitHub 仓库关联」。
   ghCalls.length = 0
   const chain4 = await h4('chain', { cwd: noOriginDir, force: true })
   const step4 = (((chain4 || {}).fullSnapshot || {}).steps || []).filter(function (s) { return s && s.id === 'gh:remote' })[0]
+  const viewCalls = ghCalls.filter(function (c) { return c.argv[0] === 'repo' && c.argv[1] === 'view' })
+  console.log('  [场景4] 这一路起过的 gh：' + JSON.stringify(ghCalls.map(function (c) { return c.argv.join(' ') }).slice(0, 5)) + ' ／ 链里 gh:remote = ' + JSON.stringify(step4 && (step4.show || {}).desc))
+  expect('场景4 · 只有 upstream、没有 origin → snapshot.repo 如实为 null（不拿 gh 兜身份）', snap4.repo === null, JSON.stringify(snap4.repo))
+  expect('场景4 · 这一路不许去起 gh repo view（身份只认仓库自己的远端）', viewCalls.length === 0, JSON.stringify(viewCalls))
+  expect('场景4 · 链那一格如实说「未找到 GitHub 仓库关联」', !!(step4 && String((step4.show || {}).desc || '').indexOf('未找到') >= 0), JSON.stringify(step4 && (step4.show || {}).desc))
+  expect('场景4 · （保留原判据的意图）拿不到 origin 就不许把 gh mock 的答案当仓库身份', !(snap4.repo && snap4.repo.owner === 'upstream-org'), JSON.stringify(snap4.repo))
   console.log('  [诊断·场景4] 链里 gh:remote = ' + JSON.stringify(step4 && (step4.show || {}).desc) + ' ／ 链这一轮起的 gh：' + JSON.stringify(ghCalls.map(function (c) { return c.argv.join(' ') }).slice(0, 5)) + ' ／ 真起过的进程（末 6 条）：' + JSON.stringify(allSpawns.slice(-6)))
-  expect('场景4 · snapshot.repo 降级到 gh mock（upstream）', snap4.repo && snap4.repo.owner === 'upstream-org' && snap4.repo.name === 'upstream-repo', JSON.stringify(snap4.repo) + ' ／ 这一轮起过的 gh：' + JSON.stringify(ghCalls.map(function (c) { return c.argv.join(' ') }).slice(0, 5)) + ' ／ refId=' + JSON.stringify(snap4.refId || null))
 
   // ============ 场景 5：缓存按 cwd 隔离 — Tier 1 命中后 repoKeys[cwd] 缓存 ============
   console.log('--- 场景 5：同 cwd 第二次 → repoKeys 缓存命中 ---')
