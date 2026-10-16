@@ -53,7 +53,12 @@ import { renderMark, tipTextOf, keyOfFn, tipsFromLocale } from './lib/render-sub
 console.log('=== #666 面板归属标志：取根 · 该不该出现 · 显示哪几行 ===')
 
 // ── 真件一：内核里那把规整函数（与 verify-653 同口径，不是另写的仿制品）
-const keyOf = keyOfFn()
+// 2026-10-16 合并整改：本门禁的夹具**全是 Windows 形状的路径**（D:\…），而规整键 keyOf(raw, os) 在没给 os 时
+//   靠 navigator/process 或「路径里有没有反斜杠/盘符斜杠」推断是不是 Windows —— 单个盘符段（'D:' / 'd:'）两种形状
+//   都推不出来，于是 C10 这类「大小写与斜杠写法不同」的用例在 Linux 上必然红（Windows 上本来就绿）。
+//   按夹具的口径把 os 固定成 win32：量的是产品的规整规则，不是本机是哪台机器。产品侧一行未动。
+const keyOfRaw = keyOfFn()
+const keyOf = (v) => keyOfRaw(v, 'win32')
 
 // ── 真件二：真实 locale 里的四行文案（zh 在前、en 在后，与文件里两处的顺序一致）
 const grabs = tipsFromLocale()

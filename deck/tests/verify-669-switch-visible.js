@@ -92,7 +92,11 @@ const mountModal = async function () {
     slots: { register: (meta, comp) => { registrations.push({ meta, comp }); return () => {} }, inject: (name, fn) => { try { fn() } catch (e) {} } },
     sidebarRightTabs: { register: () => () => {} },
     connection: { rpc: { call: async (channel, endpoint, req) => {
-      const method = (req && req.method) || ''
+      // 2026-10-16 合并整改（与 verify-log-switch-597 同一处病）：#596 之后电话名在载体的第三个参数里带 `wf.` 前缀
+      //   （{ method: 'wf.snapshot', payload }），而这里从前拿裸名比（'snapshot'）—— 于是**所有**电话都落到最后那句兜底，
+      //   面板拿不到快照 → 没有选中后端 → 那颗切换按钮根本不渲染，B 段 60 轮等不到 [data-repo-switch] 就崩在 null.dispatchEvent 上。
+      //   桩按端点名比对（去掉前缀），行为与真宿主的 rpcChannel 分发一致；判据一条未改。
+      const method = String((req && req.method) || '').replace(/^wf\./, '')
       if (method === 'snapshot' || method === 'refresh') return { ok: true, value: SNAP('github') }
       if (method === 'chain') return { ok: true, value: { ok: true, backendId: 'github', fullSnapshot: { steps: [{ id: 'gh:remote', status: 'done' }] } } }
       if (method === 'registry') return { ok: true, value: { ok: true, modules: MODULES } }

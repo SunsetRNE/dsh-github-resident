@@ -4,7 +4,10 @@ import fs from 'node:fs'
 let failed = false;
 const check = (ok, msg) => { console.log((ok ? '  PASS ' : '  FAIL ') + msg); if (!ok) failed = true; };
 const probe = ['src/client/kernel/probe-chain.js','src/client/kernel/probe-snapshot.js','src/client/kernel/probe-auto.js'].map((f) => fs.readFileSync(f, 'utf8')).join('\n'); // 456 收尾：probe.js 已拆为三文件，读三文件拼起来的内容断言
-check(probe.includes('_shouldReuse = !force || _pend.force === true'), 'probe dedup distinguishes force');
+// 2026-10-16 合并整改：在途复用那一段搬进 kernel/probe-stale.js，写法也换成了单点函数
+//   （_snapReuseInFlight(st, force) 里那句「force 不复用非 force 的在途请求」）。判据跟着实现走，意图不变。
+const staleSrc = fs.readFileSync('src/client/kernel/probe-stale.js', 'utf8');
+check(staleSrc.includes('_snapReuseInFlight = function (st, force)') && staleSrc.includes('if (force && pend.force !== true) return null'), 'probe dedup distinguishes force');
 check(probe.includes('force: !!force'), 'pending entry stores force flag');
 check(probe.includes('cur && cur.promise===p'), 'pending delete is safe');
 check(probe.includes('#366'), 'probe contains #366 marker');

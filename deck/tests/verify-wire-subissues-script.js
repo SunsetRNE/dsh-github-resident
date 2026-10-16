@@ -779,7 +779,11 @@ console.log('子议题关联脚本门禁（#572 · 命令行黑盒）')
   const mine = 'node tests/verify-wire-subissues-script.js'
   const sisterStep = 'node tests/verify-issue-body-script.js'
   check(steps.indexOf(mine) >= 0, '21.1 npm run verify 链已纳入本门禁')
-  check(steps.indexOf(sisterStep) >= 0 && steps[steps.indexOf(sisterStep) + 1] === mine, '21.2 本门禁紧跟姊妹门禁 tests/verify-issue-body-script.js 之后')
+  // 2026-10-16 合并整改：这一条从前要求「本门禁紧跟姊妹门禁之后」，而链名单现在由
+  //   scripts/ensure-deck-manifest.mjs 从 tests/verify-*.js **按文件名排序派生**（实测序号：
+  //   issue-body-script=190、wire-subissues-script=307，前后邻居都严格字母序）—— 「紧跟」在派生名单下
+  //   **永远不可能成立**，是条死判据。判据改成量它真正要保证的事：两道都在链里（不再管先后）。
+  check(steps.indexOf(sisterStep) >= 0 && steps.indexOf(mine) >= 0, '21.2 姊妹门禁 tests/verify-issue-body-script.js 与本门禁都在 verify 链里')
 }
 
 // ——— 22) 子目录里跑：一路向上找到工作区根，命令也在根上跑（#654） ———

@@ -61,6 +61,11 @@ function title(t) { console.log('\n' + t) }
 // ── 本机平台与夹具文件服务 ────────────────────────────────────────────────
 const OS = process.platform === 'win32' ? 'win32' : (process.platform === 'darwin' ? 'darwin' : 'linux')
 const PLATFORM = { os: OS, path: nodePath, async getHome() { return nodeOs.homedir() } }
+// 2026-10-16 合并整改：A6 那两条不变式问的是 **Windows 路径语义**（盘符根 × UNC 共享根）。
+//   解析器判「绝对不绝对」时按平台交来的那把 path 说话（platform.path.isAbsolute）——本机是 Linux，
+//   拿 Linux 的 path 去问 'd:\' 本来就该答「不是绝对路径」。所以那两条用例要喂一把 Windows 形状的平台
+//   （os=win32 + path.win32）；否则量的是夹具自己，不是产品。产品侧一行未动。
+const PLATFORM_WIN = { os: 'win32', path: nodePath.win32, async getHome() { return nodeOs.homedir() } }
 const target = (t) => (t && typeof t === 'object') ? String(t.path || t.targetKey || '') : String(t)
 /**
  * 照 DSH 文件服务的形状做一个真读盘的服务：lstat 收路径，stat / listDir / readText 收 resolve 出来的 target。
@@ -194,8 +199,8 @@ async function main() {
   // —— A6 盘符根与 UNC 根：到顶就停，不转圈 ——
   {
     const noMarker = makeFsSvc(null)          // 真服务形状但一条都不存在：只剩「往上走」这一件事
-    const drive = await wm.resolveWorkspaceRoot('d:\\', { platform: PLATFORM, getFs: () => noMarker })
-    const unc = await wm.resolveWorkspaceRoot('//srv/share', { platform: PLATFORM, getFs: () => noMarker })
+    const drive = await wm.resolveWorkspaceRoot('d:\\', { platform: PLATFORM_WIN, getFs: () => noMarker })
+    const unc = await wm.resolveWorkspaceRoot('//srv/share', { platform: PLATFORM_WIN, getFs: () => noMarker })
     must(drive.root === 'd:\\' && drive.source === 'self' && unc.root === '//srv/share' && unc.source === 'self',
       '盘符根与 UNC 共享根都是上溯的终点：到顶就停，工作区根就是那一条根目录（不会往上溢出、也不会转不出来）',
       'drive=' + JSON.stringify(drive) + ' unc=' + JSON.stringify(unc))
