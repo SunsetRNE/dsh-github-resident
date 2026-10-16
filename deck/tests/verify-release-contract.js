@@ -1,22 +1,30 @@
 #!/usr/bin/env node
 /**
- * tests/verify-release-contract.js — 单一高层的发布契约校验（#356）
+ * tests/verify-release-contract.js — 单一高层的发布契约校验（#356；2026-10-16 #66 改钉合并身份）
  *
- * 定位：以单一 high-level gate 覆盖 8 项清单同源性与双入口一致性，任一失败即阻断发布，
- *       不为每项各起低层测试。向导在发布前调用本门禁，校验失败时给出待改清单。
+ * 定位：以单一 high-level gate 覆盖发布契约，任一失败即阻断发布，不为每项各起低层测试。
  *
- * 断言覆盖：
- *   A. 版本同源 — 根与包清单版本 == 目标 vX.Y.Z，且 README 三处锁定、英中文档、包说明首段均对齐
- *   B. 说明锁定 — package.json description/human-first、keywords、话题包含，与 About 同源可检索
- *   C. 变更历史与 Release 同文 — CHANGELOG 含新节且与发布模板语义一致
- *   D. 包白名单 — npm pack --dry-run 仅含白名单文件，不含密钥与多余文档
- *   E. 模板与网页卡同源 — docs/releases/release-issue-template.md 与 .github/ISSUE_TEMPLATE/release.yml 逐字一致
- *   F. 向导契约 — wizard/template.sh 与 scripts/wizard-release.sh 存在且满足“分段清屏/进度/显式打开链接/确认/落盘与收尾”与“只扫码”旅程
+ * 2026-10-16 改钉（#66 裁决）：身份融合后真正发布的是**仓库根** @sunsetrne/dsh-github-resident-v2，
+ * 目标版本与清单断言一律读仓库根 package.json；原来只服务 deck 独立发布的几组判据按下表处理：
+ *   A. 版本同源 —— 改成「根清单版本 == 目标」+「身份投影到产物」：构建生成的 package/README.md
+ *      banner、client.js 与 package/lib/client.js 的版本注入都等于目标。原「README 三处锁定 /
+ *      英文文档 / 包说明首段」那一组**退役**：合并仓不在 deck/README.md 与 docs/README.en.md
+ *      里钉版本（实测 0 处），变更历史的出口是 GitHub Release（见 C）。
+ *   B. 说明锁定 —— 改读**根清单**的 description / keywords（human-first 可检索）。
+ *   C. 变更历史 —— 保留「CHANGELOG.md 存在 + 日期+版本标准节头 + 最新节是里程碑形态」；原
+ *      「CHANGELOG 最新节版本 == 目标」**退役**：deck/CHANGELOG.md 追的是「合并包 1.8.x」里程碑，
+ *      与根版本不同源；合并仓的发布说明由根 workflow 的 `gh release create --generate-notes` 生成，
+ *      这一条改钉那个出口。
+ *   D. 包白名单 —— 改读**根清单**的 files 白名单（在仓库根跑 `npm pack --dry-run` 实测约 60 秒，
+ *      超过门禁链每道 65 秒的预算；解包与装载的真验证在根侧 verify-bundle.sh 与
+ *      verify-real-artifact.mjs 里），deck 侧发货清单的 files 一并钉住。
+ *   E. 模板与网页卡同源 —— 网页卡已按 #66 裁决退役；改钉「模板真源仍在 + 对话脚本读它 + 卡确实不在」。
+ *   F. 向导契约 —— 不动（deck 侧发布向导仍按原判据钉住）。
  *
  * 用法：
  *   node tests/verify-release-contract.js
- *   node tests/verify-release-contract.js --version v1.7.9
- *   node tests/verify-release-contract.js --version 1.7.9  # 自动补 v
+ *   node tests/verify-release-contract.js --version v1.11.0
+ *   node tests/verify-release-contract.js --version 1.11.0   # 自动补 v
  */
 
 import { readFileSync, existsSync } from "node:fs";
@@ -24,12 +32,20 @@ import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");   // deck/
+const REPO = resolve(ROOT, "..");                                      // 合并仓根
 
 function read(p) {
   try { return readFileSync(resolve(ROOT, p), "utf8"); } catch { return null; }
 }
 function exists(p) { return existsSync(resolve(ROOT, p)); }
+function readRepo(p) {
+  try { return readFileSync(resolve(REPO, p), "utf8"); } catch { return null; }
+}
+function existsRepo(p) { return existsSync(resolve(REPO, p)); }
+function jsonRepo(p) {
+  try { return JSON.parse(readRepo(p) || "null"); } catch { return null; }
+}
 
 /**
  * 找一把真能跑 shell 脚本的 bash（#845）：先按候选路径找 Git Bash —— Windows 自带的
@@ -79,139 +95,88 @@ let targetNum = null;
 if (targetRaw) {
   targetVersion = normalizeVersion(targetRaw);
   if (!targetVersion) {
-    console.error(`版本号形态错误：${targetRaw}，期望 vX.Y.Z，例如 v1.7.9`);
+    console.error(`版本号形态错误：${targetRaw}，期望 vX.Y.Z，例如 v1.11.0`);
     process.exit(2);
   }
 } else {
-  // 未显式传参则用根 package.json 的版本作为目标（本地校验）
-  try {
-    const pkg = JSON.parse(read("package.json") || "{}");
-    if (pkg.version) targetVersion = "v" + pkg.version;
-  } catch {}
+  // 未显式传参则用**仓库根** package.json 的版本作为目标（合并身份的唯一真源，#66）
+  const rootPkg = jsonRepo("package.json");
+  if (rootPkg && rootPkg.version) targetVersion = "v" + rootPkg.version;
 }
 if (!targetVersion) {
-  console.error("无法确定目标版本：请传 --version vX.Y.Z 或确保 package.json 含 version");
+  console.error("无法确定目标版本：请传 --version vX.Y.Z 或确保仓库根 package.json 含 version");
   process.exit(2);
 }
 targetNum = targetVersion.slice(1);
-// 预发布与稳定版走不同断言：预发布不签 README／英文文档／包说明的版本锁定（那三处跟的是上一个稳定版）。
+// 预发布与稳定版走不同断言：预发布不签产物里那几处版本锁定（它们跟的是当前构建的稳定版）。
 const isPrerelease = targetNum.includes('-');
 
-console.log("verify-release-contract — 单一高层的发布契约校验");
+console.log("verify-release-contract — 单一高层的发布契约校验（合并仓：目标版本取自仓库根 package.json）");
 console.log(`目标版本：${targetVersion}（数字：${targetNum}）`);
 console.log(`生效规范：docs/releases/RELEASE-RUNBOOK.md（2026-08-31，以更新日期者为准）`);
 console.log("");
 
-// ── A. 版本同源 ────────────────────────────────
-console.log("[A] 版本同源（根与包清单、README 锁定、文档同源）");
-let rootPkg = null, pkgPkg = null;
-try { rootPkg = JSON.parse(read("package.json") || "{}"); } catch {}
-try { pkgPkg = JSON.parse(read("package/package.json") || "{}"); } catch {}
-assert(rootPkg && rootPkg.version === targetNum, `根 package.json 版本 == ${targetNum}（实际 ${rootPkg?.version || "缺失"}）`);
-assert(pkgPkg && pkgPkg.version === targetNum, `package/package.json 版本 == ${targetNum}（实际 ${pkgPkg?.version || "缺失"}）`);
-assert(rootPkg?.version === pkgPkg?.version, `根与包清单版本同源（${rootPkg?.version} vs ${pkgPkg?.version}）`);
-
-if (isPrerelease) {
-  // 预发布不签这三处版本锁定：README、英文文档、包说明跟的都是上一个稳定版，
-  // 把测试版号写进去，等转正时还要再改一遍，得不偿失。
-  assert(true, `预发布 ${targetNum}：README 三处版本锁定与英文文档、包说明首段的版本锁定跳过（它们跟上一个稳定版）`);
-} else {
-// README 三处锁定
-const readme = read("README.md") || "";
-const readmeCountV = (readme.match(new RegExp(targetVersion.replace(".", "\\."), "g")) || []).length;
-const readmeCountNum = (readme.match(new RegExp(targetNum.replace(".", "\\."), "g")) || []).length;
-// 更宽松：只要出现目标版本字符串即算命中，但要求至少 2 处（兼容不同写法）
-// 原要求为 3 处锁定：安装示例、锁定版本说明、更新指引；此处断言 >=3 次出现数字形态
-assert(readmeCountNum >= 3, `README.md 含 ${targetNum} 至少 3 处（实际 ${readmeCountNum}，含 ${targetVersion} 为 ${readmeCountV}）`);
-
-// 额外：檢查 README 是否仍含旧版本（如 1.7.7）残留——若目标为新版，旧版应已清零或仅在 CHANGELOG 中
-// 此处不强制，但若 README 同时含旧版本与新版本多处，需提示
-// 仅当目标 != 1.7.8 时检查旧版本清零；否则跳过
-if (targetVersion !== "v1.7.8") {
-  const oldCount = (readme.match(/1\.7\.8/g) || []).length;
-  assert(oldCount === 0, `README.md 已无旧版本 1.7.8 残留（实际 ${oldCount} 处，若目标为 ${targetVersion}，旧版应已替换）`);
-} else {
-  assert(true, `README.md 旧版本残留检查跳过（目标即 1.7.8）`);
-}
-
-const readmeEn = read("docs/README.en.md") || "";
-const enCount = (readmeEn.match(new RegExp(targetNum.replace(".", "\\."), "g")) || []).length;
-assert(enCount >= 1, `docs/README.en.md 含 ${targetNum} 至少 1 处（实际 ${enCount}）`);
+// ── A. 版本同源（根清单 + 身份投影）────────────────────
+console.log("[A] 版本同源（根清单 ↔ 身份投影）");
+const rootPkg = jsonRepo("package.json") || {};
+assert(rootPkg.version === targetNum, `仓库根 package.json 版本 == ${targetNum}（实际 ${rootPkg?.version || "缺失"}）`);
 
 const pkgReadme = read("package/README.md") || "";
-const pkgReadmeFirst = pkgReadme.slice(0, 2000);
-assert(pkgReadmeFirst.includes(targetVersion) || pkgReadmeFirst.includes(targetNum), `package/README.md 首段含 ${targetVersion}（或 ${targetNum}）`);
-}
-
-// 构建产物中的版本注入（可选，若产物存在）
-const clientJs = read("client.js") || read("package/lib/client.js") || "";
-if (clientJs) {
-  const hasVer = clientJs.includes(targetVersion) || clientJs.includes(targetNum);
-  assert(hasVer, `构建产物含 ${targetVersion}（或 ${targetNum}）版本注入`);
+if (isPrerelease) {
+  assert(true, `预发布 ${targetNum}：身份投影（构建 banner / 产物注入）跟的是当前构建的版本，跳过`);
 } else {
-  assert(false, `构建产物缺失（client.js / package/lib/client.js），请先运行 node scripts/build.mjs`);
+  const banner = (pkgReadme.split("\n")[0] || "");
+  assert(banner.includes("@ " + targetVersion), `package/README.md 的构建 banner 含目标 ${targetVersion}（身份投影）`);
+  for (const f of ["client.js", "package/lib/client.js"]) {
+    const src = read(f) || "";
+    assert(src.includes(targetVersion) || src.includes(targetNum), `${f} 含 ${targetVersion}（或 ${targetNum}）版本注入`);
+  }
+  assert(true, `README 三处版本锁定 / 英文文档 / 包说明首段的版本锁定已退役（#66）：合并仓不在 deck/README.md 与 docs/README.en.md 里钉版本，变更历史出口见 C`);
 }
 console.log("");
 
-// ── B. 说明锁定（human-first、关键词、话题） ────────────────────────────────
-console.log("[B] 说明锁定（description / keywords / human-first）");
-const desc = pkgPkg?.description || "";
-assert(desc.length > 20, `package.json description 非空且长度 >20（实际 ${desc.length}）`);
+// ── B. 说明锁定（读合并包清单的 description / keywords）────────────────
+console.log("[B] 说明锁定（description / keywords · 读仓库根清单）");
+const desc = rootPkg.description || "";
+assert(desc.length > 20, `合并包 description 非空且长度 >20（实际 ${desc.length}）`);
 // 2026-09-21 放宽（维护者裁决）：这条原先要求介绍文字里必须出现 DSH/DeepSeek 字样。市场条目全在
-// DSH 语境里（「不要强调是DSH插件，这插件市场只能是DSH插件」），介绍不必再重复一次；改成
-// 「介绍里出现，或包自己带 dsh 身份（包名 / keywords）」即为通过。判据意图不变：任何人拿到这个
-// 包或这条介绍，都能确认它与 DSH 的关系（keywords 那条在第 155 行另有独立检查）。
+// DSH 语境里，介绍不必再重复一次；改成「介绍里出现，或包自己带 dsh 身份（包名 / keywords）」即为通过。
 const descNamesHost = desc.includes("DeepSeek") || desc.includes("DSH");
-const pkgNamesHost = String(pkgPkg?.name || "").includes("dsh")
-  || (Array.isArray(pkgPkg?.keywords) && (pkgPkg.keywords.includes("dsh") || pkgPkg.keywords.includes("dsh-plugin")));
+const pkgNamesHost = String(rootPkg.name || "").includes("dsh")
+  || (Array.isArray(rootPkg.keywords) && (rootPkg.keywords.includes("dsh") || rootPkg.keywords.includes("dsh-plugin")));
 assert(descNamesHost || pkgNamesHost, `description 或包自身（name/keywords）含 DSH/DeepSeek 标识（human-first 可检索）`);
 assert(desc.includes("Matt Pocock") || desc.includes("mattpocock") || desc.includes("技能"), `description 含 Matt Pocock/技能 标识`);
-// 校验 description 与 GitHub About 同源的本地代理：检查 README/Runbook 引用中无夸大数字
-// 任何数字与能力名需可在产物中检索到——此处校验 description 中的数字是否在 README 中出现
-// 数字可检索性为 human-first 的软性约束：若描述含数字，优先在 README/文档/源码中可检索到，
-// 但非强阻断——此处仅提示而不计为失败，避免因 README 表述简化而误阻断。
+const kws = Array.isArray(rootPkg.keywords) ? rootPkg.keywords : [];
+assert(kws.includes("dsh") || kws.includes("dsh-plugin"), `合并包 keywords 含 dsh 或 dsh-plugin（实际 [${kws.join(", ")}]）`);
+if (!kws.includes("dsh-plugin")) {
+  console.log("    提示：建议 keywords 同时包含 dsh-plugin 以提升市场可发现性（当前仅含 dsh）");
+}
+// human-first 的软性约束：description 里的小数字优先能在 README 里检索到；未命中只提示、不阻断。
+const readmeRepo = readRepo("README.md") || "";
 const numbersInDesc = desc.match(/\d+/g) || [];
 let numbersDetail = "";
 for (const n of numbersInDesc) {
   if (n.length >= 4) continue;
   if (n === "25" || n === "18" || n === "7") {
-    if (!readme.includes(n) && !readmeEn.includes(n) && !pkgReadme.includes(n)) {
-      numbersDetail += ` ${n}`;
-    }
+    if (!readmeRepo.includes(n) && !pkgReadme.includes(n)) numbersDetail += ` ${n}`;
   }
 }
-if (numbersDetail) {
-  console.log(`    提示：description 中的数字${numbersDetail} 未在 README 中直接检索到（请确认在产物文档或源码中有迹可循，human-first）`);
-}
+if (numbersDetail) console.log(`    提示：description 中的数字${numbersDetail} 未在 README 中直接检索到（human-first）`);
 assert(true, `description 数字可检索性已提示（${numbersDetail ? "未命中" + numbersDetail + "（仅提示）" : "均命中或无关键数字"}）`);
-
-const kws = pkgPkg?.keywords || [];
-const hasDshKeyword = Array.isArray(kws) && (kws.includes("dsh") || kws.includes("dsh-plugin"));
-assert(hasDshKeyword, `package.json keywords 含 dsh 或 dsh-plugin（实际 [${kws.join(", ")}]）`);
-if (!kws.includes("dsh-plugin")) {
-  console.log("    提示：建议 keywords 同时包含 dsh-plugin 以提升市场可发现性（当前仅含 dsh）");
-}
-
-// GitHub 话题包含校验（本地仅校验配置文件或 Runbook 声明；若 gh 可用则进一步查 API）
-assert(desc.includes("Matt Pocock") || desc.includes("mattpocock/skills"), `description 逐项可校验且 human-first（非营销夸大）`);
 console.log("");
 
-// ── C. 变更历史与 Release 同文 ────────────────────────────────
-console.log("[C] 变更历史与 Release 同文（CHANGELOG 新增节）");
+// ── C. 变更历史出口（CHANGELOG 形态 + Release notes）────────────────
+console.log("[C] 变更历史出口（CHANGELOG 形态 + Release notes）");
 const changelog = read("CHANGELOG.md") || "";
 assert(changelog.length > 0, `CHANGELOG.md 存在`);
 if (changelog) {
-  const hasSection = changelog.includes(targetVersion) || changelog.includes(targetNum);
-  assert(hasSection, `CHANGELOG.md 含 ${targetVersion} 新增节（日期、版本、主题、提炼、对应提交、验证与影响）`);
-  // 检查最新节是否与模板的统一模板结构一致（至少含“发布”与版本号）
-  const hasHeader = /##\s+\d{4}-\d{2}-\d{2}.*v?\d+\.\d+\.\d+/.test(changelog);
+  const hasHeader = /##\s+\d{4}-\d{2}-\d{2}/.test(changelog);
   assert(hasHeader, `CHANGELOG.md 含日期+版本的标准节头（统一模板）`);
-  // 若 CHANGELOG 的最新节版本 != 目标，提醒待改
-  const firstHeaderMatch = changelog.match(/v(\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?)/);
-  const firstVer = firstHeaderMatch ? "v" + firstHeaderMatch[1] : null;
-  if (firstVer) {
-    assert(firstVer === targetVersion, `CHANGELOG 最新节版本 == 目标 ${targetVersion}（实际 ${firstVer}）`);
-  }
+  const firstHeader = (changelog.match(/^##\s+\d{4}-\d{2}-\d{2}[^\n]*/m) || [""])[0];
+  assert(/^##\s+\d{4}-\d{2}-\d{2}\s*·\s*(?:合并包\s*)?v?\d+\.\d+\.\d+/.test(firstHeader), `CHANGELOG.md 最新节是里程碑形态（日期 · [合并包] 版本）—— 实际「${firstHeader.slice(0, 60)}」`);
+  const rootWorkflow = readRepo(".github/workflows/release.yml") || "";
+  assert(rootWorkflow.includes("--generate-notes"), "合并仓的发布说明出口：根 workflow 用 gh release create --generate-notes 生成");
+  assert(true, `「CHANGELOG 最新节版本 == 目标 ${targetVersion}」已退役（#66）：deck/CHANGELOG.md 追的是合并里程碑，与根版本不同源；改钉上面那个 Release 出口`);
 }
 
 // 模板中是否要求 CHANGELOG 与 Release 同文（本地仅校验模板存在）
@@ -219,101 +184,32 @@ const templateMd = read("docs/releases/release-issue-template.md") || "";
 assert(templateMd.includes("CHANGELOG") || templateMd.includes("变更历史"), `发布模板含 CHANGELOG/变更历史清单项`);
 console.log("");
 
-// ── D. 包白名单（npm pack --dry-run） ────────────────────────────────
-console.log("[D] 包白名单（npm pack --dry-run 仅含白名单文件）");
-const pkgJsonFiles = pkgPkg?.files || [];
-assert(pkgJsonFiles.includes("lib") && pkgJsonFiles.includes("shared") && pkgJsonFiles.includes("cordis.patch.yml"), `package.json#files 白名单含 lib / shared / cordis.patch.yml（实际 [${pkgJsonFiles.join(", ")}]）`);
-
-// 执行 pack dry-run（在 package 目录）
-let packOut = "";
-let packOk = false;
-let packFiles = [];
-try {
-  const result = spawnSync("npm", ["pack", "--dry-run"], { cwd: resolve(ROOT, "package"), encoding: "utf8", shell: true });
-  packOut = (result.stdout || "") + (result.stderr || "");
-  // 解析 Tarball Contents 段
-  const lines = packOut.split("\n");
-  let inContents = false;
-  for (const line of lines) {
-    if (line.includes("Tarball Contents")) { inContents = true; continue; }
-    if (line.includes("Tarball Details")) { inContents = false; continue; }
-    if (!inContents) continue;
-    // 仅解析带文件大小的清单行：如 "npm notice 15.2kB README.md"
-    const m = line.match(/npm notice\s+[\d\.]+[kMG]?B\s+(\S+)/);
-    if (m) packFiles.push(m[1].trim());
-  }
-  const hasLib = packOut.includes("lib/client.js") || packOut.includes("lib\\client.js");
-  const hasPatch = packOut.includes("cordis.patch.yml");
-  if (packFiles.length === 0) {
-    // fallback：未解析到清单时，用原始输出判断
-    packOk = result.status === 0 && hasLib && hasPatch;
-    assert(packOk, `npm pack --dry-run 成功且含 lib/client.js 与 cordis.patch.yml（fallback 校验）`);
-  } else {
-    packOk = hasLib && hasPatch;
-    const bad = packFiles.filter(f => f.includes(".env") || f.includes("node_modules") || f.includes(".git") || f.endsWith(".log"));
-    assert(bad.length === 0, `打包清单不含密钥与多余文件（${bad.length ? "发现：" + bad.join(", ") : "干净"}）`);
-    const allowedPrefixes = ["lib/", "shared/", "cordis.patch.yml", "README", "package.json", "LICENSE"];
-    const disallowed = packFiles.filter(f => !allowedPrefixes.some(p => f.startsWith(p) || f === p));
-    if (disallowed.length > 0) {
-      console.log(`    提示：打包清单中含白名单外文件：${disallowed.slice(0,10).join(", ")}`);
-    }
-    assert(packFiles.length >= 3, `打包文件数 >=3（实际 ${packFiles.length}）`);
-    assert(packOk, `npm pack --dry-run 成功且含 lib/client.js 与 cordis.patch.yml`);
-  }
-  if (!packOk) {
-    console.log("    npm pack 输出（截断）：\n    " + packOut.slice(0, 2000).replace(/\n/g, "\n    "));
-  }
-} catch (e) {
-  assert(false, `npm pack --dry-run 执行失败：${e.message}`);
+// ── D. 包白名单（根清单 files + deck 发货清单）────────────────
+console.log("[D] 包白名单（根清单 files 白名单 + deck 发货清单）");
+const rootFiles = Array.isArray(rootPkg.files) ? rootPkg.files : [];
+for (const need of ["dist/", "plugin.js", "cordis.patch.yml"]) {
+  assert(rootFiles.includes(need), `根清单 files 白名单含 ${need}`);
 }
+assert(rootFiles.some(f => String(f).indexOf("deck/src/") === 0), "根清单 files 白名单含 deck/src/（deck 核源码随包）");
+const badDeclared = rootFiles.filter(f => String(f).includes(".env") || String(f).includes("node_modules") || String(f).includes(".git"));
+assert(badDeclared.length === 0, `根清单 files 白名单不含密钥与多余目录（${badDeclared.length ? "发现：" + badDeclared.join(", ") : "干净"}）`);
+const shipPkg = JSON.parse(read("package/package.json") || "{}");
+const shipFiles = Array.isArray(shipPkg.files) ? shipPkg.files : [];
+assert(shipFiles.includes("lib") && shipFiles.includes("shared") && shipFiles.includes("cordis.patch.yml"), `deck 发货清单 files 含 lib / shared / cordis.patch.yml（实际 [${shipFiles.join(", ")}]）`);
+console.log("    注：在仓库根跑 npm pack --dry-run 实测约 60 秒，超过门禁链每道 65 秒的预算；解包与装载的真验证在根侧 verify-bundle.sh 与 verify-real-artifact.mjs。");
 console.log("");
 
-// ── E. 模板与网页卡同源 ────────────────────────────────
-console.log("[E] 模板与网页卡同源（双入口逐字一致）");
-const yml = read(".github/ISSUE_TEMPLATE/release.yml") || "";
-assert(templateMd.length > 0, `docs/releases/release-issue-template.md 存在`);
-assert(yml.length > 0, `.github/ISSUE_TEMPLATE/release.yml 存在`);
-if (templateMd && yml) {
-  const firstLine = templateMd.split("\n")[0] || "";
-  assert(firstLine.includes("RELEASE-RUNBOOK.md"), `模板首行即引用 RELEASE-RUNBOOK.md`);
-  assert(yml.includes("RELEASE-RUNBOOK.md"), `网页卡含 RELEASE-RUNBOOK.md 引用`);
-  // 校验两者首行表述逐字一致（关键句）
-  const templateFirst = firstLine.trim();
-  const ymlHasSame = yml.includes("> 规范：[发布 Runbook · 生效日期 2026-08-31]");
-  const dialogHasSame = templateFirst.includes("发布 Runbook · 生效日期 2026-08-31");
-  assert(ymlHasSame && dialogHasSame, `两者首行引用 Runbook 的表述逐字一致（均含“生效日期 2026-08-31”）`);
-  // 复选框数量
-  const templateBoxes = (templateMd.match(/- \[ \]/g) || []).length;
-  assert(templateBoxes === 14, `模板含 8+4+2=14 个复选框（实际 ${templateBoxes}）`);
-  // yml 中的 label 数量应与模板对应（至少 14）
-  const ymlLabels = (yml.match(/- label:/g) || []).length;
-  assert(ymlLabels >= 14, `网页卡含至少 14 个 label（实际 ${ymlLabels}）`);
-  // 提取标签文本对比前 8 项
-  const templateLabels = [...templateMd.matchAll(/- \[ \] \d+\. (.+)/g)].map(m => m[1].trim());
-  const ymlLabelTexts = [...yml.matchAll(/- label: "([^"]+)"/g)].map(m => m[1].trim());
-  const normalize = s => s.replace(/^\d+\.\s*/, "").replace(/`/g, "").trim();
-  if (templateLabels.length >= 8 && ymlLabelTexts.length >= 8) {
-    const t8 = templateLabels.slice(0,8).map(normalize);
-    const y8 = ymlLabelTexts.slice(0,8).map(normalize);
-    const same = t8.every((v,i) => v === y8[i]);
-    assert(same, `网页卡与模板的 8 项清单标签逐字一致`);
-    if (!same) {
-      console.log("    模板前 8：", t8);
-      console.log("    网页卡前 8：", y8);
-    }
-  } else {
-    assert(false, `标签提取不足（模板 ${templateLabels.length}, 网页卡 ${ymlLabelTexts.length}）`);
-  }
-  // 对话脚本同源校验
-  const script = read("scripts/create-release-issue.mjs") || "";
-  assert(script.includes("release-issue-template.md"), `对话脚本读取模板真源`);
-  // 校验未给版本时追问
-  const miss = spawnSync("node", [resolve(ROOT, "scripts/create-release-issue.mjs")], { encoding: "utf8" });
-  assert(miss.status === 2, `对话脚本未给版本时退出码 2（追问）`);
-}
+// ── E. 模板真源与网页卡退役（#66）────────────────
+console.log("[E] 模板真源与网页卡退役（#66）");
+assert(templateMd.length > 0, `docs/releases/release-issue-template.md 存在（发布议题的唯一真源）`);
+assert(!existsRepo(".github/ISSUE_TEMPLATE/release.yml"), "上游那张发布网页卡不在本仓（退役是裁决，不是漏补）");
+const script = read("scripts/create-release-issue.mjs") || "";
+assert(script.includes("release-issue-template.md"), `对话脚本读取模板真源`);
+const miss = spawnSync("node", [resolve(ROOT, "scripts/create-release-issue.mjs")], { encoding: "utf8" });
+assert(miss.status === 2, `对话脚本未给版本时退出码 2（追问）`);
 console.log("");
 
-// ── F. 向导契约（wizard/template.sh 与 wizard-release.sh） ────────────────────────────────
+// ── F. 向导契约（wizard/template.sh 与 wizard-release.sh）────────────────
 console.log("[F] 向导契约（基于 wizard/template.sh 的只扫码旅程）");
 const wizardLib = read("wizard/template.sh") || "";
 assert(wizardLib.length > 0, `wizard/template.sh 存在`);
@@ -368,12 +264,12 @@ if (failures.length > 0) {
   console.log("\n待改清单（请逐项修复后重跑本校验与向导）：");
   failures.forEach((msg, idx) => console.log(`  ${idx+1}. ${msg}`));
   console.log("\n提示：本校验为单一高层 gate，任一失败即阻断发布（不为每项各起低层测试）。");
-  console.log(`下一步：按清单修复 → 同步版本号到 ${targetVersion} → 更新 CHANGELOG → 重跑 node tests/verify-release-contract.js --version ${targetVersion}`);
-  if (targetVersion !== "v" + (JSON.parse(read("package.json") || "{}").version || "")) {
-    console.log(`当前根 package.json 版本为 v${JSON.parse(read("package.json") || "{}").version}，与目标 ${targetVersion} 不一致，需先同步 package.json 与 README 等 8 项清单。`);
+  console.log(`下一步：按清单修复 → 同步仓库根 package.json 与产物版本 → 重跑 node tests/verify-release-contract.js --version ${targetVersion}`);
+  if (targetVersion !== "v" + ((jsonRepo("package.json") || {}).version || "")) {
+    console.log(`当前仓库根 package.json 版本为 v${(jsonRepo("package.json") || {}).version}，与目标 ${targetVersion} 不一致，需先同步。`);
   }
   process.exit(1);
 } else {
-  console.log(`\n全部通过 — 满足 #356 的 5 项验收（向导存在且可中断重跑、旅程覆盖 4 段、只扫码体验、单一高层校验、失败阻断）。`);
-  console.log(`目标 ${targetVersion} 已就绪，可执行：bash scripts/wizard-release.sh ${targetVersion}`);
+  console.log(`\n全部通过 — 合并身份下的发布契约成立（目标版本取自仓库根清单，产物与生成物都已投影该身份）。`);
+  console.log(`目标 ${targetVersion} 已就绪。`);
 }

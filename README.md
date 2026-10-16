@@ -201,7 +201,7 @@ HTTP（只监听 `127.0.0.1`）：`GET /state`、`GET /state?cached=1`、`GET /s
 ### 方式 A：装成包（推荐）
 
 ```bash
-VER=1.8.2   # 换成要装的版本
+VER=1.11.0   # 换成要装的版本
 dsh plugin --profile web add \
   "https://github.com/SunsetRNE/dsh-github-resident/releases/download/v$VER/sunsetrne-dsh-github-resident-v2-$VER.tgz"
 
@@ -217,14 +217,14 @@ node --input-type=module -e "import('$P/dist/host.js').then(m=>console.log('LOAD
 
 面板用的是更新包 `dsh-plugin-update`，它判「可更新」要两条同时成立（源码 `dist/reader.js`，本机实测过）：
 
-1. profile 清单里该包的 spec 是**注册表型** —— 版本号 / 范围 / dist-tag（`^1.8.2`、`latest` …）；`registrySpec()` **不认 URL 与 `link:`**；
+1. profile 清单里该包的 spec 是**注册表型** —— 版本号 / 范围 / dist-tag（`^1.11.0`、`latest` …）；`registrySpec()` **不认 URL 与 `link:`**；
 2. 已安装目录在 `<profile>/node_modules/` 之内。
 
 任一条不成立就判 `source-install`（面板文案「源码安装实例，不支持版本更新」），而且**不给手工命令**。三种装法的差别：
 
 | 装法 | spec 形态 | 面板能更新 | 升级怎么做 |
 |---|---|---|---|
-| 从注册表装（npm / 私有 registry） | `^1.8.2` | ✅ | 面板「安装更新」 |
+| 从注册表装（npm / 私有 registry） | `^1.11.0` | ✅ | 面板「安装更新」 |
 | 从 Release tgz 装（方式 A） | `https://…tgz` | ❌ | 重跑上面的 `dsh plugin … add <新版本 tgz>` |
 | 从源码目录装（方式 B） | `link:/…` | ❌ | 同上；或改装成包 |
 

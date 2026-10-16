@@ -1,29 +1,33 @@
 #!/usr/bin/env node
 /**
- * tests/verify-market-tarball.js — 市场里那条「预构建包安装」链接的门禁
+ * verify-market-tarball.js — 合并仓「发 Release 附预构建包」的门禁
+ * （2026-10-16 改钉仓库根发布链 · #66 裁决：不保留固定资产名的最新版链接）
  *
- * 为什么需要这道门禁：
- * 插件市场（awesome-dsh-plugin 列表与 dsh-market）的详情页会给出一条「预构建包安装」命令，
- * 它指向 https://github.com/<owner>/<repo>/releases/latest/download/<资产名>.tgz。
- * 其中 latest 是请求时解析的、资产名是照字面取的，所以要同时满足两件事，
- * 这条链接才会永远指向最新版、也不会 404：
+ * 上游 deck 独立仓时代的契约：`.github/workflows/release-tarball.yml` 在 Release published 时
+ * 把 npm 上那一版的原样产物以固定文件名附到 Release，市场条目用
+ * `releases/latest/download/<固定名>.tgz` 这种「不会过期」的链接。
  *
- *   1. 每次发布 Release，都往这条 Release 附一个同名资产 —— 由
- *      .github/workflows/release-tarball.yml 在新 Release 发布时自动完成；
- *   2. 资产名与 npm 包名一致，且文档里写的是 latest/download 形式
- *      （写成钉住某个 tag 的带版本号文件名，下一次发版就指向旧版本）。
+ * 合并仓（身份融合之后）的现状：真正发布的是仓库根 `@sunsetrne/dsh-github-resident-v2`，
+ * 发布入口是根 `.github/workflows/release.yml`（tag push / workflow_dispatch → 构建 → 门禁 →
+ * `npm pack` → 建 Release 并把**当版** tgz `gh release upload --clobber` 附上去）。
+ * 资产名是 npm pack 的 `<包名>-<版本>.tgz`（带版本号），本仓**不承诺**固定资产名的
+ * latest/download 链接；根 README「安装 · 方式 A」给的是带版本的 Release tgz URL。
  *
- * 这道门禁把上面两条约定读原文钉住：改包名、删掉 workflow、或把链接改回钉 tag 的写法，
- * 都会在这里当场变红，而不是等到有人从市场点安装才发现。
+ * 所以本门禁钉这条真实契约：
+ *   1. 发 Release 的那条 workflow 确实把当版产物附上去（触发、权限、npm pack、gh release upload --clobber）；
+ *   2. 附上去的资产名与根 README 那条安装 URL 对得上（npm pack 命名 = <包名去 scope>-<版本>.tgz）；
+ *   3. 上游那份固定名附着 workflow 与固定名链接都不在本仓（退役是裁决，不是漏补）；
+ *   4. 本门禁自己还挂在 verify 链里。
  *
- * 用法：node tests/verify-market-tarball.js
+ * 用法：node tests/verify-market-tarball.js（在 deck 目录下；读的是仓库根的发布链）
  */
 
 import { readFileSync, existsSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");   // deck/
+const REPO = resolve(ROOT, "..");                                      // 合并仓根
 let failures = [];
 let passes = 0;
 
@@ -37,57 +41,65 @@ function assert(cond, msg) {
   }
 }
 
-console.log("verify-market-tarball — 市场预构建包链接门禁");
+console.log("verify-market-tarball — 发 Release 附预构建包门禁（合并仓：钉仓库根发布链）");
 console.log("");
 
-const workflowPath = resolve(ROOT, ".github/workflows/release-tarball.yml");
-const runbookPath = resolve(ROOT, "docs/releases/RELEASE-RUNBOOK.md");
-const packageJsonPath = resolve(ROOT, "package/package.json");
-const rootPackageJsonPath = resolve(ROOT, "package.json");
+const workflowPath = resolve(REPO, ".github/workflows/release.yml");
+const retiredWorkflowPath = resolve(ROOT, ".github/workflows/release-tarball.yml");
+const rootPackageJsonPath = resolve(REPO, "package.json");
+const readmePath = resolve(REPO, "README.md");
+const deckManifestPath = resolve(ROOT, "package.json");
 
-// 1. 自动附着资产的那个 workflow
-console.log("[1] 发版即自动附着预构建包（workflow）");
+// 1. 发 Release 的 workflow 在仓库根，且确实附着当版产物
+console.log("[1] 发布入口：仓库根 .github/workflows/release.yml");
 let workflow = "";
 if (existsSync(workflowPath)) {
   workflow = readFileSync(workflowPath, "utf8");
-  assert(true, ".github/workflows/release-tarball.yml 存在");
-  assert(/types:\s*\[\s*published\s*\]/.test(workflow), "在 Release 发布时触发（types: [published]）");
-  assert(/contents:\s*write/.test(workflow), "申请 contents: write（否则上传资产会失败）");
-  assert(workflow.includes("gh release upload"), "确实执行 gh release upload 把资产附上去");
-  assert(workflow.includes("--clobber"), "用 --clobber 覆盖同名资产（重跑不会因已存在而失败）");
+  assert(true, ".github/workflows/release.yml 存在（合并仓的发布入口）");
+  assert(/tags:\s*\[[^\]]*'v\*'/.test(workflow), "tag push v* 触发发布");
+  assert(workflow.includes("workflow_dispatch"), "支持手动 dispatch 发布");
+  assert(/permissions:[\s\S]*?contents:\s*write/.test(workflow), "申请 contents: write（否则上传资产会失败）");
+  assert(workflow.includes("npm pack"), "用 npm pack 产出当版 tgz");
+  assert(workflow.includes("gh release create"), "用 gh release create 建 Release");
+  assert(workflow.includes("gh release upload") && workflow.includes("--clobber"), "用 gh release upload --clobber 附着/覆盖资产");
 } else {
-  assert(false, ".github/workflows/release-tarball.yml 存在（缺失则市场那条链接会随版本推进而 404）");
+  assert(false, ".github/workflows/release.yml 存在（合并仓的发布入口）");
 }
 console.log("");
 
-// 2. 资产名与 npm 包名一致
-console.log("[2] 资产名与 npm 包名一致");
-const pkg = existsSync(packageJsonPath) ? JSON.parse(readFileSync(packageJsonPath, "utf8")) : null;
-const pkgName = pkg?.name ?? "";
-assert(Boolean(pkgName), `package/package.json 读到了包名（${pkgName || "读不到"}）`);
-if (pkgName) {
-  assert(workflow.includes(`NAME="${pkgName}"`), `workflow 里的资产名 NAME 等于包名 ${pkgName}`);
-  assert(!/\d+\.\d+\.\d+/.test(pkgName), "资产名本身不带版本号（带版本号会在下一次发版时失配）");
+// 2. 资产名与根 README 的安装 URL 对得上（npm pack 命名）
+console.log("[2] 资产名与 README 安装 URL 对得上");
+const rootPkg = existsSync(rootPackageJsonPath) ? JSON.parse(readFileSync(rootPackageJsonPath, "utf8")) : null;
+const pkgName = rootPkg?.name ?? "";
+const pkgVersion = rootPkg?.version ?? "";
+assert(Boolean(pkgName && pkgVersion), `仓库根 package.json 读到了包名与版本（${pkgName || "读不到"}@${pkgVersion || "读不到"}）`);
+// npm pack 的资产名：去 scope，<name>-<version>.tgz
+const assetBase = String(pkgName).replace(/^@[^/]+\//, "");
+if (assetBase && pkgVersion) {
+  assert(workflow.includes("TGZ=$(ls *.tgz | head -1)"), "Release 附的是 npm pack 出来的那一个 tgz");
+  const readme = existsSync(readmePath) ? readFileSync(readmePath, "utf8") : "";
+  assert(readme.includes(`${assetBase}-$VER.tgz`), `README 安装 URL 用 npm pack 的资产名形态 ${assetBase}-<版本>.tgz`);
+  assert(readme.includes("releases/download/v$VER/"), "README 安装 URL 是带版本的 Release 资产路径（releases/download/v$VER/）");
+  const repoRaw = typeof rootPkg.repository === "string" ? rootPkg.repository : (rootPkg.repository && rootPkg.repository.url) || "";
+  const slug = String(repoRaw).replace(/^git\+/, "").replace(/\.git$/, "").replace(/^https:\/\/github\.com\//, "");
+  assert(Boolean(slug) && readme.includes(`github.com/${slug}/releases/download/`), `README 安装 URL 指向本仓（github.com/${slug}/releases/download/）`);
 }
 console.log("");
 
-// 3. 文档里写的是不会过期的链接形式
-console.log("[3] 文档里的链接形式");
-if (existsSync(runbookPath)) {
-  const runbook = readFileSync(runbookPath, "utf8");
-  const expected = `releases/latest/download/${pkgName}.tgz`;
-  assert(runbook.includes(expected), `RELEASE-RUNBOOK.md 写明了 ${expected}`);
-  assert(runbook.includes("tarball:"), "RELEASE-RUNBOOK.md 给出了可直接粘进市场条目的 tarball 那一行");
-} else {
-  assert(false, "docs/releases/RELEASE-RUNBOOK.md 存在");
+// 3. 上游那套固定名契约不在本仓（退役是裁决，不是漏补）
+console.log("[3] 固定资产名的旧契约不在本仓（#66 裁决：不保留）");
+assert(!existsSync(retiredWorkflowPath), "上游的 .github/workflows/release-tarball.yml 不在本仓");
+if (existsSync(readmePath)) {
+  const readme = readFileSync(readmePath, "utf8");
+  assert(!readme.includes("latest/download"), "README 不承诺 latest/download 的固定资产名链接（装法用带版本的 Release tgz）");
 }
 console.log("");
 
 // 4. 本门禁自己确认已挂进 verify 链（仓库惯例：免得哪天被摘掉还没人发现）
 console.log("[4] 本门禁已挂进 npm run verify 链");
-const rootPkg = existsSync(rootPackageJsonPath) ? JSON.parse(readFileSync(rootPackageJsonPath, "utf8")) : null;
+const deckManifest = existsSync(deckManifestPath) ? JSON.parse(readFileSync(deckManifestPath, "utf8")) : null;
 assert(
-  String(rootPkg?.scripts?.verify || "").includes("verify-market-tarball.js"),
+  String(deckManifest?.scripts?.verify || "").includes("verify-market-tarball.js"),
   "package.json 的 scripts.verify 里有 verify-market-tarball.js",
 );
 console.log("");
@@ -98,9 +110,9 @@ if (failures.length > 0) {
   console.log("\n失败项：");
   failures.forEach((f) => console.log("  - " + f));
   console.log("\n修哪里：");
-  console.log("  - 资产名对不上包名：改 .github/workflows/release-tarball.yml 里的 NAME，或改回 package/package.json 的包名。");
-  console.log("  - 链接不是 latest/download 形式：改 docs/releases/RELEASE-RUNBOOK.md 第 9 节里那一行。");
+  console.log("  - 发布入口或附着资产的行为变了：改仓库根 .github/workflows/release.yml（或改回它的判据）。");
+  console.log("  - 资产名与 README 安装 URL 对不上：改根 README「安装 · 方式 A」里那条 URL，或改 npm pack 的命名来源。");
   process.exit(1);
 } else {
-  console.log("\n全部通过 — 发版会自动把 npm 上这一版的原样产物以固定文件名附到最新 Release，市场那条链接因此永远指向最新版。");
+  console.log("\n全部通过 — 发 Release 时会把当版 npm pack 产物附上去，根 README 的安装 URL 与它逐字对得上。");
 }
