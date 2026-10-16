@@ -23,16 +23,22 @@ console.log('=== #926 胶囊折叠性能门禁（守卫等价 / 变化重算 / �
 
 const read = (rel) => readFileSync(resolve(rel), 'utf8')
 const CAPFOLD = 'src/client/statusbar/capFold.js'
+const BARFORM = 'src/client/statusbar/barForm.js'          // #74：形态档判据（机器在这条上定形态）
+const CAPRULER = 'src/client/statusbar/capFoldRuler.js'    // #74：尺子（原在 capFoldMachine 里，为行数红线搬出）
 const CAPMACHINE = 'src/client/statusbar/capFoldMachine.js'
 const STATUSBAR = 'src/client/statusbar/StatusBar.js'
 
-check(existsSync(resolve(CAPFOLD)) && existsSync(resolve(CAPMACHINE)) && existsSync(resolve(STATUSBAR)), '源码三件套可读')
-// 与 scripts/build.mjs 同一套做法：剥行首 export，拼进同一作用域跑。
+check(existsSync(resolve(CAPFOLD)) && existsSync(resolve(BARFORM)) && existsSync(resolve(CAPRULER)) && existsSync(resolve(CAPMACHINE)) && existsSync(resolve(STATUSBAR)), '源码成套可读（让位次序 / 形态档 / 尺子 / 阶梯机 / 接线）')
+// 与 scripts/build.mjs 同一套做法：剥行首 export，按 LEAF_MODULES 的次序拼进同一作用域跑。
+// #74 起清单多两项（barForm / capFoldRuler）—— 与构建登记表一字对应；下面每一条断言（flex 写次数、档号）
+//   一个字没改，阈值也没动，只是把机器依赖的那两个新叶子一并拼进来。
 const mod = (function () {
   try {
-    // 手法：compileFn——两段源码剥 export 后拼进同一作用域跑，原来无参造函数当场调用，共用入口同样处理。
+    // 手法：compileFn——几段源码剥 export 后拼进同一作用域跑，原来无参造函数当场调用，共用入口同样处理。
     return compileFn([],
       read(CAPFOLD).replace(/^[ \t]*export[ \t]+/gm, '') + '\n' +
+      read(BARFORM).replace(/^[ \t]*export[ \t]+/gm, '') + '\n' +
+      read(CAPRULER).replace(/^[ \t]*export[ \t]+/gm, '') + '\n' +
       read(CAPMACHINE).replace(/^[ \t]*export[ \t]+/gm, '') +
       '\nreturn { runCapFold: runCapFold, applyCapFoldStart: applyCapFoldStart }'
     )()

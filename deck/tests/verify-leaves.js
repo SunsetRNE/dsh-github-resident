@@ -80,6 +80,8 @@ const LEAVES = [
   { file: 'src/client/panel/RepoChipSkeleton.js', exports: ['RepoChipSkeleton'], components: ['RepoChipSkeleton'] },
   // #725 状态栏胶囊那条横条：「谁先让位、一次让多少」的判据（纯函数）与读写的机器（碰 DOM）各一份。
   { file: 'src/client/statusbar/capFold.js', exports: ['CAP_FOLD_POLICY', 'capFoldLadderOf', 'capFoldStateAt', 'capFoldStepCount'], components: [] },
+  { file: 'src/client/statusbar/barForm.js', exports: ['BAR_FORM_FLAT', 'BAR_FORM_FOLD', 'BAR_FORM_SCROLL', 'BAR_FORM_CLASS', 'barFormFoldsFit', 'barFormOf'], components: [] }, // #74：形态档判据（纯函数，无组件）
+  { file: 'src/client/statusbar/capFoldRuler.js', exports: [], components: [] }, // #74：这条横条的尺子（从 capFoldMachine 搬出的「量」那一半；同闭包内用，不导出）
   { file: 'src/client/statusbar/capFoldMachine.js', exports: ['runCapFold'], components: [] },
   // #842 版本管理写操作那一族的五个新叶子：vcRows 是从 vcBlocks 原样搬出的一层（腾行给写操作），
   //   另三个是写操作的纯规则 / 执行 / 画法。登在这里让「单文件 ≤350 行」与「产物已拼接」两条检查也覆盖到它们。

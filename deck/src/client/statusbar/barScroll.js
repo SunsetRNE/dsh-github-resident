@@ -56,11 +56,10 @@ export const applyBarScrollState = function (cell, st2) {
   try {
     cell.classList.toggle('dsws-can-left', !!s2.canLeft)
     cell.classList.toggle('dsws-can-right', !!s2.canRight)
-    // 2026-10-13（真机「字被图标替代」）：还有东西没露出来，就说明这一条是**横滑形态**。
-    //   这一条 class 是给 CSS 看的开关：横滑形态下可见行里的各段不许再被压扁（见 styles.js 里
-    //   `.dsws-barcell.dsws-bar-scroll > *{flex:0 0 auto;min-width:auto}`），内容该溢出到滑窗里，
-    //   而不是被 flex 压成看不见、让阶梯以为「放得下」。两端都没有可滑量时不加，避免宽屏上多一层规则。
-    cell.classList.toggle('dsws-bar-scroll', !!(s2.canLeft || s2.canRight))
+    // 2026-10-13（真机「字被图标替代」）那一版在这里按「当前有没有可滑量」toggle 过 `dsws-bar-scroll`。
+    //   #74 把那个类收成**单一写入者**：形态结论（全展不滑 / 先收后滑 / 全滑不收）由 statusbar/barForm.js
+    //   的判据定、由 capFoldMachine 的 capFoldWriteForm 写一处；这里只读不写 —— 两个写入者判据不同，
+    //   过去还会互相覆盖（阶梯刚收完字时内容不溢出 → 这里把类撤掉 → 字被 flex 压扁）。
     cell.dataset.barOverflow = String(s2.maxLeft || 0)
     // 箭头跟着状态亮灭：节点由 StatusBar 摆好、挂在滑窗的父节点（.dsws-capsule）下。
     // 2026-10-13 门禁抓到过一版没接上：箭头永远不亮（S2 那条断言）。
