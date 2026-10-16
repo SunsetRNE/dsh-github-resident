@@ -465,3 +465,20 @@
   - **零新增回归**：全链 311 道复测 **256 绿 → 258 绿 / 53 红**；`verify-898-block-merge` 单跑 60.5s 绿、`verify-847-stall-watch` 单跑 15s 绿（两道都是这轮扫出的抖动 / 临近 65s 上限，非本轮改动），`verify-artifact-freshness` 仍是既有 mtime 抖动（跑一次根 `npm run build` 即绿）。`node deck/scripts/verify-chain.js` 仍止于环境类 `verify-423-title-clamp-browser`，四道各自 `--only` 全部 `CHAIN_EXIT=0`；`node tests/merge/run.mjs` **41 通过 / 0 失败**。
 
 **这次（#67 那批）没再跑一遍全链复测**，理由写在这里免得下次有人以为是漏了：改动只落在 3 个**彼此独立**的门禁文件（各自一个 node 进程、互不 import），全链复测不会给出新信息；要跑就用上面那套逐道 runner（跑之前自己 `gh_load_lease` 取锁）。
+
+**第九笔增量（2026-10-16）**：[#69](https://github.com/SunsetRNE/dsh-github-resident/issues/69) 的五道（日志 / 埋点 / 探针一族）已修 —— `verify-496b-inject-guard` / `verify-709-no-self-continuing-timers` / `verify-log-coverage` / `verify-log-fields` / `verify-log-switch-597`，提交 [`227f565`](https://github.com/SunsetRNE/dsh-github-resident/commit/227f565)，逐道修前红 / 修后绿（判据一条没放宽）；本票那一族 **22 → 17**（#59 伞下剩：#68 六道 + #70 八道 + #71 三道）。
+
+判定类别：**四处「判据过期」+ 一处「源码漂移」**，另同票补齐两处登记欠账与一处判据自身的括号缺陷。逐道：
+
+- `verify-496b-inject-guard`（判据过期）：日志前缀已由身份融合 `233cb1f` 整份改成 `[GitHub 常驻]`（该提交自述「控制台前缀 `[MattSkillsDeck]` → `[GitHub 常驻]`」，全仓 5 处一起换），判据钉的旧字面量此后恒为 0 —— 三处日志点一直都在（改按新前缀量，实得 4，阈值仍 3）。
+- `verify-log-switch-597`（判据过期）：夹具自己塞了 `sessionId` 渲染配置页，而宿主的渲染是 `renderSlot('settings.plugins.tab', {}, …)`（`dsh-client-ui-settings-plugins/lib/client.js` 第 68 / 124 行，入参空对象）；页面于是读「每会话 store」，而诊断分区把提示 `flash` 进 `shared` 那份 store —— 提示在这段夹具下永远渲染不出来（9 项红全出在这里）。按宿主真实入参渲染，判据一条未减（15 项全绿）。
+- `verify-709-no-self-continuing-timers`（夹具过期 + **源码漂移**）：① 夹具直连 `createRepoKeys` 没给 `identityEnvFor`（2026-10-14《Deck 半边接消费面》起三个执行出口无条件 `await` 它），`spawn` 当场抛、被 `runGh` 收成 `kind=spawn`，于是这一轮链一条 REST 都没发出去；按 [#57](https://github.com/SunsetRNE/dsh-github-resident/issues/57) 先例共用 `tests/lib/identity-env-stub.js`。② 把夹具补齐之后才露出真问题：`src/host/tracker/detection/preflightScope.js` 的 `keyOf` 把程序名**原样**拼进身份键，而两条出站路带的名字不同 —— 探测级联那条（`ghClient.execGh`）传的是解析出来的完整路径（真机上是 `/usr/bin/gh` 那样的绝对路径），后端链谓词那条传裸名 `gh`（`detectChain.js` 两处 `ghAsk`），于是复用位永远命中不了：一次评估仍问两遍登录态（实测 4 条 REST，票面要 3 条）。程序名归一（`isGh(cmd) ? 'gh' : cmd`，与 `isPreflightCommand` 的「带路径也认」同口径；参数与工作目录照旧逐字比）后实测 **3 条**。这一处是**产品侧真缺陷**（不只是门禁）：修的是产线上那句「一次评估 5 条 REST 降到 3 条」的承诺。
+- `verify-log-coverage`（判据过期两处）：① 注册实数 56 而清单 55 —— 身份融合新增的 `wf.pluginIdentity` 漏登记（同批漏记的 same-layer 扇入边已由 `0c0d4e7` 补上），按注册实数补进清单（现役 55 → 56）；该电话与它的客户端调用点从前**一条日志都没有**，在调用点按既有口径补一行常驻 #26 `host.call`（`method=wf.pluginIdentity`，`kind=plugin-identity`；宿主侧那条注册是裸 `harness.handle`，不为一个显示用探针另起一套）。② 四条更新电话的取件路径硬拼 `deck/node_modules` —— 本仓不建它（根 `pnpm-workspace.yaml` 明写「deck 需要的包由根 `devDependencies`/`dependencies` 提供，deck 内的 `createRequire` 会向上解析到根 `node_modules`」），`readFileSync` 抛、`catch` 成 `false`，四条恒红；改按 Node 的向上解析定位包（解析不到仍旧如实回 `false`，不静默放行）。
+- `verify-log-fields`（判据过期两处 + 一处判据自身缺陷）：① `update.install.exec` 的「全仓未找到」同样是取件路径（#875 起发射器收进已安装的更新包，本仓 `src` 不再有落点），改按 Node 解析后包内落点与五个字段核对通过；② 「事件有埋点落点」那条循环被**错关在** `if (!found['update.install.exec'])` 的花括号里面 —— 包内找到落点的那一天，全部落点断言会一起被跳过（门禁悄悄变松）；花括号摆回原位，断言只增不减（196 项）。另补登记一处：身份融合新增的 `identity.migrate`（客户端一次性迁移，info 级跟着调试开关走）只落了发射、登记没跟上，照 2026-09-25 #709「登记收口」先例如实补进白名单（`changed` / `scanned` / `fields` 三键，按需 #98）；附录计数同步改**常驻 43 / 按需 47 / 自监控 5 / 总数 95**。
+
+**全链复测（第九轮）**：同一个逐道 runner（`cd deck && node tests/<file>`），跑前自取重活租约、跑完释放 —— **311 道 266 绿 / 45 红**。两点提示：① 本轮 runner 每道给 **150s**（历轮是 65s），所以「临近上限」那几道读数更宽，绿数与历轮不能逐一对齐；② 45 道红里 **44 道**都在本文件原始三份名单（环境 27 / 真漂移 / 待定 3）之内，唯一例外是 `verify-artifact-freshness` 的 mtime 抖动（`build:deck` 刷新了 `deck/src/**` 与 `deck/client.js` 的 mtime 而不重建 `dist`）—— 跑一次根 `npm run build` 后实测转绿，属已知现象。**本次五道全绿，且没有任何一道原本绿的门禁因此转红。**
+
+`node deck/scripts/verify-chain.js` 仍止于环境类 `verify-423-title-clamp-browser`（缺 Chromium，跑前它自己取了租约）；`node tests/merge/run.mjs` **41 通过 / 0 失败 / 0 被阻塞**（第一遍 40/1、原样重跑 41/0；那 1 例未复现、未定位，记作一次抖动，与历轮基线一致）。
+
+旁支发现（**不属本票、未开票**）：`SettingsPage` 的提示读的是 `useStore(props.sessionId)`，而 `DeckDiagnosticsSection` 把提示 `flash` 进 `shared`；宿主从不给 `settings.plugins.tab` 传 `sessionId`（`renderSlot(name, {})`），所以产线上两者是同一份 store（行为正确）—— 只有在「有人给这一格塞 sessionId」时才会错位。本票只把夹具改成按宿主入参渲染，源码未动。
+
