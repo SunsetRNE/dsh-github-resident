@@ -1,9 +1,21 @@
 // repro-issue179-workspace-switch.js — 复现 #179 切工作区后右侧仓库名残留 D:\2Study\...
 // 用法: node tests/repro-issue179-workspace-switch.js
+//
+// 口径（2026-10-16，按上游处置）：这一条**不是门禁，是复现器**。
+//   · 上游同款脚本 tests/repro-issue179-workspace-switch.ts 也在 verify 链外，且它自己也「复现原来的红」
+//     （那笔转 TS 的提交原话：三个复现脚本里 issue179 工作区残留，转换前后「issue179/issue58 复现原来的红」）。
+//   · 本仓原先**并存**着一条门禁 tests/verify-issue179-workspace-switch.js，它把「host 入口保留
+//     `|| DEFAULT_CWD` 兜底」当成必须为真的判据。但上游的 commentThreads.js（非判定电话）同样是四条硬拒、
+//     同样没有那层兜底 —— 最新口径站在「空目录不冒充」（#1003）那一边，判定链更是明确按 unknown-workspace 回。
+//   · 所以那条门禁按上游口径**撤掉**（不再进链、不再计入绿红账），它的判断留在这里如实复现：
+//     下面最后一条「host 入口保留 DEFAULT_CWD 兜底」此刻是红的，那是**复现**，不是待修清单。
 import fs from 'node:fs'
 console.log('=== 复现 #179：切工作区后右侧面板仓库名残留 DSH 本体路径 ===')
 
-const srcDock = fs.readFileSync('src/client/panel/Dock.js','utf8')
+// V4 #464：Dock 的「跟随工作区」那一半逻辑搬进了 DockSync.js（纯结构搬移，行为零变化）。
+//   这里两份拼起来读 —— 与本仓撤掉的那条门禁当年同一口径（「跟随逻辑搬到跟随文件，拼合断言意图不变」），
+//   否则会多报四条假红（上游同款复现器就停在只读 Dock.js 的老写法上，那是它自己的过期，不值得抄）。
+const srcDock = fs.readFileSync('src/client/panel/Dock.js','utf8') + '\n' + fs.readFileSync('src/client/panel/DockSync.js','utf8')
 const srcHost = fs.readFileSync('src/host/index.js','utf8')
 const clientBuilt = fs.existsSync('client.js') ? fs.readFileSync('client.js','utf8') : ''
 const checks = []
