@@ -446,4 +446,14 @@
 
   判定类别（三处判据过期 · 一处解析语境 · 两处**红线抬到现状**）：抬红线那两处不是「只改数字」—— 越线提交逐条 `git log -S` 查证后写进 `deck/tests/file-granularity-baseline.json` 的 `reasons`，350 那条上限一个字没动。**它们要的两件真裁决（7 个文件要不要真拆 / `portal.js` 的 `require` 要不要归零）已单开** [#73](https://github.com/SunsetRNE/dsh-github-resident/issues/73)（`ready-for-human`），没有悬空。
 
-**这次没再跑一遍全链复测**，理由写在这里免得下次有人以为是漏了：改动只落在 3 个**彼此独立**的门禁文件（各自一个 node 进程、互不 import），全链复测不会给出新信息；要跑就用上面那套逐道 runner（跑之前自己 `gh_load_lease` 取锁）。
+**第七笔增量（2026-10-16）**：[#64](https://github.com/SunsetRNE/dsh-github-resident/issues/64) 的九道（产物/切片过期一族）已修 —— `verify-b3-done-color` / `verify-t14-detail-badge` / `verify-671-modal-global-overlay` / `verify-tabs-narrow` / `verify-handoff-latest-sort` / `verify-issue58-cache-first` / `verify-repo-jump` / `verify-probe-since` / `verify-readme-sync`，提交 `518f566`，逐道修前红 / 修后绿；那一族 **35 → 26**。
+
+  判定类别：**九道全是「判据过期」**（源码/产物里语义都在，没有一道真回归）。三类来源：
+
+  - **身份真源**（`verify-readme-sync` / `verify-repo-jump`）：身份融合（2026-10-12）后版本与仓库地址取主包（仓库根 `package.json`），门禁还按 `deck/package/package.json` 的 `v1.8.0-rc.13` / 上游地址算 → 判据与 `scripts/build.mjs` 的 `mergedPackageJson()/dswVersion()/dswRepoUrl()` 对齐（README 差 104 字节）；`src/client/index.js` 的 `DSW_REPO_URL` 声明已由 `const` 改 `let`（探测结果可改写），锚点跟着走。
+  - **宿主拆分**（`verify-handoff-latest-sort` / `verify-probe-since` / `verify-671-modal-global-overlay`）：H6 #450 把 handoff 那一段搬进 `src/host/handoffClaim.js`、H2 #446 / H5 #449 把列表索引与评论探测搬进 `issueList.js` / `commentThreads.js`、#419/#425 把弹窗座位拆成 `FormModalSeat` + `FormModalContent`；两个入口只剩 `_handoff()/_issueList()/_comments()` 接线（`package/lib/index.js` 与 `src/host/index.js` 逐字节相同）。断言改锚到承载模块产物 `package/lib/<module>.js` + 入口接线，语义一条未减。
+  - **客户端重构**（`verify-b3-done-color` / `verify-t14-detail-badge` / `verify-tabs-narrow` / `verify-issue58-cache-first`）：列表行动作组收成单行（改字符锚点切片 + 空白无关比较，mapEmpty 前置分支跟着现形）、#691 把 map 详情头部拆到 `views/MapDetailHead.js`（注释锚点消失、tooltip 由原生 `title` 改走 `Tip`）、页内浮窗退役后 tabs 容器收拢成 Dock 一处（上游 `0704e78b`）、`openPagePanel` 并入 `afterPanelOpened`（上游 `037b7642`，三分支按支断言）、`keyOf` → `wsKeyOf`（上游 `e560a127`）、`doLoad` 变 `async`（上游 `84c65943`）。deck/ 是上游快照（`deck/IMPORTED-FROM.md`：HEAD `3b25cd3f`），本仓 `git log -- <file>` 只有 `40ebd3a`，故上游提交号是查证来源，注释里已写明。
+
+  第五轮全链复测（同一逐道 runner、跑前 `gh_load_lease` 取锁）：**311 道 221 绿 → 256 绿 / 55 红**；唯一新红是既有已知的 `verify-artifact-freshness` mtime 抖动（有门禁跑动会刷新 `deck/src/**` 的 mtime 而不重建 dist），跑一次根 `npm run build` 后转绿 —— 即 **257 绿 / 54 红**。`verify-671` 修好后 B 组仍真渲染出 `.dsws-modal`（父节点 `document.body`、一层壳、零面板容器），确认行为没丢。
+
+**这次（#67 那批）没再跑一遍全链复测**，理由写在这里免得下次有人以为是漏了：改动只落在 3 个**彼此独立**的门禁文件（各自一个 node 进程、互不 import），全链复测不会给出新信息；要跑就用上面那套逐道 runner（跑之前自己 `gh_load_lease` 取锁）。
