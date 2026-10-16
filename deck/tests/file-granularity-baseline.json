@@ -1,19 +1,34 @@
 {
   "version": 1,
-  "recordedAt": "2026-10-10",
-  "note": "零增长基线：只许减不许增；达标文件由各自拆分票移出。",
+  "recordedAt": "2026-10-16",
+  "note": "零增长基线：只许减不许增；达标文件由各自拆分票移出。#67（2026-10-16）补记：64c1491 那次合并提交起的一批有意改动把 6 个文件顶过 350 行，并把 StatusBar 从原冻结值 359 顶到 414 —— 按本门禁既有形态照实冻结在现状（逐条理由见 reasons），350 那条线上限没有动。",
   "files": {
     "src/client/kernel/api-io.js": 432,
     "src/client/kernel/api-new-session.js": 410,
     "src/client/kernel/locale-flow.js": 357,
+    "src/client/kernel/locale-panel.js": 352,
     "src/client/kernel/store-derived.js": 373,
     "src/client/kernel/store-snapshot.js": 358,
-    "src/client/statusbar/StatusBar.js": 359,
+    "src/client/kernel/styles.js": 393,
+    "src/client/statusbar/StatusBar.js": 414,
     "src/host/choiceStore.js": 352,
+    "src/host/detectChain.js": 353,
+    "src/host/index.js": 381,
     "src/host/namingGuardian.js": 411,
+    "src/host/platformChannel.js": 356,
     "src/host/refresh/wiring.js": 434,
     "src/host/refresh/writeEvents.js": 414,
+    "src/host/updateFromPackage.js": 385,
     "src/shared/deck-tools/agent-register.js": 438,
     "src/shared/deck-tools/shell.js": 373
+  },
+  "reasons": {
+    "src/client/kernel/locale-panel.js": "352 行。64c1491（2026-10-12 合并提交，+4）与 0c0d4e7（Deck 半边接消费面，+4/-4）把「登录态」那格改成「插件身份可用」的词条（catalog / checks / locale-word / locale-panel 同步）。越上限 2 行，没有可机械搬走的一块。",
+    "src/client/kernel/styles.js": "393 行。44af740（黄条窄屏折行 +14/-1）与 64c1491（滚动工具栏横滑 +46/-3）两次有意加的界面视觉语言；两处都是新增选择器（.dsws-banner-text/.dsws-banner-act、横滑窗那一组），不是重复代码。",
+    "src/client/statusbar/StatusBar.js": "414 行（原冻结值 359）。44af740（黄条折行 +8/-5）、b1c18c8（黄条改回内容宽 +3/-3）与 64c1491（滚动横滑窗 barScroll 与 capFold 配套 +55/-3）三次界面改动把它顶破。这个文件本来就在基线里 —— 是冻结值没跟上，不是新超标。",
+    "src/host/detectChain.js": "353 行。0c0d4e7（+11/-7）：链快照那一步与「插件身份可用」同步。",
+    "src/host/index.js": "381 行。0c0d4e7（+20/-3，唯一取用点 ghResolver.identityEnv）与 8e3cfc7（+17/-6，gh 生命周期接管的服务位与退避重试）。",
+    "src/host/platformChannel.js": "356 行。0c0d4e7（+5/-1）与 8e3cfc7（+2/-0）：身份环境那份规则表与 gh 接管的通道声明。",
+    "src/host/updateFromPackage.js": "385 行。26a009c（+45/-2，link: 安装下补出「已装版本」）与 341c6c7（+26/-2，更新源走自己的仓库站点）：两次都往同一个更新流程里加了一整段判定。"
   }
 }

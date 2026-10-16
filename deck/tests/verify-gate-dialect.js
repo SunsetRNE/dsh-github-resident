@@ -43,9 +43,17 @@ console.log('门禁方言与名单契约')
 // ② 方言口径：自由变量归零
 {
   const s = scanDeck({ roots: ['.', 'tests', 'scripts', 'src'] })
-  const debt = [...s.debt, ...s.mixed]
-  if (debt.length === 0) ok('② 代码欠账 0 个（ESM 作用域下的 CJS 自由变量）')
+  const all = [...s.debt, ...s.mixed]
+  // 口径与 gate-dialect-scan.mjs 头注、与下面那条注释同一份：`src/**` 是**打包侧**
+  //   （scripts/build.mjs 拼接后交给 esbuild，node 从不直接加载它），与生成物一样单独记。
+  //   旧写法把两者混成一个数数，于是 src/client/kernel/portal.js 里那处**有意留着**的三路探测
+  //   （require('react-dom')，产物 client.js / package/lib/client.js 里确实带着它）永远算成欠账 ——
+  //   这条口径就恒红。排除归排除，清单照样打出来（INFO），不藏。
+  const bundledSide = all.filter((d) => /^src[\\/]/.test(d.file))
+  const debt = all.filter((d) => !/^src[\\/]/.test(d.file))
+  if (debt.length === 0) ok('② 代码欠账 0 个（ESM 作用域下的 CJS 自由变量 · node 直接加载面）')
   else bad('② 仍有 ' + debt.length + ' 个欠账文件：' + debt.slice(0, 3).map((d) => d.file + '[' + d.free.join(' ') + ']').join('/'))
+  if (bundledSide.length) console.log('  INFO ② 打包侧（src/**）按口径单记 ' + bundledSide.length + ' 个：' + bundledSide.map((d) => d.file + '[' + d.free.join(' ') + ']').join('、'))
   // 生成物与 src 打包侧不计入口径，但门禁树（tests/scripts）必须干净
   const dirtyGateTree = debt.filter((d) => /^(tests|scripts)\//.test(d.file))
   if (dirtyGateTree.length === 0) ok('② 门禁树（tests/ + scripts/）欠账 0')

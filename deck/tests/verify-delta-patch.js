@@ -25,7 +25,10 @@ function imp(rel) { return import(pathToFileURL(path.join(ROOT, rel)).href) }
 async function main() {
   console.log('行级增量门禁（#708 T4：只补变的那几条、只走薄查询、水印与待办、世代号、counts 红线）')
   const delta = await imp(path.join('src', 'shared', 'refresh', 'delta.js'))
-  const win = await imp(path.join('src', 'tracker', 'indexWindow.js').replace('src\\tracker', path.join('src', 'shared', 'tracker')))
+  // 窗口索引住在 src/shared/tracker（门禁里那条 'src/tracker' 是上游布局的老路径）。旧写法靠
+  //   replace('src\\tracker', …) 只对 Windows 反斜杠生效：POSIX 上 path.join 出的是正斜杠、replace 不命中，
+  //   于是 import 指着搬走前的那条老路径（门禁自身缺陷，非源码漂移）。
+  const win = await imp(path.join('src', 'shared', 'tracker', 'indexWindow.js'))
   const budget = await imp(path.join('src', 'shared', 'refresh', 'budget.js'))
   const ledgerMod = await imp(path.join('src', 'host', 'refresh', 'ledger.js'))
   const gateMod = await imp(path.join('src', 'host', 'refresh', 'gate.js'))

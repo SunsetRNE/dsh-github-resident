@@ -29,7 +29,7 @@
  * 用法：node tests/verify-698-switch-asks-layout.js
  */
 import { readFileSync, readdirSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { relative, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import { compileFn } from './lib/eval-probe.js'
 
@@ -62,7 +62,10 @@ console.log('== A 源码层：那张卡有自己的位置（不再挂在黄条�
   check(/confirmStatusSetupPick\(st\)/.test(cardSrc) && /cancelStatusSetupPick\(st\)/.test(cardSrc), '卡上的两个按钮直接调 StatusBackend.js 那两个动作（不在别处再包一层）')
   check(!/layoutRadios\(/.test(barSrc), '状态栏黄条不再自己拼一份这组单选（一个座位上只留一处渲染）')
   const modalView = read('src/client/kernel/slotRenderer-modal-view.js')
-  check(/st\.setupLayoutCardOpen === true\) \{ try \{ return SetupLayoutCard\(/.test(modalView), '弹窗座位按「卡开着」分派到它（座位是它唯一的渲染入口）')
+  // 锚点跟着座位的现行形态走：这一支现在是 `if (st && st.setupLayoutCardOpen === true) return h(SetupLayoutCard, { st: st })`
+  //   （#698 落地后座位统一用 h(...) 画，不再是旧写法 `{ try { return SetupLayoutCard(`）。判据要的是同一件事：
+  //   卡开着那一刻座位先把它画出来，别的分支（表单 / 成功态）都排在这条后面。
+  check(/st\.setupLayoutCardOpen === true\)\s*return h\(SetupLayoutCard, \{ st: st \}\)/.test(modalView), '弹窗座位按「卡开着」分派到它（座位是它唯一的渲染入口）')
   const decls = (barSrc.match(/const modalSeat = /g) || []).length
   const uses = (barSrc.match(/modalSeat\b/g) || []).length
   check(decls === 1 && uses === 4, '那个座位仍在状态栏里声明一处、三支渲染都用上（收起态 / 无横幅 / 有横幅）—— 实得声明 ' + decls + ' 次、总共 ' + uses + ' 次')
@@ -80,7 +83,10 @@ console.log('== B 判据单源：整个客户端只有一处判「要不要先�
       const full = resolve(dir, e.name)
       if (e.isDirectory()) { walk(full); continue }
       if (!e.name.endsWith('.js')) continue
-      const rel = full.replace(root + '\\', '').replace(/\\/g, '/')
+      // 相对路径按 path.relative 算：旧写法 replace(root + '\\', …) 只认 Windows 反斜杠前缀，
+      //   在 POSIX 上相对路径算不出来，下面那条「跳过判据真源」的比较永远不成立 ——
+      //   于是 prompts-setup.js 自己（判据的唯一真源）被当成「第二处抄判据」报了出来。
+      const rel = relative(root, full).split(/[\\/]/).join('/')
       if (rel === 'src/client/kernel/prompts-setup.js') continue
       if (/layoutCardShouldOpen/.test(stripComments(readFileSync(full, 'utf8')))) hits.push(rel)
     }
