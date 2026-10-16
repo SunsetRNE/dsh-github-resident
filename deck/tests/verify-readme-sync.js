@@ -33,6 +33,21 @@ const fail = function (msg) { failed = true; console.error('FAIL readme-sync: ' 
 
 const read = function (p) { return fs.readFileSync(path.join(ROOT, p), 'utf8') }
 
+/* 身份真源与 scripts/build.mjs 的 mergedPackageJson()/dswVersion()/dswRepoUrl() 同口径
+ * （身份融合 2026-10-12 定的取值顺序）：合并包（本仓根 package.json，name 含 resident）在时，
+ * 版本与仓库地址一律取主包；只有 deck 子树独立构建时才回落到 package/package.json。
+ * 本门禁原先只读 package/package.json —— 合并之后那份还停在 v1.8.0-rc.13 / 上游仓库地址，
+ * 于是把「按主包生成的正确产物」判成了红（差异 104 字节）。判据与构建同源，改一处必须改另一处。 */
+function mergedPackageJson() {
+  try {
+    const p = JSON.parse(read('../package.json'))
+    if (p && typeof p.name === 'string' && /resident/i.test(p.name) && typeof p.version === 'string') return p
+    return null
+  } catch {
+    return null
+  }
+}
+
 let pkg = null
 try {
   pkg = JSON.parse(read('package/package.json'))
@@ -41,8 +56,9 @@ try {
 }
 
 if (pkg) {
-  const version = 'v' + pkg.version
-  const rawRepo = (pkg.repository && pkg.repository.url) || ''
+  const identityPkg = mergedPackageJson() || pkg
+  const version = 'v' + identityPkg.version
+  const rawRepo = typeof identityPkg.repository === 'string' ? identityPkg.repository : (identityPkg.repository && identityPkg.repository.url) || ''
   const repoUrl = String(rawRepo).replace(/^git\+/, '').replace(/\.git$/, '')
   if (!repoUrl) {
     fail('发布清单缺仓库地址，无法推导绝对链接基址')

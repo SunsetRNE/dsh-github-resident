@@ -53,32 +53,52 @@ console.log('== A 源码层：座位只在状态栏（三支都带上），检�
   // #698：那个座位现在也管「域文档布局」那张小卡 —— 卡的界面在 views/SetupCard.js，
   //   座位里按 st.setupLayoutCardOpen 分派（同一时刻只画一张，不叠两层遮罩）。
   check(clientSrc.indexOf('const SetupLayoutCard = function') >= 0, '产物里还带着那张布局小卡的界面（#698 搬进座位的第二件东西）')
-  check(/setupLayoutCardOpen === true\) \{ try \{ return SetupLayoutCard\(/.test(clientSrc), '座位里按「卡开着」分派到那张卡（不只画表单弹窗）')
+  // #698 落地后座位统一用 h(...) 画：锚点从旧写法 `setupLayoutCardOpen === true) { try { return SetupLayoutCard(`
+  //   换成现形 `setupLayoutCardOpen === true) return h(SetupLayoutCard, { st: st })`（判据要的还是同一件事：
+  //   卡开着那一刻座位先把它画出来）。同族锚点已在 26b5429（#67）为 verify-698 改过一次。
+  check(/setupLayoutCardOpen === true\)\s*return h\(SetupLayoutCard, \{ st: st \}\)/.test(clientSrc), '座位里按「卡开着」分派到那张卡（不只画表单弹窗）')
 }
 
 // —— B 组的取值口径：产物里那段弹窗渲染体，原样抽出来跑（不启动整条插件）——
-//   抽法：从「const FormModalSeat = function」那一行开始，按花括号配平找它的收尾
-//   （不能按「下一个顶层声明」找：那一段里还有别的东西，会切在半截，语法就崩了）。
+//   抽法：从「const FormModalSeat = function」那一行开始，按花括号配平找它自己的收尾；
+//   再把紧跟其后的「const FormModalContent = function」整段（弹窗的正文：表单态与成功态
+//   都在这里，`.dsws-modal` 在本段末尾画）一并抽进来。
+//   不能只抽座位自己：#419/#425 那次有意拆分把座位削成薄分派器（只决定渲染哪种内容），
+//   真渲染体搬进了独立组件 FormModalContent —— 只抽座位会报 FormModalContent is not defined，
+//   B 组要量「弹窗落在哪一层」就必须带上后者。也不能按「下一个顶层声明」切：本段收尾之后
+//   紧跟着的是下一个叶子模块（chips.js 的 Dot/TypeChip），会连同它一起切进来。
 // #698：那段渲染体现在要调 kernel/modal-fields.js 的 modalFormFields（表单字段那一串搬了出去），
 //   所以抽出来的那段单独跑会缺这个名字 —— 下面配一个能真渲染的替身（与产物里那一份同形：
 //   一层 div + 一行 label），B 组量的本来就是「弹窗落在哪一层」，不是字段长什么样。
+/** 从 start 行起按花括号配平找收尾（行下标）；找不到收尾返回 -1。 */
+function braceEndLine (lines, start) {
+  let depth = 0
+  for (let i = start; i < lines.length; i++) {
+    for (let c = 0; c < lines[i].length; c++) {
+      const ch = lines[i][c]
+      if (ch === '{') depth++
+      else if (ch === '}') { depth--; if (depth === 0) return i }
+    }
+  }
+  return -1
+}
 function extractSeatSource (code) {
   const lines = code.split('\n')
   let start = -1
   for (let i = 0; i < lines.length; i++) { if (lines[i].indexOf('const FormModalSeat = function') >= 0) { start = i; break } }
   if (start < 0) throw new Error('产物里没有找到弹窗组件那一段')
-  let depth = 0
-  let end = -1
-  for (let i = start; i < lines.length; i++) {
-    for (let c = 0; c < lines[i].length; c++) {
-      const ch = lines[i][c]
-      if (ch === '{') depth++
-      else if (ch === '}') { depth--; if (depth === 0) { end = i; break } }
-    }
-    if (end >= 0) break
+  const seatEnd = braceEndLine(lines, start)
+  if (seatEnd < 0) throw new Error('按花括号配平找不到弹窗组件那一段的收尾')
+  // 座位与正文之间只隔注释/空行；一遇到别的声明就停下报错 —— 产物形态真变了宁可红，不猜半截。
+  let contentStart = -1
+  for (let i = seatEnd + 1; i < lines.length; i++) {
+    if (lines[i].indexOf('const FormModalContent = function') >= 0) { contentStart = i; break }
+    if (/^\s*(const|let|var|function|export)\b/.test(lines[i])) break
   }
-  if (end < 0) throw new Error('按花括号配平找不到弹窗组件那一段的收尾')
-  return { src: lines.slice(start, end + 1).join('\n'), lineCount: end - start + 1 }
+  if (contentStart < 0) throw new Error('产物里没有找到弹窗正文组件 FormModalContent（#419/#425 拆分后它紧跟座位）')
+  const contentEnd = braceEndLine(lines, contentStart)
+  if (contentEnd < 0) throw new Error('按花括号配平找不到弹窗正文组件的收尾')
+  return { src: lines.slice(start, contentEnd + 1).join('\n'), lineCount: contentEnd - start + 1 }
 }
 
 const { JSDOM } = await import('jsdom')
@@ -92,6 +112,10 @@ const seat = extractSeatSource(clientSrc)
 console.log('')
 console.log('== B 真渲染层（jsdom + 真产物）：只挂那个座位，弹窗必须落到 document.body 上 ==')
 check(seat.lineCount > 100, '从产物里抽到了弹窗组件那一段（' + seat.lineCount + ' 行）')
+// #419/#425 拆分之后「座位」是两个组件：薄分派器（FormModalSeat）+ 真渲染体（FormModalContent）。
+//   这两条是新加的（判据只增不减）：抽到的原文里两个声明都要在，否则 B 组渲染的是半截。
+check(seat.src.indexOf('const FormModalSeat = function') >= 0 && seat.src.indexOf('const FormModalContent = function') >= 0, '抽到的原文里座位与弹窗正文两个组件声明都在')
+check(/className: 'dsws-modal'/.test(seat.src), '抽到的原文里带着画 .dsws-modal 那一段（弹窗真身，不是只有分派器）')
 
 function makeStore (withModal) {
   return {
@@ -131,7 +155,9 @@ async function renderSeat (withModal) {
       fillDefaults: (schema, base) => Object.assign({}, base),
       emit: noop, flash: noop, closeFormModal: noop, consumePendingSetup: noop,
       visLabelOf: () => '', startRepoSync: noop, runRepoSyncRecheck: noop, resolveFailText: () => '',
-      guideInjectTextOf: () => '', moduleMetaOf: () => null, promptLang: () => 'zh', promptTextFor: () => '',
+      // 名字跟着现形走：产物里这一档（no-gh / not-logged-in 的指引注入）读的是 guideInjectPromptOf
+      //   （#716 之后共享清单只留键名，注入哪条提示词问它要），旧替身名 guideInjectTextOf 已无人引用。
+      guideInjectPromptOf: () => '', moduleMetaOf: () => null, promptLang: () => 'zh', promptTextFor: () => '',
       inject: noop, tr: (k) => k, loadSnapshot: noop, loadChain: noop, openUrl: noop, retryPushFlow: noop,
       Ic: () => null, host: { call: () => Promise.resolve({ ok: true }) },
       timer: { setTimeout: (fn, ms) => setTimeout(fn, ms), timeout: (fn, ms) => setTimeout(fn, ms) },

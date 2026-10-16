@@ -32,7 +32,9 @@ for(const [name, src] of [['client.js', client], ['package/lib/client.js', pkg]]
 
 // 2) loadSnapshot 空 cwd 同步 + 缓存优先守卫
 for(const [name, src] of [['client.js', client], ['package/lib/client.js', pkg]]){
-  const hasDoLoad = /const doLoad = function/.test(src)
+  // 锚点对齐 ①：84c65943（2026-08-29 · #327 快照多级缓存）给 doLoad 加了 `await diskGetSnapshot(...)`，
+  //   函数从此是 `async function`；「拆出独立 doLoad + 外层空 cwd 同步」这条语义一个字没变。
+  const hasDoLoad = /const doLoad = async function/.test(src)
   check(hasDoLoad, 'loadSnapshot 拆 doLoad + 外层空 cwd 同步', name)
   check(/if \(!st\.cwd\)/.test(src) && /getCwdSync/.test(src), '空 cwd 先同步补齐（getCwdSync）', name)
   check(src.includes("wf.cwd") && src.includes("sessionId"), '空 cwd 兜底异步 wf.cwd/sessionId', name)
@@ -42,14 +44,20 @@ for(const [name, src] of [['client.js', client], ['package/lib/client.js', pkg]]
   check(/setCachedSnapshot/.test(src) && /st\.snapshot = snap/.test(src), 'loadSnapshot 成功后写 per-cwd 表', name)
 }
 
-// 3) openPanel 三分支缓存优先（新鲜直接展示 / 过期秒开+静默 / 首开才 loading）
+// 3) 打开面板收尾三分支缓存优先（新鲜直接展示 / 过期秒开+静默 / 首开才 loading）
+//    锚点对齐 ②：037b7642（2026-09-19 · #646「面板的两个入口都开进 DSH 右侧边栏，页内浮窗退役」）删掉了
+//    悬浮面板入口 `openPagePanel`，它那套 #58 三分支整段并进 native 右栏的收尾 `afterPanelOpened`
+//    （同一提交里三支俱在：if (isReal && snapFresh) / else if (isReal || hasCache) / else）。按支逐条钉住。
 for(const [name, src] of [['client.js', client], ['package/lib/client.js', pkg]]){
-  const hasOpenPage = /const openPagePanel/.test(src)
-  check(hasOpenPage, '存在 openPagePanel 三分支', name)
-  check(src.includes('hydrateFromCache(st)') && src.includes('hasCache'), 'openPanel 先水合 + 判断 hasCache/isReal', name)
-  check(src.includes("st.snapMode === 'loading'") || src.includes("snapMode"), 'openPanel 首开才设 loading', name)
-  // 确认过期分支走后台静默 loadSnapshot(st,false) 而非 force
-  check(src.includes('loadSnapshot(st, false)') , '过期分支后台静默 loadSnapshot(false)', name)
+  const ap = (src.match(/const afterPanelOpened = function \(st\) \{[\s\S]*?\n    \}/) || [''])[0]
+  check(ap.length > 0, '存在 afterPanelOpened 三分支（#646 页内浮窗退役后 openPagePanel 并入此处）', name)
+  check(ap.includes('hydrateFromCache(st)') && ap.includes('hasCache'), 'afterPanelOpened 先水合 + 判断 hasCache/isReal', name)
+  // ① 新鲜（isReal && snapFresh）→ 只展示、不重拉（这一支里不许出现 loadSnapshot）
+  check(/if \(isReal && snapFresh\(st\)\) \{(?:(?!loadSnapshot)[\s\S])*?\} else if \(isReal \|\| hasCache\) \{/.test(ap), '三分支①：新鲜直接展示、不重拉', name)
+  // ② 过期或有缓存 → 先展示再后台静默 loadSnapshot(st, false)（非 force）
+  check(/\} else if \(isReal \|\| hasCache\) \{[\s\S]*?loadSnapshot\(st, false\)\n      \} else \{/.test(ap), '三分支②：过期/有缓存先展示再后台静默 loadSnapshot(false)', name)
+  // ③ 首开（既非 real 也无缓存）→ 才设 snapMode='loading'
+  check(/\} else \{\n        st\.snapMode = 'loading'\n        emit\(st\)\n        loadSnapshot\(st, false\)\n      \}/.test(ap), '三分支③：首开才设 snapMode=loading', name)
 }
 
 // 4) ListTab 加载遮罩仅无缓存时显示
@@ -74,7 +82,9 @@ for(const [name, src] of [['client.js', client], ['package/lib/client.js', pkg]]
 
 // 7) probeNow 多工作区隔离延续（#45 不回归）
 for(const [name, src] of [['client.js', client], ['package/lib/client.js', pkg]]){
-  check(/refreshGroup/.test(src) && /keyOf\(st\.cwd\) === normWanted/.test(src), 'probeNow 按 cwd 归一键分组隔离（#324 · #45 延续）', name)
+  // 锚点对齐 ③：e560a127（2026-09-19 · #653「客户端按工作区根分桶」）把归一键从 keyOf 换成 wsKeyOf，
+  //   并把 shared.cwd 一并纳入同键分组；「同键一组、组间零污染」这条 #324/#45 语义不变。
+  check(/const refreshGroup = function \(cwd\)/.test(src) && /const normWanted = wsKeyOf\(cwd\)/.test(src) && /shared\.cwd && wsKeyOf\(shared\.cwd\) === normWanted/.test(src) && /st\.cwd && wsKeyOf\(st\.cwd\) === normWanted/.test(src), 'probeNow 按工作区根键归组隔离（wsKeyOf · #653 续 #324/#45）', name)
   check(/sidToCwd/.test(src), '兜底 sidToCwd 精确映射保留', name)
   // #58 兜底后新增水合
   check(src.includes('hydrateFromCache(st)') && src.includes('sidToCwd'), '兜底补 cwd 后水合 per-cwd', name)
