@@ -23,6 +23,7 @@ function chainToRow(chainRes) {
   const snap = (v && (v.fullSnapshot || v.snapshot)) || null
   const steps = (snap && Array.isArray(snap.steps)) ? snap.steps : []
   return {
+    raw: v,
     checks: steps.map(function (s) {
       const show = s.show || {}
       return {
@@ -37,11 +38,18 @@ function chainToRow(chainRes) {
   }
 }
 const callChain = async (dispatch, payload) => {
-  if (!dispatch) return { checks: [] }
+  if (typeof dispatch !== 'function') return { checks: [] }
   // 链为串行求值：前置（已选后端/已初始化）须通过，技能步才会被求值；测试环境显式给定后端
   // #284 修订：链上检查项逐项独立求值（不依赖前置通过）——测试不再注入后端、不再预置初始化文件
-  const res = await dispatch('chain', Object.assign({}, payload, { force: true }))
-  return chainToRow(res)
+  // 真信封（与 DSH 的 client-request 同形）：外层 type/rpcId/payload，端点名与入参装在内层 payload 里。
+  const req = {
+    method: 'POST',
+    url: 'http://127.0.0.1/api/dsws',
+    json: async () => ({ type: 'client-request', rpcId: 'rpc-skill-probe', payload: { method: 'chain', payload: Object.assign({}, payload, { force: true }) } }),
+  }
+  const res = await dispatch(req)
+  const body = await res.json()
+  return chainToRow(body && body.result ? body.result : body)
 }
 
 console.log('== #281 红牌分拣与等待合同门禁（#284 迁移：断言经 wf.chain 全链快照）==')
@@ -143,6 +151,7 @@ console.log('\n— 验收2：轻探分拣 缺失 vs 名片无效（永不绿） 
   // fs 内存映射
   const files = new Map()
   const blockedRead = new Set() // 模拟「文件在但读不了」
+  const fsAsked = [] // 诊断用：探测过程中被问过的路径（失败信息里带出来）
   const fsMock = {
     // 真实 DSH fs 契约形状：resolve 返回 target 对象（target-shaped 读接口使用）
     async resolve(p, opts) {
@@ -172,6 +181,7 @@ console.log('\n— 验收2：轻探分拣 缺失 vs 名片无效（永不绿） 
     // exists：path-shaped
     async exists(p) {
       if (typeof p !== 'string') return false
+      fsAsked.push('exists ' + p + ' -> ' + files.has(p))
       return files.has(p)
     }
   }
@@ -201,7 +211,15 @@ console.log('\n— 验收2：轻探分拣 缺失 vs 名片无效（永不绿） 
     timeout: (a,b) => (typeof a==='function' ? setTimeout(a,b) : new Promise(r=>setTimeout(r,a))),
     interval: () => () => {},
   }
-  const connection = { rpc: { handle: (path, fn) => { handlers[path] = fn } } }
+  // 2026-10-16 合并整改（#596 的关键一处）：宿主不再用 connection.rpc.handle 注册，改走
+  //   connection.fetch.register 这条**精确 fetch 路由**（/api/dsws，见 src/host/rpcChannel.js:159）。
+  //   夹具从前只给 rpc.handle，于是那条通道压根没挂上 —— dispatch 是 undefined，链快照恒空，
+  //   下面 15 条集成断言全跟着红。这里按真契约把路由接住，并照真信封形状发请求。
+  let capturedRoute = null
+  const connection = {
+    rpc: { handle: (path, fn) => { handlers[path] = fn } },
+    fetch: { register: (route) => { capturedRoute = route && route.fetch ? route.fetch : null; return () => { capturedRoute = null } } },
+  }
   const handlers = {}
   const ctx = {
     get(k) {
@@ -227,19 +245,26 @@ console.log('\n— 验收2：轻探分拣 缺失 vs 名片无效（永不绿） 
     // 等待平台初始化
     await new Promise(r=> setTimeout(r, 50))
     // 调用 wf.chain 并检查 wayfinder 步骤的 detail 区分（#284 迁移）
-    // 场景 A：目录完全缺失 -> 应为缺失
+    // 场景 A：技能目录完全缺失 -> 应为缺失
     files.clear()
+    // 2026-10-16 合并整改（#1003 空目录闸之后）：工作区目录**本身**也得在（mock fs 里要有痕迹），
+    //   否则链判「这个工作区还没就绪」一步都不给（实测 steps 为空，下面 15 条全跟着红）。
+    //   放一个无关文件让目录存在；技能目录仍然完全缺失 —— 场景语义不变。
+    files.set(join(tmpHome, '.keep'), 'x')
     // 需要触发一次订阅（probe 会尝试订阅）
     let statusA = null
     {
-      const dispatch = handlers['/dsws']
+      // 每个场景都先让 skills 失效，逼探测真去读盘（否则上一场景的 pending/缺失判定会被复用，
+      //   坏名片场景照样回「缺失」—— 实测就是这样）。
+      try { skillsMock.trigger() } catch (eT) {}
+      const dispatch = capturedRoute
       statusA = await callChain(dispatch, { cwd: tmpHome, lang: 'zh' })
     }
     if (!statusA || !Array.isArray(statusA.checks)) {
       check(false, 'wf.chain 返回链快照（缺失场景）', JSON.stringify(statusA).slice(0,500))
     } else {
       const rowWay = statusA.checks.find(c=> c.key==='skill:wayfinder' || String(c.name).includes('wayfinder'))
-      check(!!rowWay, '找到 wayfinder 检查行（缺失场景）')
+      check(!!rowWay, '找到 wayfinder 检查行（缺失场景）', '链里实际的步骤 id：' + statusA.checks.map(function (c) { return c.key }).join(' | ') + ' ／ 原始回包：' + String(JSON.stringify(statusA.raw === undefined ? null : statusA.raw)).slice(0, 400))
       if (rowWay) {
         check(rowWay.level==='bad', '缺失场景 wayfinder 为 bad', JSON.stringify(rowWay))
         check(rowWay.detail.includes('缺失') || rowWay.detail.includes('missing') || rowWay.detail.includes('未安装'), '缺失场景 detail 含“缺失/未安装”', rowWay.detail)
@@ -255,7 +280,10 @@ console.log('\n— 验收2：轻探分拣 缺失 vs 名片无效（永不绿） 
     files.set(join(tmpHome, '.agents', 'skills', 'wayfinder') + '/.dir', 'dir')
     let statusB = null
     {
-      const dispatch = handlers['/dsws']
+      // 每个场景都先让 skills 失效，逼探测真去读盘（否则上一场景的 pending/缺失判定会被复用，
+      //   坏名片场景照样回「缺失」—— 实测就是这样）。
+      try { skillsMock.trigger() } catch (eT) {}
+      const dispatch = capturedRoute
       statusB = await callChain(dispatch, { cwd: tmpHome, lang: 'zh' })
     }
     if (statusB && Array.isArray(statusB.checks)) {
@@ -263,7 +291,7 @@ console.log('\n— 验收2：轻探分拣 缺失 vs 名片无效（永不绿） 
       check(!!rowWayB, '找到 wayfinder 检查行（坏名片场景）')
       if (rowWayB) {
         check(rowWayB.level==='bad', '坏名片场景 wayfinder 为 bad', JSON.stringify(rowWayB))
-        check(rowWayB.detail.includes('无效') || rowWayB.detail.includes('Invalid'), '坏名片 detail 含“无效”', rowWayB.detail)
+        check(rowWayB.detail.includes('无效') || rowWayB.detail.includes('Invalid'), '坏名片 detail 含“无效”', rowWayB.detail + ' ／ 探过的路径：' + fsAsked.slice(-14).join(' ; '))
         check(rowWayB.detail !== statusA.checks.find(c=> c.key==='skill:wayfinder').detail, '坏名片与缺失的 detail 不混同')
       }
     } else {
@@ -275,7 +303,10 @@ console.log('\n— 验收2：轻探分拣 缺失 vs 名片无效（永不绿） 
     files.delete(join(tmpHome, '.agents', 'skills', 'wayfinder') + '/.dir')
     let statusC = null
     {
-      const dispatch = handlers['/dsws']
+      // 每个场景都先让 skills 失效，逼探测真去读盘（否则上一场景的 pending/缺失判定会被复用，
+      //   坏名片场景照样回「缺失」—— 实测就是这样）。
+      try { skillsMock.trigger() } catch (eT) {}
+      const dispatch = capturedRoute
       statusC = await callChain(dispatch, { cwd: tmpHome, lang: 'zh' })
     }
     const rowC = statusC && statusC.checks ? statusC.checks.find(c=> c.key==='skill:wayfinder') : null
@@ -286,7 +317,7 @@ console.log('\n— 验收2：轻探分拣 缺失 vs 名片无效（永不绿） 
       const wfDir2 = join(tmpHome, '.agents', 'skills', 'wayfinder')
       files.set(wfDir2 + '/.dir', 'dir')
       let statusD1 = null
-      const dispatchD1 = handlers['/dsws']
+      const dispatchD1 = capturedRoute
       statusD1 = await callChain(dispatchD1, { cwd: tmpHome, lang: 'zh' })
       const rowD1 = statusD1 && statusD1.checks ? statusD1.checks.find(c=> c.key==='skill:wayfinder') : null
       check(rowD1 && rowD1.level==='bad', '目录在·SKILL.md 缺失 → 红牌（bad）', JSON.stringify(rowD1))
@@ -301,7 +332,7 @@ console.log('\n— 验收2：轻探分拣 缺失 vs 名片无效（永不绿） 
       files.set(cardP3, '---\nname: wayfinder\n---')
       blockedRead.add(cardP3)
       let statusD2 = null
-      const dispatchD2 = handlers['/dsws']
+      const dispatchD2 = capturedRoute
       statusD2 = await callChain(dispatchD2, { cwd: tmpHome, lang: 'zh' })
       const rowD2 = statusD2 && statusD2.checks ? statusD2.checks.find(c=> c.key==='skill:wayfinder') : null
       check(rowD2 && rowD2.level==='bad', '名片存在但不可读 → 红牌（bad）', JSON.stringify(rowD2))
