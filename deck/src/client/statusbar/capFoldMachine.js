@@ -121,7 +121,10 @@ export const runCapFold = function (cap, keep) {
     keep.foldGuardTier = 0
     return 0
   }
-  if (capFoldFits(capRow)) {
+  // 2026-10-16（#926 最后一跳）：这里收的是**同一次读数**—— capFoldFits(cap) 就是 capFoldMeasure(cap).fits，
+  //   而上面第 100 行刚量过、中间没有任何写入，所以再量一遍是白花 24 次 flex 写。
+  //   语义一字不变（同状态、同函数、同判据），只是不再重复测；横滑那条判据本来也是复用这次读数的。
+  if (startMeasure.fits) {
     tier = start
     while (tier > 0) {
       writeTier(tier - 1)

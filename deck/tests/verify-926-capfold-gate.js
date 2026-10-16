@@ -186,6 +186,7 @@ const capNb = makeCap(WORDS, 300)
 resetStats(capNb)
 const tNb = mod.runCapFold(capNb, keepN)
 check(tNb === tNa, '换代后档位一致（档号 ' + tNb + '）')
+console.log('  [诊断·换代] 第一趟 t=' + tNa + ' flex=' + capNa.stats.flexWrites + ' ／ 第二趟 t=' + tNb + ' flex=' + capNb.stats.flexWrites + ' guardTier=' + JSON.stringify(keepN.foldGuardTier) + ' 段数=' + WORDS.length)
 check(capNb.stats.flexWrites <= 48, '换代从旧档起步（flex 写 ' + capNb.stats.flexWrites + ' 次，至多两次放下判断）')
 // 阶梯变短：深档下把字大幅改短，旧档超界走夹紧且结论正确
 capNa._els[0]._text = 'M'
