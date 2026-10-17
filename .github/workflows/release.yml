@@ -1,6 +1,10 @@
 name: release
 
-# 仓库发布：推一个 v* tag（或在 Actions 里手动 dispatch）→ 构建 → 门禁 → 打包 → 发 Release → 更新两条自托管通道。
+# 仓库发布：推一个 v* tag（或在 Actions 里手动 dispatch）→ 构建 → 门禁 → 打包 → 发 Release → 发 Release → 更新项目站通道（gh-pages 的 index.json + 包体）。
+# 2026-10-17 裁决：**用户站根那条通道删掉**（原「用户站根」步骤 + CHANNEL_TOKEN）。原因：它要推的
+#   SunsetRNE/SunsetRNE.github.io 仓库根本不存在，v1.11.5 / v1.11.6 两次发布都在那一步红（clone 128），
+#   而真正的更新路径是 GitHub Release（插件管理器读 releases/latest，见 ~/.dsh/plugin-sources.json），
+#   项目站通道也照旧在发。少一条通道不影响发布，也不再让每次发布挂一条假红。
 # 纪律：本地改产物不算数，一切以这一次工作流的产物为准。
 on:
   push:
@@ -24,8 +28,6 @@ jobs:
     # 上界。此前没有它，一次卡住可以烧到 GitHub 默认的 6 小时 —— 2026-10-13 v1.8.1
     # 首次发布实测：门禁一步静默 20 分钟，只能人工取消。
     timeout-minutes: 45
-    env:
-      CHANNEL_TOKEN: ${{ secrets.CHANNEL_TOKEN }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -170,17 +172,3 @@ jobs:
           git add -A
           git diff --cached --quiet || git commit -m "channel: $VER（CI 发布）"
           git push origin gh-pages
-
-      - name: 通道 · 用户站根（面板自更新的源；需要 secret CHANNEL_TOKEN，缺省跳过）
-        run: |
-          set -e
-          if [ -z "$CHANNEL_TOKEN" ]; then echo "没有 CHANNEL_TOKEN，跳过用户站根"; exit 0; fi
-          TGZ=$(ls *.tgz | head -1)
-          VER=$(node -p "require('./package.json').version")
-          rm -rf /tmp/site
-          git clone "https://x-access-token:${CHANNEL_TOKEN}@github.com/SunsetRNE/SunsetRNE.github.io.git" /tmp/site
-          node tools/channel/update-origin-root.mjs --dir /tmp/site --tgz "$PWD/$TGZ" --version "$VER"
-          cd /tmp/site
-          git add -A
-          git diff --cached --quiet || git commit -m "channel: $VER（CI 发布）"
-          git push origin HEAD:main
