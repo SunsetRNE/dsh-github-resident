@@ -122,6 +122,7 @@ window.__ModuleLoader__.load({
       '.{p}-chip{display:inline-flex;align-items:center;gap:3px;padding:1px 8px;border-radius:999px;font-size:11px;line-height:17px;font-weight:500;background:var(--dsw-alias-bg-module-platform,#f5f6f7);color:var(--dsw-alias-label-secondary);white-space:nowrap}',
       '.{p}-chip-ok{background:rgba(34,197,94,.12);color:var(--dsw-alias-state-success-primary,#16a34a)}',
       '.{p}-chip-out{background:transparent;box-shadow:inset 0 0 0 .5px var(--dsw-alias-border-l3,#0000001f);color:var(--dsw-alias-label-tertiary)}',
+      '.{p}-input{flex:1;min-width:180px;font:inherit;font-size:12px;padding:7px 9px;border-radius:7px;color:var(--dsw-alias-label-primary);background:var(--dsw-alias-bg-layer-1,#fff);border:.5px solid var(--dsw-alias-border-l3,#0000001f)}',
     ]);
 
     // R5：三个展示组件也只有前缀不同，用一个工厂生成两套名字。
@@ -165,6 +166,8 @@ window.__ModuleLoader__.load({
       const [onlyMissing, setOnlyMissing] = React.useState(false);
       const [armPurge, setArmPurge] = React.useState(false);
       const [tab, setTab] = React.useState('data');
+      // #79：根那一行点开后就地出一个小表单（null = 收起；字符串 = 草稿）
+      const [rootEdit, setRootEdit] = React.useState(null);
 
       // 三个只读入口：登记库状态（许可 + 计数）、清单（条目）、以及**账号状态**。
       // 账号那一份和「GitHub」页读的是同一个 ghr.state 快照 —— 两页共用一份事实，谁都不另存一份登录态。
@@ -203,7 +206,13 @@ window.__ModuleLoader__.load({
 
       const d = reg.data || null;
       const consent = (d && d.consent) || null;
-      const granted = Boolean(consent && consent.recorded);
+      // #79：许可按 root + depth 记账 —— 换根之后旧许可不再覆盖，这一页要如实退回「等你同意」。
+      //   缺根或缺授权明细时（老宿主 / 夹具）判不了覆盖关系，退回「记录即算」的旧口径，不误报未授权。
+      const rootNow = String((d && d.root) || '');
+      const grantsNow = (consent && consent.grants) || [];
+      const grantCover = !rootNow || !grantsNow.length ? true
+        : grantsNow.some((g) => String(g.root) === rootNow && Number(g.depth) === Number(d && d.depth));
+      const granted = Boolean(consent && consent.recorded) && grantCover;
       const hasLib = Boolean(d && d.libraryExists);
       const rows = (lib && lib.entries) || [];
       const shown = onlyMissing ? rows.filter((e) => !e.hasRemote) : rows;
@@ -254,11 +263,27 @@ window.__ModuleLoader__.load({
         h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, paddingBottom: 6, flexWrap: 'wrap' } },
           h(RegBadge, { text: label, tone }),
           d && d.dir ? h('span', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary)', fontFamily: 'ui-monospace, Menlo, monospace' } }, d.dir) : null),
+        // #79：根那一行 —— 点开就地改（写 state.reposRoot；目录不存在时宿主拒写，一个字节都不落）
+        h('div', { className: 'ghreg-row', style: { cursor: 'pointer' }, onClick: () => setRootEdit(String((d && d.root) || '')) },
+          h('span', { className: 'ghreg-k' }, '根'),
+          h('span', { className: 'ghreg-v', style: { flex: 1 } }, (d && d.root) || '—'),
+          h(RegChip, { text: '可改', tone: 'out' })),
+        rootEdit === null ? null : h('div', { className: 'ghreg-ask' },
+          h('div', { style: { marginBottom: 8 } }, '换根：填一个真实存在的目录；换根之后要重新同意一次。'),
+          h('div', { style: { display: 'flex', gap: 8, flexWrap: 'wrap' } },
+            h('input', {
+              className: 'ghreg-input', value: rootEdit, placeholder: '/path/to/repos',
+              onChange: (e) => setRootEdit(e.target.value),
+            }),
+            h(RegBtn, { onClick: () => { const v = rootEdit; setRootEdit(null); post('ghr.registry.root', 'root', 'root=' + encodeURIComponent(v)); } }, '保存'),
+            h(RegBtn, { ghost: true, onClick: () => { setRootEdit(null); post('ghr.registry.root', 'root', 'root='); } }, '恢复默认'),
+            h(RegBtn, { ghost: true, onClick: () => setRootEdit(null) }, '取消'))),
         h('div', { className: 'ghreg-row' }, h('span', { className: 'ghreg-k' }, '建库许可'),
-          h('span', { className: 'ghreg-v' },
-            granted
+          h('span', { className: 'ghreg-v', style: { flex: 1 } },
+            (consent && (consent.grants || []).length)
               ? (consent.grants || []).map((g) => g.root + '（深度 ' + (Number.isInteger(g.depth) ? g.depth : '未知→需重新确认') + '）· ' + (g.via || '?')).join('  |  ')
-              : '未许可 · 建库时会先问')),
+              : '未许可 · 建库时会先问'),
+          h(RegChip, { text: granted ? '已许可' : '未覆盖', tone: granted ? 'ok' : 'out' })),
         h('div', { className: 'ghreg-row' }, h('span', { className: 'ghreg-k' }, '条目'),
           h('span', { className: 'ghreg-v', style: { flex: 1 } },
             hasLib ? (rows.length + ' 个 · 远端 ' + (lib.remoteBound || 0) + ' / 无远端 ' + (lib.withoutRemote || 0)) : '未建'),

@@ -132,6 +132,34 @@ export const renderWsOverview = function (h, sharedSt, wsOverview, loadRef, fold
                   h(HoverTip, { content: mergedInto ? (cwd + ' → ' + mergedInto) : cwd, mode: 'mouse', maxWidth: 220 }, h('div',{ style:{ flex:'1 1 0', minWidth:0, overflow:'hidden', textOverflow:'ellipsis', whiteSpace:'nowrap', fontSize:11, fontWeight:500 } }, mergedInto ? (base + ' ' + tr('cfg.wsMergedInto', { root: mergedInto })) : base)),
                   h('span',{ style:{ display:'inline-flex', alignItems:'center', gap:4, flex:'none', whiteSpace:'nowrap', fontSize:11, minWidth:72, justifyContent:'flex-end' }},[ h('span',{style:{width:7,height:7,borderRadius:'50%',background:color,flex:'none'}}), h('span',{style:{fontWeight:600,whiteSpace:'nowrap', minWidth:36, textAlign:'center'}},label) ]),
                   h(HoverTip, { content: srcTitle, mode: 'mouse', maxWidth: 220 }, h('span',{ style:{ fontSize:10, color:srcColor, border:'1px solid '+srcColor, borderRadius:4, padding:'0 4px', flex:'none', whiteSpace:'nowrap', minWidth:44, textAlign:'center', display:'inline-block'}}, srcLabel)),
+                  // #79：就地换后端 —— 走与右侧面板门控窗同一个出口 wf.bind，不另造写路径；
+                  //   原生 select 在手机上是系统选择器（比自绘菜单更稳），选完刷新总览。
+                  h('select',{
+                    value: backendId || '',
+                    'aria-label': tr('cfg.wsTitle'),
+                    title: tr('cfg.wsTitle'),
+                    style:{ flex:'none', maxWidth:92, font:'inherit', fontSize:10, lineHeight:'16px', padding:'1px 2px', borderRadius:6,
+                      color:'var(--dsw-alias-label-primary)', background:'var(--dsw-alias-bg-layer-1,#10131a)', border:'1px solid var(--dsw-alias-border-l2,#2a2d35)' },
+                    onChange:function(e2){
+                      const id=String((e2&&e2.target&&e2.target.value)||'')
+                      if(!id||id===String(backendId||'')) return
+                      try{
+                        host.call('wf.bind',{ cwd:cwd, backendId:id }).then(function(res){
+                          const ok=res&&(res.ok===true||(res.value&&res.value.ok===true))
+                          if(ok){
+                            try{ flash(sharedSt, tr('switch.bindOkFresh',{ label:(typeof labelOf==='function'?labelOf(id):String(id)) }), 'ok') }catch(eA){}
+                            if(loadRef.current) loadRef.current()
+                          } else {
+                            try{ flash(sharedSt, tr('switch.bindFail',{ err:String((res&&(res.error||res.message))||'bind-not-ok').slice(0,120) }), 'warn') }catch(eB){}
+                          }
+                        }).catch(function(eC){
+                          try{ flash(sharedSt, tr('switch.bindFail',{ err:String((eC&&eC.message)||eC).slice(0,120) }), 'warn') }catch(eD){}
+                        })
+                      }catch(eE){}
+                    },
+                  },[
+                    h('option',{ value:'', key:'none' }, tr('cfg.wsUnbound')),
+                  ].concat((wsOverview.modules||[]).map(function(m){ return h('option',{ value:m.id, key:m.id }, (typeof labelOf==='function'?labelOf(m.id):String(m.id))) }))),
                 ])
               }))
             ])

@@ -132,6 +132,8 @@ if (resident) {
   const endpoints = Array.isArray(protocol.http.endpoints) ? protocol.http.endpoints : []
   const expectedEndpoints = [
     'ghr.state', 'ghr.version', 'ghr.update', 'ghr.protocol', 'ghr.registry', 'ghr.registry.list',
+    // #79：写扫描根（面板「根」那一行的保存动作；写类，走 Origin 校验）
+    'ghr.registry.root',
     'ghr.registry.plan', 'ghr.registry.build', 'ghr.registry.verify', 'ghr.registry.revoke',
     'ghr.registry.purge', 'ghr.authStart', 'ghr.ensureGh', 'ghr.logout', 'ghr.identity.email',
   ].sort()

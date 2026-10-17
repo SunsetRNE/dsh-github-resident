@@ -1569,6 +1569,27 @@ async function registryDefaultRoot() {
   return state.reposRoot || DEFAULT_ROOT;
 }
 
+/**
+ * 写「登记库扫描根」（#79）：面板上「根」那行的保存动作。
+ *   · 必须是真实存在的目录（`~` 展开 → resolve → stat），否则一个字节都不写；
+ *   · 写进 state.reposRoot，与 gh_resident_login({repos_root}) 同一个落点（一份事实一个出口）；
+ *   · 换了根之后旧许可不再覆盖（consentCovers 按 root+depth 判），面板会自然退回「等你同意」。
+ * 传空串表示「恢复默认」（删掉 reposRoot，落回 ~/GitHub）。
+ */
+async function registrySetRoot({ root } = {}) {
+  const raw = String(root == null ? '' : root).trim();
+  if (raw === '') {
+    await writeState({ reposRoot: undefined });
+    return { ok: true, root: DEFAULT_ROOT, reset: true };
+  }
+  const expanded = raw.replace(/^~(?=$|[\\/])/, HOME);
+  const abs = path.resolve(expanded);
+  const isDir = await fs.stat(abs).then((s) => s.isDirectory()).catch(() => false);
+  if (!isDir) return { ok: false, error: 'root 不是目录：' + abs, root: abs };
+  await writeState({ reposRoot: abs });
+  return { ok: true, root: abs, reset: false };
+}
+
 function registryConsentView(consent) {
   const grants = consentGrants(consent);
   const latest = grants.slice().sort((a, b) => String(b.grantedAt).localeCompare(String(a.grantedAt)))[0] || null;
@@ -3527,6 +3548,7 @@ sys.stdout.flush()
     ['protocol', '本协议文档'],
     ['registry', '登记库状态与建库许可'],
     ['registry.list', '登记库清单（prefix / host / tag / missing_remote）'],
+    ['registry.root', '写登记库扫描根（root；空串=恢复默认，必须是已存在的目录）'],
     ['registry.plan', '只读建库计划（root / depth）'],
     ['registry.verify', '登记库与磁盘对账（root）'],
     ['registry.revoke', '撤销建库许可，保留库'],
@@ -5309,6 +5331,8 @@ sys.stdout.flush()
     const depth = Number.isInteger(d) && d > 0 ? d : undefined;
     const writeCodes = {
       update: 'E_ORIGIN', 'registry.revoke': 'E_REGISTRY_ORIGIN',
+      // #79：写扫描根属于写类（换根会改掉「许可覆盖哪一个 root」），与 revoke / purge 同一档校验。
+      'registry.root': 'E_REGISTRY_ORIGIN',
       // ensureGh 会真的下载/落盘 gh（39MB 级），与 authStart 同类：只许真实同源页面发起。
       authStart: 'E_ORIGIN', ensureGh: 'E_ORIGIN', logout: 'E_ORIGIN', 'identity.email': 'E_IDENTITY_EMAIL_ORIGIN',
     };
@@ -5326,6 +5350,8 @@ sys.stdout.flush()
         prefix: query.get('prefix') || undefined, host: query.get('host') || undefined,
         tag: query.get('tag') || undefined, onlyMissingRemote: query.get('missing_remote') === '1',
       });
+      // Origin 校验在 switch 之前统一做（writeCodes 里有 'registry.root'），这里只落写。
+      case 'registry.root': return await registrySetRoot({ root: query.get('root') });
       case 'registry.plan': return await registryAction({ action: 'plan', root, depth });
       case 'registry.verify': return await registryAction({ action: 'verify', root });
       case 'registry.revoke': return await registryAction({ action: 'revoke' });

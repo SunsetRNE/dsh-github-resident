@@ -31,6 +31,7 @@ async function verifyOfflineHomeIsolation() {
   writeFileSync(join(bundle, 'package.json'), JSON.stringify({ type: 'module' }))
   // 这份夹具是「假 bundle」，但协议形状必须与真件一致（诊断工具的 validateProtocol 会逐项比端点表）。
   const endpointNames = ['state', 'version', 'update', 'protocol', 'registry', 'registry.list',
+    'registry.root', // #79：写扫描根
     'registry.plan', 'registry.build', 'registry.verify', 'registry.revoke', 'registry.purge',
     'authStart', 'ensureGh', 'logout', 'identity.email']
   const protocol = { version: 9, spec: 'dsh-github-resident/9', tools: [{ name: 'fixture' }],

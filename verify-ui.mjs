@@ -89,6 +89,7 @@ const pathNames = {
   '/state': 'state', '/registry': 'registry', '/registry/list': 'registry.list',
   '/registry/plan': 'registry.plan', '/registry/verify': 'registry.verify',
   '/registry/build': 'registry.build', '/registry/revoke': 'registry.revoke', '/registry/purge': 'registry.purge',
+  '/registry/root': 'registry.root',   // #79 写扫描根
 };
 const request = async (path, headers = {}) => {
   const [pathname, query = ''] = path.split('?');
@@ -146,6 +147,18 @@ const revoke = await post('/registry/revoke', { origin: PAGE_ORIGIN });   // L4�
 check('POST /registry/revoke 撤授权但保库', revoke.ok === true && revoke.revoked === true && revoke.libraryKept === true, { revoked: revoke.revoked });
 const afterRevoke = await post('/registry/build?rescan=1&consent=1&root=' + encodeURIComponent(ROOT), { origin: PAGE_ORIGIN });
 check('撤授权后再点同意 → 重新落成授权', afterRevoke.ok === true && afterRevoke.consent?.recorded === true, { ok: afterRevoke.ok });
+
+// 6b) #79：写扫描根（面板「根」那一行的保存动作）
+const statePath = path.join(HOME, '.dsh', 'github-resident.json');
+const readReposRoot = async () => { try { return JSON.parse(await fs.readFile(statePath, 'utf8')).reposRoot || '' } catch { return '' } }
+const beforeRoot = await readReposRoot();
+const badRoot = await post('/registry/root?root=' + encodeURIComponent(path.join(HOME, 'no-such-dir')), { origin: PAGE_ORIGIN });
+check('POST /registry/root：目录不存在 → 拒写且 state 不变', badRoot.ok === false && (await readReposRoot()) === beforeRoot, badRoot.error);
+const goodDir = path.join(HOME, 'repos-root'); await fs.mkdir(goodDir, { recursive: true });
+const goodRoot = await post('/registry/root?root=' + encodeURIComponent(goodDir), { origin: PAGE_ORIGIN });
+check('POST /registry/root：存在的目录写进 state.reposRoot', goodRoot.ok === true && goodRoot.root === goodDir && (await readReposRoot()) === goodDir, goodRoot);
+const noOriginRoot = await post('/registry/root?root=' + encodeURIComponent(goodDir), {});
+check('POST /registry/root：无来源头被拒', noOriginRoot.ok === false, '');
 
 // 7) 清库：两步确认 + 来源门
 const purgeNoConfirm = await post('/registry/purge');
@@ -250,8 +263,19 @@ const missing = clientNames.filter(n => !hostNames.has(n) || !endpoints.has(n));
 check('客户端每个端点都在协议且实际注册', missing.length === 0, { clientNames, missing });
 const requiredWrites = ['ghr.registry.build', 'ghr.registry.purge', 'ghr.authStart', 'ghr.ensureGh', 'ghr.identity.email'];
 check('客户端用到的写类端点一条不少', requiredWrites.every(n => clientNames.includes(n)), requiredWrites);
+
 const hostSrc = await fs.readFile(new URL('./plugin.js', import.meta.url), 'utf8');
 check('Resident 源码没有监听或端口配置', !/server\.listen\s*\(|DSH_GH_API_PORT|lastServerError/.test(hostSrc));
+
+// ---------- E. #79 两项前置能力：根可改 / 绑定页可就地换后端 ----------
+// 根：面板调 ghr.registry.root，宿主端点必须在协议里且带 Origin 校验（写类）。
+check('根可改：客户端调 ghr.registry.root', clientNames.includes('ghr.registry.root'), clientNames.filter((n) => n.indexOf('registry') >= 0));
+check('根可改：协议端点表里有 ghr.registry.root', hostNames.has('ghr.registry.root') && endpoints.has('ghr.registry.root'), '');
+check('根可改：宿主把 registry.root 列进写类（Origin 校验）', /'registry\.root': 'E_REGISTRY_ORIGIN'/.test(hostSrc), '');
+// 绑定：Deck 的工作区总览每行挂原生 select，选中后走 wf.bind（与右侧面板门控窗同一个出口）。
+const wsSrc = await fs.readFile(new URL('./deck/src/client/views/SettingsWorkspaces.js', import.meta.url), 'utf8');
+check('绑定页可就地换后端：行内有原生 select', wsSrc.includes("h('select'"), '');
+check('绑定页换后端走 wf.bind（不另造写路径）', wsSrc.includes("host.call('wf.bind'"), '');
 for (const stop of cleanups.reverse()) stop();
 Server.prototype.listen = listen;
 await fs.rm(HOME, { recursive: true, force: true });

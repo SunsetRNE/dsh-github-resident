@@ -15,7 +15,7 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const NEXT = '可在当前宿主会话调用 gh_protocol / gh_cli_status；在线诊断需显式设置 DSH_GUI_HEADERS_FILE（每行一个 HTTP header）。'
 const ENDPOINTS = [
   'ghr.state', 'ghr.version', 'ghr.update', 'ghr.protocol', 'ghr.registry',
-  'ghr.registry.list', 'ghr.registry.plan', 'ghr.registry.build', 'ghr.registry.verify',
+  'ghr.registry.list', 'ghr.registry.root', 'ghr.registry.plan', 'ghr.registry.build', 'ghr.registry.verify',
   'ghr.registry.revoke', 'ghr.registry.purge', 'ghr.authStart', 'ghr.ensureGh', 'ghr.logout', 'ghr.identity.email',
 ].sort()
 const object = (value) => value !== null && typeof value === 'object' && !Array.isArray(value)
