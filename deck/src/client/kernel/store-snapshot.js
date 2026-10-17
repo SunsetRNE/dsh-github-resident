@@ -350,7 +350,8 @@
     export const NOTICE_COLOR = { ok: '#4ade80', warn: '#fbbf24', info: '#a1a1aa' }
     export const noticeIcon = (k) => k === 'ok' ? 'check' : k === 'warn' ? 'alert' : 'clipboard'
     export const flash = (st, msg, kind) => {
-      st.notice = { text: msg, kind: kind || 'info' }; emit(st)
-      if (timer !== undefined) timer.timeout(function () { if (st.notice && st.notice.text === msg) { st.notice = null; emit(st) } }, 2800)
+      // #76：每次显示一个序号（对齐上游 Toast 的「按每次显示编号」）：同文案重弹是新一轮，上一轮的定时器到点只许对不上号，不许把新的掐掉。
+      const id = (st.noticeId = (st.noticeId || 0) + 1); st.notice = { text: msg, kind: kind || 'info', id: id }; emit(st)
+      if (timer !== undefined) timer.timeout(function () { if (st.notice && st.notice.id === id) { st.notice = null; emit(st) } }, 2800)
     }
 

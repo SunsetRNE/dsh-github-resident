@@ -341,7 +341,7 @@ loadSnapshot(s,true,true)}else{s.selection=prev;try{if(s.cwd)setCachedSelection(
         // #189 · 切换三选一 Modal（全局 per-store）
         (s.switchConfirm && s.switchConfirm.open && typeof SwitchConfirmModal === 'function' ? h(SwitchConfirmModal, { sessionId: sid }) : null),
         // v1.5 T10 R7：刷新遮罩已废除（手动刷新走静默路径，无「刷新中」）
-        s.notice ? h('div', { className: 'dsws-note', style: { display: 'flex', alignItems: 'center', gap: 6 } }, [
+        s.notice ? h('div', { className: 'dsws-note', role: 'status', 'aria-live': 'polite', style: { display: 'flex', alignItems: 'center', gap: 6 } }, [
           Ic({ n: noticeIcon(s.notice.kind), size: 13, color: NOTICE_COLOR[s.notice.kind] || '#4ade80' }),
           h('span', null, s.notice.text),
         ]) : null,
