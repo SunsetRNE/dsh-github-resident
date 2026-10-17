@@ -43,7 +43,7 @@ export function makeDeckSource(options = {}) {
     : '\n      // 负例夹具：故意不注册 dock'
   const embedReturn = withEmbed
     ? `
-      return { mergeEmbed: { SettingsSections: FIX_SECTIONS, UpdateEntry: FIX_UPDATE, version: 'v-fixture' } }`
+      return { mergeEmbed: { SettingsSections: FIX_SECTIONS, WorkspaceSection: FIX_WORKSPACE, DiagnosticsSection: FIX_DIAG, UpdateEntry: FIX_UPDATE, version: 'v-fixture', repoUrl: 'https://github.com/SunsetRNE/dsh-github-resident' } }`
     : '\n      return undefined'
   return `// fixture: 形状对照 deck/scripts/build.mjs 的 client-pkg 产物（头注释 + 单条 load）
 window.__ModuleLoader__.load({
@@ -62,8 +62,11 @@ window.__ModuleLoader__.load({
     const DSW_REPO_URL = 'https://github.com/SunsetRNE/dsh-github-resident'
     const API = 'deck-fixture-api'
     const FIX_SECTIONS = function DeckFixtureSections() { return h('div', { className: 'deck-fixture-sections' }) }
+    // #78：Deck 交出的设置区块从一个整块拆成两片（工作区 / 诊断），Resident 分挂在「绑定」「诊断」子页。
+    const FIX_WORKSPACE = function DeckFixtureWorkspace() { return h('div', { className: 'deck-fixture-workspace' }) }
+    const FIX_DIAG = function DeckFixtureDiagnostics() { return h('div', { className: 'deck-fixture-diagnostics' }) }
     const FIX_UPDATE = function DeckFixtureUpdate() { return h('span', { className: 'deck-fixture-update' }) }
-    globalThis.__DECK_FIXTURE__ = { sections: FIX_SECTIONS, update: FIX_UPDATE, applied: false, embed: false }
+    globalThis.__DECK_FIXTURE__ = { sections: FIX_SECTIONS, workspace: FIX_WORKSPACE, diagnostics: FIX_DIAG, update: FIX_UPDATE, applied: false, embed: false }
     exports.inject = ['connection', 'slots', 'locale', 'workspaces', 'sessions']
     exports.apply = function (ctx) {
       const slots = ctx.slots

@@ -177,7 +177,8 @@ clientMod.apply({
 const regEntry = registrations.find((r) => r.opts.id === 'github-repo-registry');
 check('注册了独立的 settings.section（id=github-repo-registry）', Boolean(regEntry) && regEntry.opts.name === 'settings.section', registrations.map((r) => r.opts.id));
 check('原有 GitHub 页保持不变', registrations.some((r) => r.opts.id === 'github-resident' && r.opts.order === 60), registrations.map((r) => r.opts.order));
-check('新页 order/label 正确（排在 GitHub 之后）', regEntry.opts.order === 61 && regEntry.opts.label === '仓库登记库', { order: regEntry.opts.order, label: regEntry.opts.label });
+// #78：页名从「仓库登记库」改成「插件后端」——这一页管的是后端的五件事，登记库只是其中一件。
+check('新页 order/label 正确（排在 GitHub 之后，页名 = 插件后端）', regEntry.opts.order === 61 && regEntry.opts.label === '插件后端', { order: regEntry.opts.order, label: regEntry.opts.label });
 check('新页组件是个函数（交给 slot 渲染）', typeof regEntry.component === 'function', typeof regEntry.component);
 check('两页都由同一次 apply 注册', registrations.filter((r) => r.slot === 'settings.section').length === 2, registrations.length);
 
@@ -214,6 +215,12 @@ check('登记库页没有「未授权 / 已授权」这类账号用词', !regCod
 // 票 51 第 2 步：账号快照改走宿主 RPC 端点 ghr.state（?cached=1）—— 判据等价换：仍认「登记库页读的是同一份快照」。
 check('登记库页与 GitHub 页共用同一份账号快照（ghr.state · cached=1）', regCode.includes('ghr.state') && regCode.includes('cached=1'), '');
 check('登记库页显式声明与账号登录无关', regRegion.includes('和账号登录是两件事') || regRegion.includes('不涉及账号登录'), '');
+
+// #78：五子页骨架。页签、落点、分发页的边界各自钉一条——少一个就红。
+check('五个子页签都在（数据 / 绑定 / 诊断 / 工具 / 分发）', ['数据', '绑定', '诊断', '工具', '分发'].every((x) => regRegion.includes("'" + x + "'")), '');
+check('绑定 / 诊断两页挂的是 Deck 拆出来的两片（WorkspaceSection / DiagnosticsSection）', regRegion.includes('deck.WorkspaceSection') && regRegion.includes('deck.DiagnosticsSection'), '');
+check('分发页不再挂 Deck 更新入口件（只给去向链接）', !regRegion.includes('h(DeckUpdate') && !regRegion.includes('DeckUpdate = deck'), '');
+check('分发页给出发布页与仓库两个链接', regRegion.includes('/releases') && regRegion.includes("target: '_blank'"), '');
 
 // 文案预算：这一页被要求「清理与压缩」，给它一个上限，长回去就红。
 // 合并期调整（2026-10-11，构建负责人）：登记库页按实施计划 ⑦⑧⑨⑩ 并入了 Deck 的 4 个区块，

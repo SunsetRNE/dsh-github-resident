@@ -196,23 +196,33 @@ async function actEmit(cx, st, mutate) {
   })
 }
 
-section('3. 仓库登记库页真挂载：根包版本 + 发布状态说明 + Deck 区块同页')
+section('3. 插件后端页真挂载：五子页 + 数据页事实 + 绑定/诊断/分发各挂对东西（#78）')
 {
   const view = await renderTo(RegistryComp, null)
+  const clickTab = async (label) => {
+    const btn = [...view.container.querySelectorAll('button')].find((b) => b.textContent === label)
+    check('页签「' + label + '」可点', !!btn)
+    if (btn) await act(async () => { btn.dispatchEvent(new win.MouseEvent('click', { bubbles: true })); await new Promise((r) => win.setTimeout(r, 40)) })
+  }
   const html = view.html()
-  check('渲染出登记库页标题', has(html, '仓库登记文件库'))
-  check('版本号来自根 package.json（含 ' + MERGED_VERSION + '）', has(html, MERGED_VERSION.replace(/^v/, '')))
+  check('页名是「插件后端」', has(html, '插件后端'))
+  check('五个子页签都在', ['数据', '绑定', '诊断', '工具', '分发'].every((x) => has(html, x)))
+  check('默认落在「数据」：建库许可 + 动作条渲染', has(html, '建库许可') && has(html, 'ghreg-actions'))
+  check('数据页有落点（库目录 / index.json）', has(html, '落点') && has(html, 'index.json'))
+  check('数据页不再挂更新入口件（版本与去向搬去「分发」）', !has(html, 'dsh-plugin-update'))
   check('不显示 Deck 上游版本 1.8.0-rc.7', !has(html, '1.8.0-rc.7'))
-  check('状态区有「插件版本」一行（唯一更新入口的位置）', has(html, '插件版本'))
-  // 下面三条原来断言的是**旧文案的具体措辞**，其中「v1.7.1 起是可发布的 npm 包」还**不实**
-  //（npm 上实际是 404，README「更新」一节自己写着尚未发布）。文案改成如实区分「可发布形态」
-  // 与「已发布」之后，判据改成验**意图**：说清发布状态、给出重装路径、指向宿主入口件、不装回旧 Deck。
-  check('如实说明发布状态（区分「可发布形态」与「尚未发布到 npm」）', has(html, 'npm 包形态') && has(html, '尚未发布到 npm'))
-  check('如实说明重装路径且不装回旧 Deck', has(html, '重装') && has(html, '不会装回旧的 Deck'))
-  check('更新入口指向宿主入口件（dsh-plugin-update）', has(html, 'dsh-plugin-update'))
-  check('许可状态区渲染（读的是同一份 /registry 快照）', has(html, 'ghreg-ask') || has(html, '登记库已建立') || has(html, '未许可') || has(html, '许可'))
-  check('Deck 交出的设置区块渲染在同一页里（mergeEmbed 交接）', has(html, 'dsws-embed') || has(html, 'dsws-cfg-group'))
-  check('Deck 区块的标题渲染出来（同源组件）', has(html, '工作区总览') || has(html, 'cfg.wsTitle') || has(html, 'dsws-cfg-gtitle'))
+
+  await clickTab('绑定')
+  check('绑定页渲染 Deck 的工作区总览（mergeEmbed.WorkspaceSection）', has(view.html(), 'dsws-embed-workspace'))
+  await clickTab('诊断')
+  check('诊断页渲染 Deck 的诊断区块（mergeEmbed.DiagnosticsSection）', has(view.html(), 'dsws-embed-diagnostics'))
+  await clickTab('工具')
+  check('工具页列出会话里用的命令', has(view.html(), 'gh_repo_registry'))
+  await clickTab('分发')
+  const distHtml = view.html()
+  check('分发页有版本号（来自根 package.json）', has(distHtml, MERGED_VERSION.replace(/^v/, '')))
+  check('分发页只给链接：有 releases 去向', has(distHtml, '/releases'))
+  check('分发页不再直接挂更新入口件', !has(distHtml, 'dsh-plugin-update'))
   await view.unmount()
 }
 

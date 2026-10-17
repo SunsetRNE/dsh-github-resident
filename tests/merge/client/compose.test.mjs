@@ -111,7 +111,7 @@ test('apply 之后：Deck 先注册、Resident 两个设置页随后；不再有
   assert.equal(globalThis.__DECK_FIXTURE__.applied, true, 'Deck 半边的 apply 必须真的跑过')
 })
 
-test('mergeEmbed 交接：登记库页渲染的正是 Deck 交出的那两个组件（同一函数对象）', () => {
+test('mergeEmbed 交接：默认数据页不挂 Deck 区块与更新入口，页签照常渲染（#78）', () => {
   const { mod } = composeResidentHalf()
   const { ctx, registrations } = makeFakeCtx()
   mod.apply(ctx)
@@ -119,10 +119,13 @@ test('mergeEmbed 交接：登记库页渲染的正是 Deck 交出的那两个组
   const tree = renderRegistration(registry, {})
 
   const fx = globalThis.__DECK_FIXTURE__
-  const renderedSections = findInTree(tree, (node) => node.type === fx.sections)
-  const renderedUpdate = findInTree(tree, (node) => node.type === fx.update)
-  assert.ok(renderedSections, 'Deck 的 SettingsSections 必须被登记库页渲染')
-  assert.ok(renderedUpdate, 'Deck 的唯一更新入口必须被登记库页渲染')
+  // #78：这一页改成五个子页，默认落在「数据」。桩 React 的 useState 返回定值、切不了页，
+  // 所以这里断言的是「默认页上不再挂 Deck 区块与更新入口」；切换后的挂载由
+  // tests/merge/build/merged-render.test.mjs 用真 React 点页签来验。
+  assert.ok(!findInTree(tree, (node) => node.type === fx.sections), '数据页不再渲染 Deck 整块')
+  assert.ok(!findInTree(tree, (node) => node.type === fx.workspace), '数据页不渲染工作区区块（归「绑定」）')
+  assert.ok(!findInTree(tree, (node) => node.type === fx.update), '更新入口不再被设置页挂载（分发页只给链接）')
+  assert.ok(findInTree(tree, (node) => node.type === 'button' && node.children === '数据'), '五子页的页签真渲染出来了')
   assert.equal(globalThis.__DECK_FIXTURE__.embed, true)
 })
 

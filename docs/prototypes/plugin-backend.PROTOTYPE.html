@@ -1,0 +1,455 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>PROTOTYPE · 插件后端（子页）</title>
+<style>
+  :root{
+    --label1:#0f1115; --label2:#61666b; --label3:#81858c;
+    --bg:#ffffff; --layer1:#ffffff; --layer2:#ffffff; --module:#f5f6f7;
+    --hover:#2631480f; --press:#ebeef2;
+    --line1:#0000000a; --line2:#0000001a; --line3:#0000001f; --line4:#00000029;
+    --brand:#0f1115; --on-brand:#ffffff;
+    --ok:#22c55e; --warn:#f59e0b; --err:#ec1313; --idle:#d4d4d4;
+    --ok-bg:rgba(34,197,94,.10); --warn-bg:rgba(245,158,11,.12);
+    --err-bg:rgba(236,19,19,.08); --idle-bg:rgba(15,17,21,.04);
+    --r-sm:8px; --r-md:12px;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --label1:#f9fafb; --label2:#cfd3d6; --label3:#adb2b8;
+      --bg:#151517; --layer1:#232324; --layer2:#2c2c2e; --module:#353638;
+      --hover:#ffffff14; --press:#43454a;
+      --line1:#ffffff0f; --line2:#ffffff1f; --line3:#ffffff29; --line4:#ffffff33;
+      --brand:#f9fafb; --on-brand:#0f1115;
+      --ok:#22c55e; --warn:#f59e0b; --err:#f25a5a; --idle:#545557;
+      --ok-bg:rgba(34,197,94,.14); --warn-bg:rgba(245,158,11,.14);
+      --err-bg:rgba(242,90,90,.14); --idle-bg:rgba(255,255,255,.06);
+    }
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  html,body{margin:0;background:var(--bg);color:var(--label1);
+    font:13px/1.55 -apple-system,BlinkMacSystemFont,"PingFang SC","Noto Sans SC","Segoe UI",sans-serif}
+  .phone{max-width:420px;margin:0 auto;min-height:100vh;background:var(--bg);display:flex;flex-direction:column}
+
+  /* ---- 顶栏 ---- */
+  .top{position:sticky;top:0;z-index:6;background:var(--bg);border-bottom:.5px solid var(--line2)}
+  .tabs{display:flex;align-items:center;gap:2px;padding:12px 12px 6px;font-size:13.5px}
+  .tabs .t{padding:6px 10px;border-radius:var(--r-sm);color:var(--label2);white-space:nowrap}
+  .tabs .t.on{background:var(--module);color:var(--label1);font-weight:600}
+  .tabs .x{margin-left:auto;color:var(--label3);font-size:15px;padding:2px 10px}
+  .subwrap{padding:6px 12px 10px}
+  .sub{display:flex;gap:2px;background:var(--module);border-radius:10px;padding:3px;overflow:auto}
+  .sub .s{flex:1;min-width:50px;text-align:center;padding:6px 4px;border-radius:8px;font-size:12.5px;color:var(--label2);white-space:nowrap}
+  .sub .s.on{background:var(--bg);color:var(--label1);font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.10)}
+  @media (prefers-color-scheme: dark){ .sub .s.on{background:var(--press);box-shadow:none} }
+
+  /* ---- 正文 ---- */
+  .body{flex:1;padding:16px 14px 30px}
+  .sec{margin:0 0 20px}
+  .sec>h3{display:flex;align-items:center;gap:6px;font-size:11.5px;font-weight:600;letter-spacing:.05em;
+    color:var(--label2);margin:0 0 8px}
+  .sec>h3 svg{width:13px;height:13px;stroke:var(--label3);fill:none;stroke-width:1.4}
+  .card{background:var(--layer1);border:.5px solid var(--line2);border-radius:10px;padding:14px 16px}
+  .row{display:flex;align-items:center;gap:12px;padding:10px 0;font-size:12.5px}
+  .row+.row{border-top:.5px solid var(--line1)}
+  .row.tap{cursor:pointer;border-radius:6px}
+  .row.tap:hover{background:var(--hover)}
+  .row.tap:active{background:var(--press)}
+  .k{color:var(--label2);flex:0 0 84px}
+  .v{flex:1;min-width:0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;
+    word-break:break-all;letter-spacing:-.01em}
+  .v.plain{font-family:inherit;font-size:12.5px}
+  .v.bad{color:var(--err)} .v.ok{color:var(--ok)}
+  .sub2{display:block;margin-top:2px;font-family:inherit;font-size:11.5px;color:var(--label3);word-break:break-all;letter-spacing:0}
+
+  /* ---- 标签 / 胶囊（照宿主 Tag、Pill 的几何） ---- */
+  .tag{display:inline-flex;align-items:center;gap:3px;flex:none;padding:1px 8px;border-radius:999px;
+    font-size:11px;line-height:17px;font-weight:500;white-space:nowrap}
+  .tag.outline{box-shadow:inset 0 0 0 .5px var(--line4);color:var(--label3)}
+  .tag.ok{background:var(--ok-bg);color:var(--ok)}
+  .tag.warn{background:var(--warn-bg);color:#b45309}
+  .tag.err{background:var(--err-bg);color:var(--err)}
+  .tag.idle{background:var(--idle-bg);color:var(--label2)}
+  .tag.tap{height:24px;padding:0 9px;line-height:22px;cursor:pointer}
+  .tag.tap:hover{filter:brightness(.97)}
+  .tag.tap:active{transform:scale(.98)}
+  .tag .chev{width:10px;height:10px;stroke:currentColor;fill:none;stroke-width:1.6;opacity:.65}
+
+  .badge{display:inline-flex;align-items:center;gap:7px;font-size:12px;font-weight:500;
+    padding:3px 10px;border-radius:999px;background:var(--idle-bg);color:var(--label2)}
+  .badge .dot{width:6px;height:6px;border-radius:999px;background:currentColor;opacity:.75}
+  .badge.ok{background:var(--ok-bg);color:var(--ok)} .badge.warn{background:var(--warn-bg);color:#b45309}
+  .badge.err{background:var(--err-bg);color:var(--err)}
+
+  /* ---- 按钮（照宿主 Button：28px 高、圆角 8） ---- */
+  .btn{display:inline-flex;align-items:center;justify-content:center;gap:4px;height:28px;padding:0 10px;
+    border:0;border-radius:var(--r-sm);font:inherit;font-size:12px;line-height:18px;cursor:pointer;
+    background:transparent;color:var(--label1)}
+  .btn.primary{background:var(--brand);color:var(--on-brand)}
+  .btn.primary:hover{opacity:.92}
+  .btn.primary:active{opacity:.82}
+  .btn.outline{box-shadow:inset 0 0 0 .5px var(--line3)}
+  .btn.outline:hover{background:var(--hover)}
+  .btn.outline:active{background:var(--press)}
+  .btn.ghost{color:var(--label2)}
+  .btn.ghost:hover{background:var(--hover)}
+  .btn[disabled]{opacity:.4;cursor:not-allowed}
+  .actions{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:14px}
+
+  .btn,.tag.tap,.row.tap{transition:background .12s,opacity .12s,transform .12s}
+  .btn:focus-visible,.tag.tap:focus-visible,.row.tap:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+  @media (prefers-color-scheme: dark){ .tag.warn,.badge.warn{color:#f59e0b} }
+
+  /* ---- 提示块 ---- */
+  .ask{margin-top:12px;padding:12px 14px;border-radius:10px;background:var(--module);
+    border:.5px dashed var(--line3);font-size:12.5px;line-height:1.65}
+  .ask b{font-weight:600}
+  .errbar{margin-top:12px;padding:9px 12px;border-radius:8px;background:var(--err-bg);
+    color:var(--err);font-size:12px;display:flex;gap:6px;align-items:flex-start}
+  .note{margin:10px 0 0;font-size:11.5px;line-height:1.6;color:var(--label3)}
+  .muted{color:var(--label2)}
+
+  /* ---- 仓库 ---- */
+  .repo{padding:11px 0;font-size:12.5px}
+  .repo+.repo{border-top:.5px solid var(--line1)}
+  .repo .n{display:flex;align-items:center;gap:6px;font-weight:600}
+  .repo .p{font-family:ui-monospace,Menlo,monospace;font-size:11px;color:var(--label3);
+    word-break:break-all;margin-top:3px;letter-spacing:-.01em}
+  .repo .m{display:flex;gap:10px;flex-wrap:wrap;margin-top:5px;font-size:11.5px;color:var(--label2)}
+  .repo .m .dirty{color:var(--warn)}
+  .toolbar{display:flex;align-items:center;gap:8px;padding-bottom:9px;border-bottom:.5px solid var(--line1)}
+
+  /* ---- 工具行 ---- */
+  .cmd{display:flex;align-items:center;gap:10px;padding:10px 0;font-size:12px}
+  .cmd+.cmd{border-top:.5px solid var(--line1)}
+  .cmd .c{flex:1;min-width:0}
+  .cmd code{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;word-break:break-all;letter-spacing:-.01em}
+  .cmd em{display:block;font-style:normal;color:var(--label3);margin-top:3px;font-size:11.5px}
+
+  .empty{display:flex;flex-direction:column;align-items:center;gap:6px;padding:18px 8px 14px;text-align:center;color:var(--label2);font-size:12px}
+  .empty svg{width:22px;height:22px;stroke:var(--label3);fill:none;stroke-width:1.3}
+
+  /* ---- 弹层 ---- */
+  .sheet{position:fixed;inset:0;background:rgba(15,17,21,.42);display:none;align-items:flex-end;z-index:30}
+  .sheet.on{display:flex}
+  .sheet .panel{background:var(--bg);width:100%;max-width:420px;margin:0 auto;
+    border-radius:14px 14px 0 0;padding:16px 16px 22px;border-top:.5px solid var(--line2)}
+  .opt{display:flex;justify-content:space-between;gap:10px;padding:13px 2px;
+    border-bottom:.5px solid var(--line1);cursor:pointer;font-size:13px}
+  .opt:hover{background:var(--hover)} .opt:active{background:var(--press)}
+  .toast{position:fixed;left:50%;transform:translateX(-50%);bottom:26px;background:#353638;color:#fff;
+    padding:9px 14px;border-radius:10px;font-size:12.5px;opacity:0;transition:.18s;pointer-events:none;
+    z-index:40;max-width:360px;text-align:center}
+  .toast.on{opacity:1}
+</style>
+</head>
+<body>
+<div class="phone">
+  <div class="top">
+    <div class="tabs">
+      <div class="t">Agent 预设</div>
+      <div class="t">GitHub</div>
+      <div class="t on">插件后端</div>
+      <div class="x">✕</div>
+    </div>
+    <div class="subwrap"><div class="sub" id="sub"></div></div>
+  </div>
+  <div class="body" id="body"></div>
+</div>
+
+<div class="toast" id="toast"></div>
+<div class="sheet" id="sheet">
+  <div class="panel">
+    <div id="sheetTitle" style="font-weight:600;font-size:14px;margin:2px 0 4px">选择</div>
+    <div id="sheetHint" class="muted" style="font-size:12px;line-height:1.6;margin-bottom:8px"></div>
+    <div id="opts"></div>
+    <div style="margin-top:16px"><button class="btn outline" onclick="closeSheet()">取消</button></div>
+  </div>
+</div>
+
+<script>
+/* ================== 状态 ================== */
+var S = {
+  tab: 'data',
+  consent: { granted: true, root: '/root/GitHub', depth: 3, via: 'ui:registry-panel', at: '2026-10-15' },
+  rootExists: false,
+  found: 0,
+  lib: null,
+  lastError: 'root 不是目录：/root/GitHub',
+  onlyMissing: false,
+  busy: false,
+  debug: true,
+  version: '1.11.7'
+};
+
+var WS = [
+  { name: 'dsh-github-resident', cwd: '~/Documents/deepseek-harness/default-workspace/dsh-github-resident', bound: true, backend: 'github' },
+  { name: 'default-workspace', cwd: '~/Documents/deepseek-harness/default-workspace', bound: false, backend: '' },
+  { name: 'dsh-container', cwd: '~/Documents/deepseek-harness/default-workspace/dsh-container', bound: false, backend: '' },
+  { name: 'Uto', cwd: '~/Documents/deepseek-harness/default-workspace/Uto', bound: false, backend: '' }
+];
+
+var REPOS = [
+  { name:'dsh-github-resident', path:'/root/Documents/deepseek-harness/default-workspace/dsh-github-resident', branch:'main', ahead:0, behind:0, upstream:'origin/main', dirty:2, at:'刚刚', remote:true },
+  { name:'some-other-repo', path:'/root/Documents/some-other-repo', branch:'dev', ahead:0, behind:0, upstream:'', dirty:0, at:'3 小时前', remote:false },
+  { name:'third-repo', path:'/root/Documents/third-repo', branch:'main', ahead:2, behind:1, upstream:'origin/main', dirty:0, at:'昨天', remote:true }
+];
+
+var CMDS = [
+  ['gh_repo_registry {action:"plan"}', '只读计划：要登记哪些仓库'],
+  ['gh_repo_registry {action:"build", consent:true}', '同意后建库（写 repos/*.json + index.json）'],
+  ['gh_repo_registry {action:"rescan"}', '刷新登记快照'],
+  ['gh_repo_registry {action:"verify"}', '与磁盘对账（库里 vs 现场）'],
+  ['gh_repo_registry_list', '只读文件库（给别的插件/脚本读）']
+];
+
+var PAGES = [['data','数据'],['bind','绑定'],['diag','诊断'],['tools','工具'],['dist','分发']];
+
+/* ================== 图标 ================== */
+var ICONS = {
+  data: '<svg viewBox="0 0 16 16"><ellipse cx="8" cy="4.2" rx="4.6" ry="1.9"/><path d="M3.4 4.2v7.6c0 1 2 1.9 4.6 1.9s4.6-.9 4.6-1.9V4.2"/><path d="M3.4 8c0 1 2 1.9 4.6 1.9s4.6-.9 4.6-1.9"/></svg>',
+  bind: '<svg viewBox="0 0 16 16"><circle cx="5" cy="8" r="2.4"/><circle cx="11" cy="8" r="2.4"/><path d="M7.4 8h1.2"/></svg>',
+  diag: '<svg viewBox="0 0 16 16"><path d="M1.8 8.4h2.6l1.7-3.6 2.6 6.4 1.6-2.8h3.9"/></svg>',
+  tools: '<svg viewBox="0 0 16 16"><rect x="2" y="3.6" width="12" height="8.8" rx="2"/><path d="M4.6 6.6l2 2-2 2"/><path d="M8.4 10.6h2.6"/></svg>',
+  dist: '<svg viewBox="0 0 16 16"><rect x="3" y="5.6" width="10" height="7.6" rx="1.6"/><path d="M8 2.2v6"/><path d="M5.8 5.4L8 7.6l2.2-2.2"/></svg>',
+  empty: '<svg viewBox="0 0 24 24"><rect x="4" y="6" width="16" height="13" rx="3"/><path d="M4 10h16"/><path d="M8 15h4"/></svg>'
+};
+
+/* ================== 小件 ================== */
+function h(s){ return String(s==null?'':s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/"/g,'&quot;'); }
+function toast(t){ var el=document.getElementById('toast'); el.textContent=t; el.classList.add('on');
+  clearTimeout(window.__tt); window.__tt=setTimeout(function(){ el.classList.remove('on'); },1700); }
+function chev(){ return '<svg class="chev" viewBox="0 0 12 12"><path d="M4.5 2.5L8 6l-3.5 3.5"/></svg>'; }
+function tag(text, kind, tap){ return '<span class="tag '+(kind||'idle')+(tap?' tap':'')+'">'+text+(tap?chev():'')+'</span>'; }
+function row(k, v, o){
+  o=o||{};
+  return '<div class="row'+(o.tap?' tap':'')+'"'+(o.tap?' onclick="'+o.tap+'"':'')+'>'
+    + '<span class="k">'+h(k)+'</span>'
+    + '<span class="v '+(o.plain?'plain':'')+' '+(o.tone||'')+'">'+v+'</span>'
+    + (o.tail||'') + '</div>';
+}
+function sec(title, icon, inner){ return '<div class="sec"><h3>'+ICONS[icon]+h(title)+'</h3>'+inner+'</div>'; }
+function card(inner){ return '<div class="card">'+inner+'</div>'; }
+function badge(){
+  if(!S.consent.granted) return '<span class="badge warn"><i class="dot"></i>登记库未建立 · 等你同意</span>';
+  if(S.lib) return '<span class="badge ok"><i class="dot"></i>登记库已建立 · '+S.lib.count+' 个仓库</span>';
+  return '<span class="badge"><i class="dot"></i>已有建库许可 · 库还没建</span>';
+}
+
+/* ================== 行为 ================== */
+function setTab(t){ S.tab=t; render(); }
+function plan(){
+  if(!S.rootExists){ S.lastError='root 不是目录：'+S.consent.root; toast('计划拉不起来：根不存在'); render(); return; }
+  S.lastError=''; toast('计划：找到 '+S.found+' 个 · 待登记 '+S.found); render();
+}
+function build(){
+  if(S.busy) return;
+  if(!S.consent.granted){ toast('先给许可（点「许可」那行）'); return; }
+  if(!S.rootExists){ S.lastError='root 不是目录：'+S.consent.root; toast('建库被拦下：根不存在'); render(); return; }
+  S.busy=true; render();
+  setTimeout(function(){
+    S.busy=false;
+    S.lib={ count:S.found, remote:Math.max(0,S.found-3), without:Math.min(3,S.found), at:'2026-10-17 23:41' };
+    toast('登记库已建立 · '+S.lib.count+' 个仓库'); render();
+  }, 900);
+}
+function revoke(){ S.consent.granted=false; toast('许可已撤销（库保留可读）'); render(); }
+function grant(){ S.consent.granted=true; S.consent.at='2026-10-17'; toast('已给许可'); render(); }
+function toggleDebug(){ S.debug=!S.debug; toast('调试日志：'+(S.debug?'开':'关')); render(); }
+function toggleMissing(){ S.onlyMissing=!S.onlyMissing; render(); }
+function openPath(w){ toast('打开：'+w); }
+function useCmd(i){ toast('丢进会话：'+CMDS[i][0]); }
+function openLink(w){ toast('在浏览器打开：'+w); }
+
+/* 弹层：换根 */
+function openRootSheet(){
+  document.getElementById('sheetTitle').textContent='换根';
+  document.getElementById('sheetHint').textContent='许可按「根 + 深度」记账，换根要重新同意一次。';
+  var opts=[
+    { p:'~/Documents/deepseek-harness/default-workspace', d:3, ok:true, note:'当前工作区' },
+    { p:'~/Documents', d:3, ok:true, note:'整个文档目录' },
+    { p:'/root/GitHub', d:3, ok:false, note:'不存在' }
+  ];
+  document.getElementById('opts').innerHTML = opts.map(function(o,i){
+    return '<div class="opt" onclick="pickRoot('+i+')"><span>'+h(o.p)+'<span class="sub2">'+h(o.note)+' · 深度 '+o.d+'</span></span>'
+      + '<span class="tag '+(o.ok?'ok':'err')+'">'+(o.ok?'存在':'不存在')+'</span></div>';
+  }).join('');
+  window.__opts=opts; document.getElementById('sheet').classList.add('on');
+}
+function pickRoot(i){
+  var o=window.__opts[i]; closeSheet();
+  S.consent.root=o.p; S.consent.depth=o.d; S.rootExists=o.ok;
+  S.found=o.ok?12:0; S.lastError=o.ok?'':('root 不是目录：'+o.p);
+  toast(o.ok?('根已改为 '+o.p+' · 找到 12 个仓库'):'这个目录不存在'); render();
+}
+/* 弹层：许可 */
+function openConsentSheet(){
+  document.getElementById('sheetTitle').textContent='建库许可';
+  document.getElementById('sheetHint').textContent='许可只管「要不要把这份文件库落盘」，和 GitHub 账号登录是两件事。';
+  var opts = S.consent.granted
+    ? [['revoke','撤销许可（库保留可读）'],['regrant','按当前根重新授权一次']]
+    : [['grant','给许可（按当前根 + 深度）']];
+  document.getElementById('opts').innerHTML = opts.map(function(o,j){
+    return '<div class="opt" onclick="pickConsent('+j+')"><span>'+h(o[1])+'</span>'
+      + '<span class="tag '+(o[0]==='revoke'?'err':'idle')+'">'+(o[0]==='revoke'?'危险':'')+'</span></div>';
+  }).join('');
+  window.__copts=opts; document.getElementById('sheet').classList.add('on');
+}
+function pickConsent(j){ var o=window.__copts[j]; closeSheet(); if(o[0]==='revoke'){ revoke(); } else { grant(); } }
+/* 弹层：工作区后端 */
+function openBindSheet(i){
+  window.__i=i;
+  document.getElementById('sheetTitle').textContent='工作区后端 · '+WS[i].name;
+  document.getElementById('sheetHint').textContent='只改这个工作区的 tracker 绑定，不动仓库本身。';
+  var opts=[['github','GitHub 票（走 gh 命令）'],['markdown','本地文件票（map.md）'],['none','不绑定（自动识别）']];
+  document.getElementById('opts').innerHTML = opts.map(function(o,j){
+    var cur=(o[0]==='none')?(!WS[i].bound):(WS[i].bound&&WS[i].backend===o[0]);
+    return '<div class="opt" onclick="pickBind('+j+')"><span>'+h(o[1])+'</span>'
+      + (cur?'<span class="tag ok">当前</span>':'')+'</div>';
+  }).join('');
+  window.__bopts=opts; document.getElementById('sheet').classList.add('on');
+}
+function pickBind(j){
+  var o=window.__bopts[j], i=window.__i; closeSheet();
+  if(o[0]==='none'){ WS[i].bound=false; WS[i].backend=''; toast(WS[i].name+'：不绑定（自动识别）'); }
+  else { WS[i].bound=true; WS[i].backend=o[0]; toast(WS[i].name+' → 后端 '+o[0]); }
+  render();
+}
+function closeSheet(){ document.getElementById('sheet').classList.remove('on'); }
+
+/* ================== 子页 ================== */
+function pageData(){
+  var b='';
+  var inner='';
+  inner+='<div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">'+badge()+'</div>';
+  inner+='<div class="muted" style="font-family:ui-monospace,Menlo,monospace;font-size:11px;margin-top:6px;word-break:break-all">~/.dsh/github-resident/registry</div>';
+  inner+=row('根', h(S.consent.root), { tap:'openRootSheet()', tone:S.rootExists?'ok':'bad',
+    tail: tag(S.rootExists?('存在 · '+S.found+' 个仓库'):'不存在', S.rootExists?'ok':'err', true) });
+  inner+=row('许可', h(S.consent.via)+'<span class="sub2">'+h(S.consent.at)+'</span>', { tap:'openConsentSheet()',
+    tail: tag(S.consent.granted?'已许可':'未许可', S.consent.granted?'ok':'warn', true) });
+  inner+=row('条目', S.lib?(S.lib.count+' 个 · 远端 '+S.lib.remote+' / 无远端 '+S.lib.without):'未建',
+    { tail: tag(S.lib?'已建':'未建', S.lib?'ok':'outline', false) });
+  inner+=row('快照', S.lib?S.lib.at:'—');
+  if(S.lastError) inner+='<div class="errbar"><span>'+h(S.lastError)+'</span></div>';
+  if(!S.consent.granted){
+    inner+='<div class="ask"><b>问题：</b>要把 '+h(S.consent.root)+'（深度 '+S.consent.depth+'）下的仓库登记成一份文件库吗？'
+      + '只写 registry/repos/*.json + index.json，不动你的仓库、不碰账号凭据。'
+      + '<div style="margin-top:10px"><button class="btn primary" onclick="grant()">同意并建立登记库</button></div></div>';
+  }
+  inner+='<div class="actions">'
+    + '<button class="btn primary" '+(S.busy?'disabled':'')+' onclick="build()">'+(S.busy?'建立中…':'建立登记库')+'</button>'
+    + '<button class="btn outline" onclick="plan()">看计划</button>'
+    + '</div>';
+  b+=sec('登记库','data',card(inner));
+
+  /* 仓库 */
+  var rows=REPOS.slice();
+  if(S.onlyMissing) rows=rows.filter(function(r){ return !r.remote; });
+  var body='';
+  if(!S.lib){
+    body='<div class="empty">'+ICONS.empty+'<span>库里还没条目</span>'
+      + '<span style="color:var(--label3)">先把「根」指到有仓库的目录，再建立</span></div>';
+  } else if(!rows.length){
+    body='<div class="empty">'+ICONS.empty+'<span>没有匹配的仓库</span></div>';
+  } else {
+    body=rows.map(function(r){
+      var meta='<span>'+h(r.branch)+'</span>'
+        + (r.upstream?'<span>'+h(r.upstream)+' ↑'+r.ahead+' ↓'+r.behind+'</span>':'<span>无 upstream</span>')
+        + (r.dirty?'<span class="dirty">'+r.dirty+' 处未提交</span>':'')
+        + '<span>'+h(r.at)+'</span>';
+      return '<div class="repo"><div class="n">'+h(r.name)
+        + (r.remote?'':' <span class="tag outline">无远端</span>')+'</div>'
+        + '<div class="p">'+h(r.path)+'</div><div class="m">'+meta+'</div></div>';
+    }).join('');
+    if(S.lib.count>rows.length) body+='<p class="note">共 '+S.lib.count+' 个，这里只画了 '+rows.length+' 行</p>';
+  }
+  var bar='<div class="toolbar"><span class="muted" style="font-size:11.5px">'+(S.lib?('共 '+S.lib.count+' 个'):'库未建立')+'</span>'
+    + '<span style="flex:1"></span>'
+    + '<span class="tag '+(S.onlyMissing?'ok':'outline')+' tap" onclick="toggleMissing()" style="cursor:pointer">只看无远端</span></div>';
+  b+=sec('仓库（'+(S.lib?S.lib.count:0)+'）','data',card(bar+body));
+
+  /* 落点 */
+  b+=sec('落点','data',card(
+    row('文件库','~/.dsh/github-resident/registry/',{ tap:"openPath('文件库')", tail: tag('存在','ok',true) })
+    + row('文件', S.lib ? (S.lib.count+' 个 repo 文件 · index.json') : '—', { tail: tag(S.lib?'可读':'未建', S.lib?'ok':'outline', false) })
+    + row('状态文件','state.json'+(S.consent.granted?' · 已写':' · 未创建'),{ tap:"openPath('状态文件')",
+        tail: tag(S.consent.granted?'已写':'未创建', S.consent.granted?'ok':'outline', true) })
+    + row('日志目录','~/.dsh/github-resident/logs/',{ tap:"openPath('日志目录')", tail: tag('存在','ok',true) })
+  ));
+  return b;
+}
+
+function pageBind(){
+  var bound=WS.filter(function(w){ return w.bound; }).length;
+  var rows=WS.map(function(w,i){
+    return '<div class="row tap" onclick="openBindSheet('+i+')">'
+      + '<span class="v plain" style="flex:1"><b style="font-weight:600">'+h(w.name)+'</b>'
+      + '<span class="sub2">'+h(w.cwd)+(w.bound?' · 显式（面板）':' · 自动识别')+'</span></span>'
+      + tag(w.bound?w.backend:'未绑定', w.bound?'ok':'outline', true) + '</div>';
+  }).join('');
+  return sec('工作区后端 · 共 '+WS.length+' 个 · 已绑定 '+bound,'bind',
+      card('<p class="note" style="margin:0 0 4px">点一行改后端；只影响 tracker 绑定，不动仓库。</p>'+rows))
+    + '<p class="note">未绑定按「自动识别」走：本仓有 GitHub 远端就用 GitHub，否则用本地文件票。</p>';
+}
+
+function pageDiag(){
+  var b='';
+  b+=sec('诊断日志','diag',card(
+    row('调试日志', (S.debug?'控制台实时打印详细日志':'不打印（导出不受影响）'),
+      { plain:true, tap:'toggleDebug()', tail: tag(S.debug?'开':'关', S.debug?'ok':'outline', true) })
+    + row('今日日志','3 个文件 · 1.2 MB',{ tail: tag('可导出','outline',false) })
+  ));
+  b+=sec('导出与清理','diag',card(
+    '<div class="actions" style="margin-top:2px">'
+    + '<button class="btn outline">导出今日日志</button>'
+    + '<button class="btn outline">打开日志目录</button>'
+    + '<button class="btn ghost">复制路径</button>'
+    + '<button class="btn ghost">清空…</button>'
+    + '</div>'
+    + '<p class="note">导出内容是当天日志 + 系统信息摘要，打成 zip 附件；清空会先弹窗确认。</p>'
+  ));
+  return b;
+}
+
+function pageTools(){
+  var rows=CMDS.map(function(c,i){
+    return '<div class="cmd"><div class="c"><code>'+h(c[0])+'</code><em>'+h(c[1])+'</em></div>'
+      + '<span class="tag outline tap" onclick="useCmd('+i+')" style="cursor:pointer">用法'+chev()+'</span></div>';
+  }).join('');
+  return sec('会话里用（'+CMDS.length+'）','tools',card(rows))
+    + '<p class="note">这些是给 agent 的工具；点「用法」把这条命令丢进当前会话。</p>';
+}
+
+function pageDist(){
+  var b='';
+  b+=sec('版本','dist',card(
+    row('当前版本','v'+S.version,{ tail: tag('最新','ok',false) })
+    + row('最新发布','v'+S.version+' · 2026-10-17',{ tap:"openLink('发布页')", tail: tag('Release','ok',true) })
+    + row('更新方式','由宿主的插件管理器检查并安装（设置 → 插件）；这一页只给去向。',{ plain:true })
+  ));
+  b+=sec('去向','dist',card(
+    '<div class="actions" style="margin-top:2px">'
+    + '<a class="btn outline" style="text-decoration:none" href="https://github.com/SunsetRNE/dsh-github-resident/releases" target="_blank" rel="noreferrer">打开发布页</a>'
+    + '<a class="btn ghost" style="text-decoration:none" href="https://github.com/SunsetRNE/dsh-github-resident" target="_blank" rel="noreferrer">打开仓库</a>'
+    + '</div>'
+    + '<p class="note">本页不提供直接下载或安装；本包尚未发布到 npm，插件管理器的更新走 Release 资产。</p>'
+  ));
+  return b;
+}
+
+/* ================== 渲染 ================== */
+function render(){
+  document.getElementById('sub').innerHTML = PAGES.map(function(p){
+    return '<div class="s '+(S.tab===p[0]?'on':'')+'" onclick="setTab(\''+p[0]+'\')">'+p[1]+'</div>';
+  }).join('');
+  var body = S.tab==='data'?pageData():S.tab==='bind'?pageBind():S.tab==='diag'?pageDiag():S.tab==='tools'?pageTools():pageDist();
+  document.getElementById('body').innerHTML = body;
+}
+
+render();
+</script>
+</body>
+</html>

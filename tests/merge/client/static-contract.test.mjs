@@ -45,8 +45,11 @@ test('root client.js：两个 Resident 设置页仍在（60 / 61），并接住 
   assert.ok(src.includes("id: 'github-repo-registry',"))
   assert.ok(src.includes('order: 61,'))
   assert.ok(src.includes('deckEmbed'))
-  assert.ok(src.includes('DeckSections'))
-  assert.ok(src.includes('DeckUpdate'))
+  // #78：Deck 的区块从一个整块拆成两片（工作区 / 诊断），Resident 分挂在「绑定」「诊断」子页；
+  //   更新入口件不再被本页挂载（分发页只给去向链接）。
+  assert.ok(src.includes('deck.WorkspaceSection'), '绑定子页要接 WorkspaceSection')
+  assert.ok(src.includes('deck.DiagnosticsSection'), '诊断子页要接 DiagnosticsSection')
+  assert.ok(!src.includes('h(DeckUpdate'), '更新入口件不再挂在本页')
   assert.ok(src.includes("apply(ctx, embed)"), 'apply 必须接收合并装配层传来的 embed')
   assert.ok(src.includes('刷新登记快照'), '写库快照的按钮必须与只读总览区分命名')
 })

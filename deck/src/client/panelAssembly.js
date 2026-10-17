@@ -195,13 +195,16 @@
     startNamingGuardianEvents()
 
     // ============================================================
-    // 7. 合并装配：把可复用的设置区块与唯一更新入口交给 Resident 的「仓库登记库」页
+    // 7. 合并装配：把可复用的设置区块交给 Resident 的「插件后端」页
     // ============================================================
     // 合并后的单客户端 factory（tools/merge/client-factory.ts）先跑本半边，取本 apply 的返回值，
     // 再把它作为第二参数交给 Resident 半边。所以这里返回的不是「页面」而是组件引用：
-    //   SettingsSections —— 工作区总览 + 诊断日志开关与四键 + 作者链接（默认折叠）
-    //   UpdateEntry      —— 唯一更新入口（组件本体仍是 views/UpdateEntryHost.js，不复制按钮状态机）
-    // 两个组件都用 withCx 包过：Resident 页面直接挂载就能拿到本半边的 cx（store / locale / 宿主电话）。
+    //   WorkspaceSection   —— 工作区总览（#78 从整块里拆出，归「绑定」子页）
+    //   DiagnosticsSection —— 诊断日志开关与四键（#78 拆出，归「诊断」子页）
+    //   SettingsSections   —— 旧的整块（兼容上一版装配层；新装配层不再挂它）
+    //   UpdateEntry        —— 更新入口件仍由本半边提供，但 Resident 侧自 #78 起不再挂载
+    //                          （分发页只给去向链接；能力留着，装配层不必断）
+    // 组件都用 withCx 包过：Resident 页面直接挂载就能拿到本半边的 cx（store / locale / 宿主电话）。
     // 单独运行本半边（旧形态）时返回值无人消费，行为不变。
     const DeckSettingsSections = function () {
       const cx = React.useContext(DswsCtx)
@@ -214,6 +217,9 @@
     const DeckUpdateEntry = withCx(function () { return h(UpdateEntryHost, null) })
     return {
       mergeEmbed: {
+        // 两片各带一个稳定标记类：真挂载门禁（merged-render）靠它判断「这一页挂的是不是这两片」。
+        WorkspaceSection: withCx(function () { return h('div', { className: 'dsws-embed dsws-embed-workspace' }, h(DeckWorkspacesSection, null)) }),
+        DiagnosticsSection: withCx(function () { return h('div', { className: 'dsws-embed dsws-embed-diagnostics' }, h(DeckDiagnosticsSection, null)) }),
         SettingsSections: withCx(DeckSettingsSections),
         UpdateEntry: DeckUpdateEntry,
         version: DSW_VERSION,

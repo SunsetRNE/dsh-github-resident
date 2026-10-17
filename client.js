@@ -114,6 +114,14 @@ window.__ModuleLoader__.load({
       '.{p}-repo-hd b{font-weight:600}',
       '.{p}-repo-path{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:11.5px;color:var(--dsw-alias-label-secondary);word-break:break-all;margin-top:3px}',
       '.{p}-repo-meta{display:flex;gap:12px;flex-wrap:wrap;font-size:11.5px;color:var(--dsw-alias-label-secondary);margin-top:4px}',
+      // #78 五子页页签：照宿主的 segmented control（浅槽 + 白片 + 一道细阴影）
+      '.{p}-tabs{display:flex;gap:2px;background:var(--dsw-alias-bg-module-platform,#f5f6f7);border-radius:10px;padding:3px;margin:0 0 16px;overflow:auto}',
+      '.{p}-tab{flex:1;min-width:46px;padding:6px 4px;border:0;border-radius:8px;background:transparent;font:inherit;font-size:12.5px;color:var(--dsw-alias-label-secondary);cursor:pointer;white-space:nowrap}',
+      '.{p}-tab-on{background:var(--dsw-alias-bg-layer-1,#fff);color:var(--dsw-alias-label-primary);font-weight:600;box-shadow:0 1px 2px rgba(0,0,0,.1)}',
+      // 状态 chip：只读数，不承动作
+      '.{p}-chip{display:inline-flex;align-items:center;gap:3px;padding:1px 8px;border-radius:999px;font-size:11px;line-height:17px;font-weight:500;background:var(--dsw-alias-bg-module-platform,#f5f6f7);color:var(--dsw-alias-label-secondary);white-space:nowrap}',
+      '.{p}-chip-ok{background:rgba(34,197,94,.12);color:var(--dsw-alias-state-success-primary,#16a34a)}',
+      '.{p}-chip-out{background:transparent;box-shadow:inset 0 0 0 .5px var(--dsw-alias-border-l3,#0000001f);color:var(--dsw-alias-label-tertiary)}',
     ]);
 
     // R5：三个展示组件也只有前缀不同，用一个工厂生成两套名字。
@@ -128,6 +136,10 @@ window.__ModuleLoader__.load({
     }
     const { Badge, Btn, Section } = uiParts('ghr');
     const { Badge: RegBadge, Btn: RegBtn, Section: RegSection } = uiParts('ghreg');
+    // #78：状态 chip（照宿主 Tag 的几何：11px / 999 圆角 / 10% 同色底）。只做「读数」，入口留给按钮。
+    const RegChip = ({ text, tone }) => h('span', {
+      className: 'ghreg-chip' + (tone ? ' ghreg-chip-' + tone : ''),
+    }, text);
 
     // 合并装配层（tools/merge/client-factory.ts）在 apply 时把 Deck 半边交出来的可复用设置区块
     // 作为第二参数传进来：这个页面据此渲染 Deck 的工作区总览 / 诊断日志 / 作者链接与唯一的更新入口。
@@ -152,6 +164,7 @@ window.__ModuleLoader__.load({
       const [busy, setBusy] = React.useState('');
       const [onlyMissing, setOnlyMissing] = React.useState(false);
       const [armPurge, setArmPurge] = React.useState(false);
+      const [tab, setTab] = React.useState('data');
 
       // 三个只读入口：登记库状态（许可 + 计数）、清单（条目）、以及**账号状态**。
       // 账号那一份和「GitHub」页读的是同一个 ghr.state 快照 —— 两页共用一份事实，谁都不另存一份登录态。
@@ -195,12 +208,17 @@ window.__ModuleLoader__.load({
       const rows = (lib && lib.entries) || [];
       const shown = onlyMissing ? rows.filter((e) => !e.hasRemote) : rows;
 
-      // Deck 半边交出来的可复用设置区块与唯一更新入口（由合并装配层在 apply 时传入）。
-      // 缺了只少这一部分，不影响登记库本身——「未建库 / 未登录 / 非 Git 仓库」也能看到 Deck 状态。
+      // Deck 半边交出来的可复用设置区块（由合并装配层在 apply 时传入）。
+      // #78：从一个整块拆成「工作区 / 诊断」两片，各自归到本页的「绑定」「诊断」子页；
+      //   旧整块 SettingsSections 只在拆分字段缺席时兜底（装配层仍是上一版时）。
       const deck = deckEmbed;
-      const DeckSections = deck && deck.SettingsSections;
-      const DeckUpdate = deck && deck.UpdateEntry;
+      const DeckAll = deck && deck.SettingsSections;
+      const DeckWorkspace = deck && (deck.WorkspaceSection || null);
+      const DeckDiag = deck && (deck.DiagnosticsSection || null);
       const deckVersion = deck && deck.version ? String(deck.version) : '—';
+      const deckRepoUrl = deck && deck.repoUrl ? String(deck.repoUrl) : 'https://github.com/SunsetRNE/dsh-github-resident';
+      // 五件事各占一页：数据 / 绑定 / 诊断 / 工具 / 分发。页内切换只动本地 state。
+      const TABS = [['data', '数据'], ['bind', '绑定'], ['diag', '诊断'], ['tools', '工具'], ['dist', '分发']];
 
       const tone = reg.phase !== 'ok' ? 'var(--dsw-alias-state-error-primary)'
         : granted && hasLib ? 'var(--dsw-alias-state-success-primary)'
@@ -225,109 +243,120 @@ window.__ModuleLoader__.load({
                       : last.action === 'plan' ? ('计划：待登记 ' + (last.unregistered ? last.unregistered.length : 0) + ' / 库内 ' + (last.registered || 0))
                         : '已执行 ' + (last.action || '');
 
+      const tabBar = h('div', { className: 'ghreg-tabs' },
+        TABS.map((it) => h('button', {
+          key: it[0], type: 'button', onClick: () => setTab(it[0]),
+          className: 'ghreg-tab' + (tab === it[0] ? ' ghreg-tab-on' : ''),
+        }, it[1])));
+
+      // ---- 数据：登记库状态 + 仓库清单 + 落点 ----
+      const statusSection = h(RegSection, { key: 'status', title: '登记库' },
+        h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, paddingBottom: 6, flexWrap: 'wrap' } },
+          h(RegBadge, { text: label, tone }),
+          d && d.dir ? h('span', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary)', fontFamily: 'ui-monospace, Menlo, monospace' } }, d.dir) : null),
+        h('div', { className: 'ghreg-row' }, h('span', { className: 'ghreg-k' }, '建库许可'),
+          h('span', { className: 'ghreg-v' },
+            granted
+              ? (consent.grants || []).map((g) => g.root + '（深度 ' + (Number.isInteger(g.depth) ? g.depth : '未知→需重新确认') + '）· ' + (g.via || '?')).join('  |  ')
+              : '未许可 · 建库时会先问')),
+        h('div', { className: 'ghreg-row' }, h('span', { className: 'ghreg-k' }, '条目'),
+          h('span', { className: 'ghreg-v', style: { flex: 1 } },
+            hasLib ? (rows.length + ' 个 · 远端 ' + (lib.remoteBound || 0) + ' / 无远端 ' + (lib.withoutRemote || 0)) : '未建'),
+          h(RegChip, { text: hasLib ? '已建' : '未建', tone: hasLib ? 'ok' : 'out' })),
+        h('div', { className: 'ghreg-row' }, h('span', { className: 'ghreg-k' }, '快照'),
+          h('span', { className: 'ghreg-v' },
+            lib && lib.libraryExists && lib.entries && lib.entries.length
+              ? String((lib.entries.slice().sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')))[0] || {}).updatedAt || '—').replace('T', ' ').slice(0, 19)
+              : '—')),
+        reg.phase === 'down' ? h('p', { className: 'ghreg-answer' }, reg.message) : null,
+        !granted && d && d.ask
+          ? h('div', { className: 'ghreg-ask' },
+            h('div', null, h('b', null, '问题：'), ' ', d.ask.question),
+            h('div', { className: 'ghreg-answer' }, '同意 → 点「建立登记库」；不同意 → 不落盘。'))
+          : null,
+        h('div', { className: 'ghreg-actions' },
+          h(RegBtn, { onClick: () => post('ghr.registry.build', 'build', 'consent=1'), disabled: busy === 'build' },
+            busy === 'build' ? '建立中…' : (granted ? '重建登记库' : '建立登记库')),
+          h(RegBtn, { ghost: true, onClick: () => post('ghr.registry.plan', 'plan'), disabled: busy === 'plan' }, '看计划'),
+          h(RegBtn, { ghost: true, onClick: () => post('ghr.registry.build', 'rescan', 'rescan=1&consent=1'), disabled: busy === 'rescan' || !granted }, '刷新登记快照'),
+          h(RegBtn, { ghost: true, onClick: () => post('ghr.registry.verify', 'verify'), disabled: busy === 'verify' || !hasLib }, '对账'),
+          h(RegBtn, { ghost: true, onClick: () => { setArmPurge(false); post('ghr.registry.revoke', 'revoke'); }, disabled: busy === 'revoke' || !granted }, '撤销许可'),
+          armPurge
+            ? h(RegBtn, { onClick: () => { setArmPurge(false); post('ghr.registry.purge', 'purge', 'confirm=1'); }, disabled: busy === 'purge' }, '确认清空')
+            : h(RegBtn, { ghost: true, onClick: () => setArmPurge(true), disabled: !hasLib }, '清空…')),
+        lastText ? h('p', { className: 'ghreg-answer' }, lastText) : null,
+        last && last.ask && last.consentRequired
+          ? h('p', { className: 'ghreg-answer' }, '闸门原话：' + last.ask.question)
+          : null);
+
+      const repoSection = h(RegSection, { key: 'repos', title: '仓库（' + shown.length + (onlyMissing ? ' / ' + rows.length : '') + '）' },
+        rows.length
+          ? h('div', { className: 'ghreg-actions', style: { marginTop: 0, marginBottom: 6 } },
+            h(RegBtn, { ghost: !onlyMissing, onClick: () => setOnlyMissing(false) }, '全部'),
+            h(RegBtn, { ghost: onlyMissing, onClick: () => setOnlyMissing(true) }, '只看无远端'))
+          : null,
+        shown.length
+          ? shown.map((e) => h('div', { className: 'ghreg-repo', key: e.slug },
+            h('div', { className: 'ghreg-repo-hd' },
+              h('b', null, e.name),
+              h(RegBadge, {
+                text: remoteText(e),
+                tone: e.hasRemote ? 'var(--dsw-alias-state-success-primary)' : 'var(--dsw-alias-state-warn-primary)',
+              }),
+              e.dirty ? h('span', { style: { fontSize: 11.5, color: 'var(--dsw-alias-state-warn-primary)' } }, e.dirty + ' 处未提交') : null),
+            h('div', { className: 'ghreg-repo-path' }, e.path),
+            h('div', { className: 'ghreg-repo-meta' },
+              h('span', null, (e.branch || '—') + ' · ' + (e.head || '—')),
+              e.upstream ? h('span', null, e.upstream + ' ↑' + (e.ahead || 0) + '↓' + (e.behind || 0)) : h('span', null, '无 upstream'),
+              h('span', null, String(e.updatedAt || '—').replace('T', ' ').slice(5, 16)))))
+          : h('p', { className: 'ghreg-answer', style: { marginTop: 0 } },
+            !hasLib ? '库里还没条目：点「建立登记库」。' : '没有匹配的仓库。'));
+
+      const landSection = h(RegSection, { key: 'land', title: '落点' },
+        h('div', { className: 'ghreg-row' }, h('span', { className: 'ghreg-k' }, '库目录'),
+          h('span', { className: 'ghreg-v' }, (d && d.dir) || '—')),
+        h('div', { className: 'ghreg-row' }, h('span', { className: 'ghreg-k' }, 'index.json'),
+          h('span', { className: 'ghreg-v' }, (d && d.indexFile) || '—')))
+
+      // ---- 绑定 / 诊断：Deck 交出来的两片（旧版本装配层只给整块，兜底用整块）----
+      const bindSection = h('div', { key: 'bind' },
+        DeckWorkspace ? h(DeckWorkspace, null)
+          : DeckAll ? h(DeckAll, null)
+            : h('p', { className: 'ghreg-answer' }, 'Deck 半边未随本页加载：工作区总览暂时不可见。'));
+      const diagSection = h('div', { key: 'diag' },
+        DeckDiag ? h(DeckDiag, null)
+          : DeckAll ? h(DeckAll, null)
+            : h('p', { className: 'ghreg-answer' }, 'Deck 半边未随本页加载：诊断开关暂时不可见。'));
+
+      // ---- 工具：会话里用 ----
+      const toolsSection = h(RegSection, { key: 'tools', title: '会话里用' },
+        REG_COMMANDS.map((row) => h('div', { className: 'ghreg-cmd', key: row[0] },
+          h('div', null, h('code', null, row[0]), h('em', null, row[1])),
+          h(RegBtn, { ghost: true, onClick: () => flash('丢进会话：' + row[0]) }, '用法'))));
+
+      // ---- 分发：版本事实 + 去向链接（不再挂 Deck 的更新入口件）----
+      const distSection = h(RegSection, { key: 'dist', title: '版本' },
+        h('div', { className: 'ghreg-row' }, h('span', { className: 'ghreg-k' }, '插件版本'),
+          h('span', { className: 'ghreg-v', style: { flex: 1 } }, deckVersion),
+          h(RegChip, { text: '当前', tone: 'out' })),
+        h('p', { className: 'ghreg-answer' },
+          '更新由宿主的插件管理器负责；本页只给去向，不在这里下载或安装。'),
+        h('div', { className: 'ghreg-actions' },
+          h('a', { className: 'ghreg-btn ghreg-ghost', href: deckRepoUrl + '/releases', target: '_blank', rel: 'noreferrer' }, '打开发布页'),
+          h('a', { className: 'ghreg-btn ghreg-ghost', href: deckRepoUrl, target: '_blank', rel: 'noreferrer' }, '打开仓库')));
+
       return h('div', { className: 'ghreg-root' },
         h('style', null, REG_CSS),
-        h('h2', { className: 'ghreg-h1' }, '仓库登记文件库'),
+        h('h2', { className: 'ghreg-h1' }, '插件后端'),
         h('p', { className: 'ghreg-lead' },
-          '一仓一文件：registry/repos/*.json ＋ index.json。'
-          + '目录即契约：别的插件/脚本只读它，就知道有哪些仓库、哪些绑了远端。'
+          '数据 / 绑定 / 诊断 / 工具 / 分发，五件事各占一页。'
           + '建库要经你同意；本页许可只管建库落盘，和账号登录是两件事。'),
-
-        h(RegSection, { title: '状态' },
-          h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, paddingBottom: 6 } },
-            h(RegBadge, { text: label, tone }),
-            d && d.dir ? h('span', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary)' } }, d.dir) : null),
-          h('div', { className: 'ghreg-row' }, h('span', { className: 'ghreg-k' }, 'GitHub 账号'),
-            h('span', { className: 'ghreg-v' },
-              acct === null ? '读取中…'
-                : acct.authenticated === true ? ('已登录 · ' + (acct.account || '?'))
-                  : acct.authenticated === null ? '检查中…'
-                    : '未登录 · 去「GitHub」页取码')),
-          h('div', { className: 'ghreg-row' }, h('span', { className: 'ghreg-k' }, '登记库许可'),
-            h('span', { className: 'ghreg-v' },
-              granted
-                ? (consent.grants || []).map((g) => g.root + '（深度 ' + (Number.isInteger(g.depth) ? g.depth : '未知→需重新确认') + '）· ' + (g.via || '?')).join('  |  ')
-                : '未许可 · 建库时会先问')),
-          h('div', { className: 'ghreg-row' }, h('span', { className: 'ghreg-k' }, '条目'),
-            h('span', { className: 'ghreg-v' },
-              hasLib ? (rows.length + ' 个 · 远端 ' + (lib.remoteBound || 0) + ' / 无远端 ' + (lib.withoutRemote || 0)) : '未建')),
-          h('div', { className: 'ghreg-row' }, h('span', { className: 'ghreg-k' }, '快照'),
-            h('span', { className: 'ghreg-v' },
-              lib && lib.libraryExists && lib.entries && lib.entries.length
-                ? String((lib.entries.slice().sort((a, b) => String(b.updatedAt || '').localeCompare(String(a.updatedAt || '')))[0] || {}).updatedAt || '—').replace('T', ' ').slice(0, 19)
-                : '—')),
-          // ⑧（合并后）：更新入口唯一落点 + 行为说明。挂在版本号旁，不在别处再放第二个入口。
-          h('div', { className: 'ghreg-row' }, h('span', { className: 'ghreg-k' }, '插件版本'),
-            h('span', { className: 'ghreg-v', style: { display: 'inline-flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' } },
-              deckVersion,
-              DeckUpdate ? h(DeckUpdate, null) : null)),
-          h('p', { className: 'ghreg-answer' },
-            // 这一格原来是一句 90 字符的长句，而且**内容不实**：它写「本包自 v1.7.1 起是可发布的
-            // npm 包」，读起来像已发布，而 npm 上实际是 404（README「更新」一节自己就写着尚未发布）。
-            // 拆成三句短句（每句 ≤ 60，过 verify-ui 的单句预算），并把「可发布」与「已发布」分开说清。
-            '更新：走宿主 dsh-plugin-update 的入口件（就是上面那颗按钮）。'
-            + '本包是 npm 包形态；当前尚未发布到 npm，面板更新要等发布后才生效。'
-            + '在那之前升级走 Release 的 tgz 重装，不会装回旧的 Deck 包。'),
-          reg.phase === 'down'
-            ? h('p', { className: 'ghreg-answer' }, reg.message)
-            : null,
-
-          !granted && d && d.ask
-            ? h('div', { className: 'ghreg-ask' },
-              h('div', null, h('b', null, '问题：'), ' ', d.ask.question),
-              h('div', { className: 'ghreg-answer' }, '同意 → 点「建立登记库」；不同意 → 不落盘。'))
-            : null,
-
-          h('div', { className: 'ghreg-actions' },
-            h(RegBtn, { onClick: () => post('ghr.registry.build', 'build', 'consent=1'), disabled: busy === 'build' },
-              busy === 'build' ? '建立中…' : (granted ? '重建登记库' : '建立登记库')),
-            h(RegBtn, { ghost: true, onClick: () => post('ghr.registry.plan', 'plan'), disabled: busy === 'plan' }, '看计划'),
-            h(RegBtn, { ghost: true, onClick: () => post('ghr.registry.build', 'rescan', 'rescan=1&consent=1'), disabled: busy === 'rescan' || !granted }, '刷新登记快照'),
-            h(RegBtn, { ghost: true, onClick: () => post('ghr.registry.verify', 'verify'), disabled: busy === 'verify' || !hasLib }, '对账'),
-            h(RegBtn, { ghost: true, onClick: () => { setArmPurge(false); post('ghr.registry.revoke', 'revoke'); }, disabled: busy === 'revoke' || !granted }, '撤销许可'),
-            armPurge
-              ? h(RegBtn, { onClick: () => { setArmPurge(false); post('ghr.registry.purge', 'purge', 'confirm=1'); }, disabled: busy === 'purge' }, '确认清空')
-              : h(RegBtn, { ghost: true, onClick: () => setArmPurge(true), disabled: !hasLib }, '清空…')),
-          lastText ? h('p', { className: 'ghreg-answer' }, lastText) : null,
-          last && last.ask && last.consentRequired
-            ? h('p', { className: 'ghreg-answer' }, '闸门原话：' + last.ask.question)
-            : null),
-
-        h(RegSection, { title: '仓库（' + shown.length + (onlyMissing ? ' / ' + rows.length : '') + '）' },
-          rows.length
-            ? h('div', { className: 'ghreg-actions', style: { marginTop: 0, marginBottom: 6 } },
-              h(RegBtn, { ghost: !onlyMissing, onClick: () => setOnlyMissing(false) }, '全部'),
-              h(RegBtn, { ghost: onlyMissing, onClick: () => setOnlyMissing(true) }, '只看无远端'))
-            : null,
-          shown.length
-            ? shown.map((e) => h('div', { className: 'ghreg-repo', key: e.slug },
-              h('div', { className: 'ghreg-repo-hd' },
-                h('b', null, e.name),
-                h(RegBadge, {
-                  text: remoteText(e),
-                  tone: e.hasRemote ? 'var(--dsw-alias-state-success-primary)' : 'var(--dsw-alias-state-warn-primary)',
-                }),
-                e.dirty ? h('span', { style: { fontSize: 11.5, color: 'var(--dsw-alias-state-warn-primary)' } }, e.dirty + ' 处未提交') : null),
-              h('div', { className: 'ghreg-repo-path' }, e.path),
-              h('div', { className: 'ghreg-repo-meta' },
-                h('span', null, (e.branch || '—') + ' · ' + (e.head || '—')),
-                e.upstream ? h('span', null, e.upstream + ' ↑' + (e.ahead || 0) + '↓' + (e.behind || 0)) : h('span', null, '无 upstream'),
-                h('span', null, String(e.updatedAt || '—').replace('T', ' ').slice(5, 16)))))
-            : h('p', { className: 'ghreg-answer', style: { marginTop: 0 } },
-              !hasLib ? '库里还没条目：点「建立登记库」。' : '没有匹配的仓库。')),
-
-        h(RegSection, { title: '会话里用' },
-          REG_COMMANDS.map((row) => h('div', { className: 'ghreg-cmd', key: row[0] },
-            h('div', null, h('code', null, row[0]), h('em', null, row[1])),
-            h(RegBtn, { ghost: true, onClick: () => flash('丢进会话：' + row[0]) }, '用法')))),
-
-        // ⑦⑨⑩（合并后）：Deck 设置页的区块整段搬来这里，组件与状态仍是 Deck 自己那一份
-        // （工作区总览「刷新工作区总览」只读；诊断开关与日志四键走同一个宿主实现；作者链接默认折叠）。
-        h(RegSection, { title: '插件设置（Deck 并入）' },
-          DeckSections
-            ? h(DeckSections, null)
-            : h('p', { className: 'ghreg-answer', style: { marginTop: 0 } },
-              'Deck 半边未随本页加载：登记库状态照常，Deck 的工作区总览与诊断开关暂时不可见。')),
+        tabBar,
+        tab === 'data' ? h('div', null, [statusSection, repoSection, landSection]) : null,
+        tab === 'bind' ? bindSection : null,
+        tab === 'diag' ? diagSection : null,
+        tab === 'tools' ? toolsSection : null,
+        tab === 'dist' ? distSection : null,
       );
     }
 
@@ -572,7 +601,7 @@ window.__ModuleLoader__.load({
           name: 'settings.section',
           id: 'github-repo-registry',
           order: 61,
-          label: '仓库登记库',
+          label: '插件后端',
         }, RegistryPanel));
       },
     };
