@@ -407,6 +407,8 @@ const KERNEL_MODULES = [
   { name: 'storePrefs', file: 'src/client/kernel/store-prefs.js' },
   { name: 'storeSwitch', file: 'src/client/kernel/store-switch.js' },
   { name: 'storeSnapshot', file: 'src/client/kernel/store-snapshot.js' },
+  // #77 由 store-snapshot 搬出：浮层小提示这一族（颜色档 / 图标 / 显示与退场相位）—— 那份叶子贴着 358 行冻结线，塞不进去
+  { name: 'notice', file: 'src/client/kernel/notice.js' },
   { name: 'storeDerived', file: 'src/client/kernel/store-derived.js' },
   { name: 'apiNaming', file: 'src/client/kernel/api-naming.js' },
   { name: 'apiPresetGuard', file: 'src/client/kernel/api-preset-guard.js' },

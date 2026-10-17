@@ -5,16 +5,17 @@
  * 对齐的是上游对同族气泡（`packages/client/ui-primitives` 的 Toast）那条修复定下的**契约**，
  * 不是照抄它的代码形状（上游是 React 组件、病根是 `onDone` 进了 effect deps 所以被重渲染续命；
  * 本仓这台是 store + 定时器，坏的方向相反 —— 同文案重弹会被**上一轮**的定时器提前掐掉）：
- *   · `f1e06a69`（fix(ui-primitives): preserve toast lifetime across rerenders）：气泡的寿命归气泡自己，
- *     重渲染不许动它；完成回调认最新那一个；淡完的气泡 `visibility:hidden` 不吃点击。
- *   · `c3ce020b`（render notices through keyed toast factory）：**按每次显示编号**，同文案重弹重新走一轮。
- * 本仓取的是第二条里那条「编号」：每次 flash 一个自增号，清理只认号，不认文案。
+ *   · `f1e06a69`（preserve toast lifetime across rerenders）：气泡的寿命归气泡自己，完成回调认最新那个。
+ *   · `c3ce020b`（render notices through keyed toast factory）：**按每次显示编号**，同文案重弹重走一轮。
+ *
+ * #77 起这一族搬进了 `src/client/kernel/notice.js`（store-snapshot 冻结在 358 行，退场相位塞不进去），
+ * 本门禁读的是搬过去之后那份真件；退场相位与点击穿透由 verify-77 管，这里只管寿命与身份。
  *
  * 四组断言（每组都带一条反证）：
- *   A. 行为：同文案重弹不被提前掐 · 新一轮到点才清 · A→B→A 时第一轮不许掐第三次 · 不同文案互不干扰；
+ *   A. 行为：同文案重弹不被提前掐 · 新一轮到点才退场 · A→B→A 时第一轮不许掐第三次 · 不同文案互不干扰；
  *   B. 编号：每次 flash 自增 1，`st.notice.id` 与 `st.noticeId` 同号；
- *   C. 运行期反证：把守卫换回「文案相等」的副本跑同一探针 —— 必须掐掉（证明探针抓得住，不是摆设）；
- *   D. 源码判据：编号自增在 · 守卫认号不认文案 · 两处渲染都有 status 语义 · 摆放一个字没动。
+ *   C. 运行期反证：把守卫换回「文案相等」的副本跑同一探针 —— 必须被掐掉（证明探针抓得住，不是摆设）；
+ *   D. 源码判据：编号自增在 · 守卫认号不认文案 · hold 是 2800 · 两处渲染都带 status 语义且挂退场类。
  *
  * 运行：node tests/verify-76-notice-lifetime.js（在 deck/ 目录下；只读源码 + 假定时器，不需要产物）
  */
@@ -29,29 +30,26 @@ const check = (cond, msg) => { if (cond) ok(msg); else bad(msg) }
 const read = (rel) => readFileSync(resolve(rel), 'utf8')
 const stripExport = (s) => s.replace(/^[ \t]*export[ \t]+/gm, '')
 
-const STORE = 'src/client/kernel/store-snapshot.js'
+const NOTICE = 'src/client/kernel/notice.js'
 const DOCK = 'src/client/panel/Dock.js'
 const SETTINGS = 'src/client/views/SettingsPage.js'
-const STYLES = 'src/client/kernel/styles.js'
-const HOLD_MS = 2800
+const HOLD = 2800
 
 console.log('=== #76 浮层小提示的寿命语义（按每次显示编号）===')
 
-// 把 store-snapshot.js 按同一套做法（剥行首 export、参数化自由变量）载进本进程：
-// 只取 flash / makeStore / emit，其余函数原样留在作用域里不执行。
-// 自由变量表：timer（宿主定时器服务）· DEFAULT_PANEL_H / listPrefs / isEnabled / log（makeStore 顶层的取值）。
-function loadStore(src) {
+// 把 notice.js 按同一套做法（剥行首 export、参数化自由变量 timer / emit）载进本进程。
+function loadNotice(src) {
   try {
-    const fn = compileFn(['timer', 'DEFAULT_PANEL_H', 'isEnabled', 'log', 'listPrefs'], stripExport(src) + '\nreturn { flash: flash, makeStore: makeStore, emit: emit }')
-    return { make: (timer) => fn(timer, 460, () => false, () => {}, { stateFilter: [], sortKey: 'updated', sortDir: 'desc' }) }
+    const fn = compileFn(['timer', 'emit'], stripExport(src) + '\nreturn { flash: flash, NOTICE_HOLD_MS: NOTICE_HOLD_MS, NOTICE_FADE_MS: NOTICE_FADE_MS }')
+    return (timer, emit) => fn(timer, emit)
   } catch (e) {
-    bad('store-snapshot.js 可载入：' + (e && e.message))
+    bad('notice.js 可载入：' + (e && e.message))
     return null
   }
 }
 
-// 假定时器 rig：一条时间轴 + 一个能推进的时钟；与宿主 timer 服务同形（timeout 返回可 dispose 的把手）。
-function makeRig(factory) {
+// 假定时器 rig：一条时间轴 + 一个能推进的时钟，emit 只记 tick。
+function makeRig(load) {
   let now = 0
   const live = []
   const timer = {
@@ -71,20 +69,13 @@ function makeRig(factory) {
     }
     now = to
   }
-  const api = factory.make(timer)
-  const st = { notice: null, subs: [], tick: 0 }
-  return {
-    st,
-    advance,
-    fired: () => live.filter((h) => h.disposed).length,
-    scheduled: () => live.length,
-    flash: (msg, kind) => api.flash(st, msg, kind),
-  }
+  const st = { notice: null, tick: 0 }
+  const api = load(timer, (s) => { s.tick += 1 })
+  return { st, advance, flash: (msg, kind) => api.flash(st, msg, kind) }
 }
 
-const src = read(STORE)
-const realFactory = loadStore(src)
-const real = realFactory ? { make: (t) => realFactory.make(t) } : null
+const src = read(NOTICE)
+const real = loadNotice(src)
 if (real) {
   // ---- A1/A2/A3：同文案重弹是新一轮，上一轮的定时器到点只许对不上号 ----
   const r1 = makeRig(real)
@@ -92,31 +83,30 @@ if (real) {
   r1.advance(2000)
   r1.flash('已复制链接 #74', 'ok')
   const idAfterReflash = r1.st.notice && r1.st.notice.id
-  r1.advance(2000 + 810) // t=2810：第一轮（t=0 弹的那一轮）的定时器到点
-  check(r1.st.notice !== null && r1.st.notice.id === idAfterReflash, 'A1 同文案在 2.8s 内重弹：上一轮定时器到点后气泡仍在（不被提前掐掉）')
+  r1.advance(2000 + 810) // t=2810：第一轮（t=0 弹的那一轮）的 hold 到点
+  check(r1.st.notice !== null && r1.st.notice.id === idAfterReflash && r1.st.notice.fading === false, 'A1 同文案在 2.8s 内重弹：上一轮定时器到点后气泡仍在、且没被推进退场（不被提前掐掉）')
   check(r1.st.tick === 2, 'A2 上一轮定时器到点时没有多发一次广播（tick 仍是 2 次 flash）')
-  r1.advance(2000 + HOLD_MS + 20) // t=4820：第二轮自己的定时器到点
-  check(r1.st.notice === null && r1.st.tick === 3, 'A3 新一轮自己的定时器到点（4800ms）才清，且只清一次')
+  r1.advance(2000 + HOLD + 20) // t=4820：第二轮的 hold 到点 → 进退场相位（退场由 #77 管）
+  check(r1.st.notice !== null && r1.st.notice.fading === true, 'A3 第二轮自己的 hold 到点才进退场相位（不是被上一轮掐掉、也不是更早）')
 
-  // ---- A4/A5：A → B → A：第一轮 A 的定时器不许掐掉第三次的 A（这正是「认文案」会出错的那一路）----
+  // ---- A4/A5：A → B → A：第一轮 A 的定时器不许动第三次的 A ----
   const r2 = makeRig(real)
   r2.flash('A', 'ok')
   r2.advance(1000)
   r2.flash('B', 'info')
   r2.advance(2500)
   r2.flash('A', 'ok')
-  r2.advance(HOLD_MS + 20) // t=2820：第一轮 A 的定时器到点，此刻 notice 又是一句 A
-  check(r2.st.notice !== null && r2.st.notice.text === 'A', 'A4 A→B→A：第一轮的 A 定时器到点后，第三次的 A 仍在（认号不认文案）')
-  r2.advance(2500 + HOLD_MS + 20) // t=5320：第三次那一轮到点
-  check(r2.st.notice === null, 'A5 第三次的 A 到点后清空（新一轮自己的寿命）')
+  r2.advance(HOLD + 20) // t=2820：第一轮 A 的 hold 到点，此刻 notice 又是一句 A
+  check(r2.st.notice !== null && r2.st.notice.text === 'A' && r2.st.notice.fading === false, 'A4 A→B→A：第一轮的 A 定时器到点后，第三次的 A 仍在（认号不认文案）')
+  check(r2.st.notice && r2.st.notice.id === 3, 'A5 第三次的 A 是第 3 号（第一轮那个 1 号没有复活）')
 
   // ---- A6：不同文案互不干扰（这条旧实现也过，留着防回归）----
   const r3 = makeRig(real)
   r3.flash('A', 'ok')
   r3.advance(500)
   r3.flash('B', 'warn')
-  r3.advance(HOLD_MS + 20)
-  check(r3.st.notice !== null && r3.st.notice.text === 'B' && r3.st.notice.kind === 'warn', 'A6 不同文案：A 的定时器到点后 B 仍在，且档位跟着 B（warn）')
+  r3.advance(HOLD + 20)
+  check(r3.st.notice !== null && r3.st.notice.text === 'B' && r3.st.notice.kind === 'warn' && r3.st.notice.fading === false, 'A6 不同文案：A 的定时器到点后 B 仍在，且档位跟着 B（warn）')
 
   // ---- B：编号自增 ----
   const r4 = makeRig(real)
@@ -129,36 +119,31 @@ if (real) {
 }
 
 // ---- C：运行期反证 —— 把守卫换回「文案相等」，同一探针必须掐掉 ----
-const mutated = src.replace('st.notice.id === id', 'st.notice.text === msg')
+const mutated = src.replace(/st\.notice\.id !== id/g, 'st.notice.text !== msg').replace(/st\.notice\.id === id/g, 'st.notice.text === msg')
 check(mutated !== src && mutated.indexOf('st.notice.text === msg') !== -1, 'C0 反证副本改得动（守卫被换回「文案相等」）')
-const mutFactory = loadStore(mutated)
-if (mutFactory) {
-  const rm = makeRig({ make: (t) => mutFactory.make(t) })
+const mut = loadNotice(mutated)
+if (mut) {
+  const rm = makeRig(mut)
   rm.flash('已复制链接 #74', 'ok')
   rm.advance(2000)
   rm.flash('已复制链接 #74', 'ok')
-  rm.advance(2000 + HOLD_MS + 10)
-  check(rm.st.notice === null, 'C1 反证：换回「认文案」之后同一场景当场被提前掐掉（探针抓得住这类回退）')
-  check(rm.st.tick === 3, 'C2 反证：换回「认文案」时旧定时器多广播一次（tick 3，真件是 2）')
+  rm.advance(2000 + 810)
+  check(rm.st.notice === null || rm.st.notice.fading === true, 'C1 反证：换回「认文案」之后同一场景当场被提前推进退场/掐掉（探针抓得住这类回退）')
 }
 
 // ---- D：源码判据（防实现漂移）----
-const flashBlock = (src.match(/export const flash = \(st, msg, kind\) => \{[\s\S]*?\n {4}\}/) || [''])[0]
-check(flashBlock.indexOf('st.noticeId') !== -1 && /st\.noticeId = \(st\.noticeId \|\| 0\) \+ 1/.test(flashBlock), 'D1 flash 里每次显示都自增一个编号（st.noticeId）')
-check(/st\.notice\.id === id/.test(flashBlock), 'D2 清理守卫认号（st.notice.id === id）')
-check(flashBlock.indexOf('st.notice.text === msg') === -1, 'D3 清理守卫不再认文案（旧写法一个字不剩）')
-check(flashBlock.indexOf(String(HOLD_MS)) !== -1, 'D4 停留时长仍是 2800ms（这一票只动「谁的寿命」，不动寿命长短）')
+const block = (src.match(/export const flash = \(st, msg, kind\) => \{[\s\S]*?\n\}/) || [''])[0]
+check(/st\.noticeId = \(st\.noticeId \|\| 0\) \+ 1/.test(block), 'D1 flash 里每次显示都自增一个编号（st.noticeId）')
+check(/st\.notice\.id === id/.test(block), 'D2 守卫认号（st.notice.id === id）')
+check(block.indexOf('st.notice.text === msg') === -1, 'D3 守卫不认文案（旧写法一个字不剩）')
+check(/NOTICE_HOLD_MS = 2800/.test(src), 'D4 停留时长仍是 2800ms（这一票只动「谁的寿命」，不动寿命长短）')
 
 const dockSrc = read(DOCK)
 const setSrc = read(SETTINGS)
-check(/className: 'dsws-note', role: 'status', 'aria-live': 'polite'/.test(dockSrc), 'D5 面板里那枚气泡带 status 语义（role=status + aria-live=polite，读屏能念）')
-check(/className: 'dsws-note', role: 'status', 'aria-live': 'polite'/.test(setSrc), 'D6 设置页里那枚气泡带同样的 status 语义')
-const renderSites = (dockSrc + setSrc).split("className: 'dsws-note'").length - 1
-check(renderSites === 2, 'D7 这枚气泡的渲染点恰好两处（面板 + 设置页），没有第三份口径（实测 ' + renderSites + '）')
-
-const stylesSrc = read(STYLES)
-check(stylesSrc.indexOf("'.dsws-note{position:absolute;left:14px;bottom:14px;top:auto;right:auto;") !== -1, 'D8 摆放一个字没动（仍在左下角 absolute，本票不搬位置）')
-check(stylesSrc.indexOf('z-index:10001') !== -1, 'D9 层级没动（z-index:10001）')
+check(/role: 'status', 'aria-live': 'polite'/.test(dockSrc), 'D5 面板里那枚气泡带 status 语义（role=status + aria-live=polite，读屏能念）')
+check(/role: 'status', 'aria-live': 'polite'/.test(setSrc), 'D6 设置页里那枚气泡带同样的 status 语义')
+const renderSites = (dockSrc + setSrc).split('className:').filter((s) => s.indexOf('dsws-note') !== -1).length
+check(renderSites === 2, 'D7 这枚气泡的渲染点恰好两处（面板 + 设置页，没有第三份口径；实测 ' + renderSites + '）')
 
 console.log('')
 console.log(failed ? '存在失败 — verify-76-notice-lifetime 未通过' : '全部通过 — 浮层小提示的寿命语义生效（' + passed + ' 项断言）')

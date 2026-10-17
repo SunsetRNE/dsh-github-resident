@@ -193,7 +193,7 @@ export default {
     // ==== shared:vcRules (spliced by build) ====
     // ==== kernel:storePrefs (spliced by build) ====
     // ==== kernel:storeSwitch (spliced by build) ====
-    // ==== kernel:storeSnapshot (spliced by build) ====
+    // ==== kernel:storeSnapshot (spliced by build) ==== // ==== kernel:notice (spliced by build) ====
     // ==== kernel:storeDerived (spliced by build) ====
 
     // ---- 环境检查链（#228/#284 · host.call('wf.chain')；通用链 + 后端链全链快照）----

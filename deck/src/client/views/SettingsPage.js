@@ -171,7 +171,7 @@ export     const SettingsPage = (props) => {
       //   合并后**唯一**挂载点在「设置 → 仓库登记库」页的状态区（见根 client.js 的 RegistryPanel）；
       //   本页不再挂第二个，只留一句去向说明，避免同一动作出现两个入口。
       return h('div', { className: 'dsws-cfg', style: { position: 'relative' } }, [
-        cfgNotice ? h('div', { className: 'dsws-note', role: 'status', 'aria-live': 'polite', style: { display: 'flex', alignItems: 'center', gap: 6, top: 10, bottom: 'auto', right: 'auto', left: 14 } }, [
+        cfgNotice ? h('div', { className: cfgNotice.fading ? 'dsws-note dsws-note-out' : 'dsws-note', role: 'status', 'aria-live': 'polite', style: { display: 'flex', alignItems: 'center', gap: 6, top: 10, bottom: 'auto', right: 'auto', left: 14 } }, [
           Ic({ n: noticeIcon(cfgNotice.kind), size: 13, color: NOTICE_COLOR[cfgNotice.kind] || '#4ade80' }),
           h('span', null, cfgNotice.text),
         ]) : null,
